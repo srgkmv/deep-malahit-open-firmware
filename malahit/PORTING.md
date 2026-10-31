@@ -1,8 +1,9 @@
 # Porting this firmware to the Malahit DSP-1
 
-Status: **bring-up, nothing builds for this board yet.** What exists so far is
-the hardware reference (`BOARD.md`), a working debug path (`openocd.cfg`,
-`tools/`) and this plan.
+Status: **bring-up. Steps 0 and 1 of §4 are done and verified on hardware.**
+`bringup/` builds a RAM image that brings the clock tree up to 480 MHz,
+switches the peripheral rail on and runs a console; `BOARD.md` is the
+hardware reference it was written from.
 
 The upstream firmware targets the DEEPSDR 101 (GD32F450VET6, 800 × 480
 parallel panel, QSD mixer, MS5351 LO, TLV320AIC3204 codec, external SPI NOR
@@ -112,9 +113,16 @@ Things the M4 did not have and that will bite:
 
 Each step should end with something visible on the radio.
 
-0. **Debug path.** Done — `tools/swd.sh id` answers.
-1. **Blink.** Minimal H743 project: HSE bypass at 22 MHz, PLLs, `PC6` high for
-   the peripheral rail, `PB8` for the backlight, UART7 on PE7/PE8 as console.
+0. **Debug path.** *Done* — `tools/swd.sh id` answers over `dapdirect_swd`.
+1. **Blink.** *Done* — `bringup/`. HSE bypass at 22 MHz, PLL1 to 480 MHz
+   through VOS0, `PC6` for the peripheral rail, `PB8` for the backlight,
+   UART7 on PE7/PE8 as console. Measured on the radio: `clock_status` = 0,
+   `SYSCLK` = 480 000 000, `RCC_CFGR.SWS` = PLL1, `PWR_D3CR` = `0xE000`
+   (VOS0 plus VOSRDY), and SysTick counted 2003 ms across a 2000 ms
+   debugger pause — 0.15 % off, which is the oscillator's own tolerance
+   and proves the divider chain rather than merely asserting it.
+
+   Runs from RAM (`make ram`), so none of it costs the factory image.
 2. **Panel.** ILI9488 over SPI3. Measure the real throughput and settle the
    16-bit-versus-18-bit-per-pixel question.
 3. **Touch.** Identify the controller on I2C3, read coordinates.
