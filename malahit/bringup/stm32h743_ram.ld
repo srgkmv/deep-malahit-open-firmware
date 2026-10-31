@@ -33,8 +33,18 @@ MEMORY
     AXISRAM (rwx) : ORIGIN = 0x24000000, LENGTH = 512K
 }
 
-/* Stack at the top of AXI SRAM, growing down. */
-_estack = ORIGIN(AXISRAM) + LENGTH(AXISRAM);
+/*
+ * The top 256 bytes of AXI SRAM are reserved for the crash record that
+ * src/fault.h pins at 0x2407FF00. The stack starts BELOW it and grows
+ * down, so a crash note can never be overwritten by the stack that was
+ * running when the crash happened - which is precisely when it matters.
+ *
+ * The address is fixed rather than exported as a symbol on purpose: a
+ * record whose address moves with every rebuild is a record the debugger
+ * reads at the wrong place, and this project has already been bitten by
+ * exactly that.
+ */
+_estack = ORIGIN(AXISRAM) + LENGTH(AXISRAM) - 256;
 
 _Min_Heap_Size  = 0;
 _Min_Stack_Size = 0x2000;   /* 8 kB */

@@ -95,27 +95,88 @@ LoopFillZerobss:
     bl    SystemInit
     bl    main
 
-    /*
-     * main() is not supposed to return. If it does, stop here rather than
-     * running off into whatever follows: a breakpoint shows up in the
-     * debugger as a deliberate halt at a known address, an infinite loop
-     * just looks like a hang.
-     */
-    bkpt  #0
+    /* main() is not supposed to return. If it does, say so properly. */
+    movs  r0, #0
+    bl    fault_unexpected
     b     .
 
     .size Reset_Handler, .-Reset_Handler
 
 /*
- * Anything without its own handler lands here. The breakpoint is the same
- * argument as above: with a debugger attached this stops dead and tells
- * you where. The loop after it keeps a detached board from wandering.
+ * NO bkpt IN ANY OF THIS. 31/10/2026, after it cost most of an evening.
+ *
+ * The obvious way to write these handlers is `bkpt #0`, so that a halt
+ * shows up in the debugger at a known address. It works beautifully while
+ * the debugger is attached - and when it is NOT, a bkpt raises a fault of
+ * its own. Inside a fault handler that is a double fault, and a double
+ * fault LOCKS THE CORE UP.
+ *
+ * A locked-up core keeps IPSR at HardFault and ignores further debug
+ * requests, which means the next attempt to load an image attaches to a
+ * machine that is not in a state any image can start from. The symptom is
+ * a firmware that appears to crash instantly and for no reason, on every
+ * subsequent load, with the evidence from the FIRST crash long gone. We
+ * chased exactly that, and the original fault turned out not to exist:
+ * the whole cascade came from this instruction.
+ *
+ * So: handlers record what happened to a fixed address and spin. Spinning
+ * is debuggable - attach whenever, read the record - and it cannot make
+ * anything worse.
  */
     .section .text.Default_Handler,"ax",%progbits
 Default_Handler:
-    bkpt  #0
-    b     .
+    mrs   r0, ipsr
+    b     fault_unexpected
     .size Default_Handler, .-Default_Handler
+
+/*
+ * The real fault handlers. Work out which stack was in use - bit 2 of the
+ * EXC_RETURN value in LR says PSP or MSP - and hand that frame to C, which
+ * can then read the caller's PC, LR and registers out of it.
+ */
+    .section .text.HardFault_Handler,"ax",%progbits
+    .global HardFault_Handler
+HardFault_Handler:
+    tst   lr, #4
+    ite   eq
+    mrseq r0, msp
+    mrsne r0, psp
+    mov   r1, lr
+    b     fault_record
+    .size HardFault_Handler, .-HardFault_Handler
+
+    .section .text.MemManage_Handler,"ax",%progbits
+    .global MemManage_Handler
+MemManage_Handler:
+    tst   lr, #4
+    ite   eq
+    mrseq r0, msp
+    mrsne r0, psp
+    mov   r1, lr
+    b     fault_record
+    .size MemManage_Handler, .-MemManage_Handler
+
+    .section .text.BusFault_Handler,"ax",%progbits
+    .global BusFault_Handler
+BusFault_Handler:
+    tst   lr, #4
+    ite   eq
+    mrseq r0, msp
+    mrsne r0, psp
+    mov   r1, lr
+    b     fault_record
+    .size BusFault_Handler, .-BusFault_Handler
+
+    .section .text.UsageFault_Handler,"ax",%progbits
+    .global UsageFault_Handler
+UsageFault_Handler:
+    tst   lr, #4
+    ite   eq
+    mrseq r0, msp
+    mrsne r0, psp
+    mov   r1, lr
+    b     fault_record
+    .size UsageFault_Handler, .-UsageFault_Handler
 
 /*
  * The vector table. 150 maskable interrupts on the STM32H743, plus the 16
@@ -152,8 +213,10 @@ g_pfnVectors:
     .size g_pfnVectors, .-g_pfnVectors
 
 /*
- * Weak aliases: every system handler points at Default_Handler until a C
- * file defines a real one with the same name.
+ * Weak aliases for the handlers that do NOT have a real definition above:
+ * each points at Default_Handler until a C file defines its own. The four
+ * fault handlers are deliberately absent from this list - they are real
+ * code in this file and must not be overridable by accident.
  */
     .macro  weak_handler name
     .weak   \name
@@ -161,10 +224,6 @@ g_pfnVectors:
     .endm
 
     weak_handler NMI_Handler
-    weak_handler HardFault_Handler
-    weak_handler MemManage_Handler
-    weak_handler BusFault_Handler
-    weak_handler UsageFault_Handler
     weak_handler SVC_Handler
     weak_handler DebugMon_Handler
     weak_handler PendSV_Handler

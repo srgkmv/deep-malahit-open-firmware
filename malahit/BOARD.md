@@ -325,8 +325,45 @@ Serves two jobs at once: it is the **I/Q ADC** for the receiver (stereo line
 in from MSi001) and the **audio DAC** plus speaker amplifier for the output.
 That means ADC and DAC share one sample rate.
 
-Datasheet maximum is 48 kHz; the stock firmware runs it at 160 kHz, well out
-of spec, with MCLK = 256 × Fs supplied externally by the MCU.
+**Variant: this unit has the NAU8822L**, not the NAU8822A that most Chinese
+clones carry. The original Malahit used the L; field reports blame the
+clones' "cracking" audio on the A. Worth recording, and worth less than it
+looks — see below.
+
+### Clocking, and why the L/A difference does not matter here
+
+From the datasheet (Rev 3.3), the rules are short and strict:
+
+- `IMCLK` is **always** exactly 256 × the converter sample rate.
+- "IMCLK should not exceed 12.288 MHz under any condition" — which puts the
+  datasheet ceiling at **48 kHz**.
+- `IMCLK` comes out of the Master Clock Prescaler, whose input is **either
+  the external MCLK pin or the internal PLL**, selected by `CLKM` in
+  register R6 (0 = MCLK pin 11, 1 = PLL), with `MCLKSEL` = 000 giving
+  divide-by-1.
+
+On this board MCLK is driven by the MCU from `PE2`. So the right
+configuration is `CLKM` = 0, `MCLKSEL` = 000, and `IMCLK` = MCLK straight
+through. **The internal PLL is not used at all.**
+
+That is what settles the variant question. The documented difference
+between the A and the L is an extra PLL register bit — the L can divide the
+PLL output by 2 where the A only offers 4. With the PLL bypassed, that bit
+is never programmed and the two parts behave identically for our purposes.
+
+What does matter is that either part has to run far outside its datasheet:
+160 kHz needs IMCLK = 40.96 MHz, 192 kHz needs 49.152 MHz, against a stated
+maximum of 12.288 MHz. The stock firmware does exactly this and works, so
+the margin is real — but it is undocumented margin, and whether this part
+reaches 192 kHz rather than 160 kHz is a question for the bench, not for
+the datasheet. It is step 4 of `PORTING.md`.
+
+One more constraint from the same section, easy to miss and expensive to
+discover: FS, BCLK and IMCLK **must all derive from one reference**, or
+audio quality degrades. Since the MCU already supplies MCLK, SAI1 must be
+the I²S master and generate BCLK and FS from the same clock tree — which it
+does, and which is the opposite of how the DEEPSDR 101 is wired, where the
+AIC3204 is master and the GD32 is the slave.
 
 ### ILI9488 — display
 

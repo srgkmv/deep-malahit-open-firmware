@@ -32,6 +32,13 @@ MEMORY
  */
 _estack = ORIGIN(DTCM) + LENGTH(DTCM);
 
+/*
+ * The crash record at 0x2407FF00 (src/fault.h) is in AXI SRAM, not DTCM,
+ * so the stack above does not collide with it. Nothing is allocated into
+ * AXISRAM by this script; the region is declared so that the address is
+ * documented rather than merely assumed.
+ */
+
 _Min_Heap_Size  = 0;
 _Min_Stack_Size = 0x2000;
 

@@ -48,6 +48,45 @@ uint32_t clock_apb1_hz   = 64000000U;
 static int clock_bring_up(void)
 {
     /*
+     * 0. GET BACK TO A KNOWN STATE FIRST.
+     *
+     * This function must work when it runs a SECOND time, over a clock
+     * tree it already configured - which is the normal case for an image
+     * loaded by the debugger, because nothing resets RCC between loads.
+     *
+     * Without this block the failure is beautifully misleading. Step 2
+     * below clears HSEON, and the hardware simply refuses: RM0433 says
+     * HSEON cannot be cleared while HSE feeds the system clock, directly
+     * or through a PLL. HSERDY therefore never drops, the wait burns all
+     * two million iterations and returns CLOCK_ERR_HSERDY - reporting a
+     * dead oscillator while the part is, in fact, humming along at
+     * 480 MHz on that very oscillator.
+     *
+     * The damage is downstream: the error path writes the 64 MHz fallback
+     * into clock_apb1_hz, console_init() computes its divisor from that,
+     * and the console comes out at 216 kbaud while claiming 115200. We
+     * spent a while reading that garbage.
+     *
+     * So: park on HSI, stop PLL1, put the bus dividers back to /1, and
+     * only then start building. HSI is always available - it is what the
+     * part boots on - and at 64 MHz with /1 dividers every bus is well
+     * inside its limit.
+     */
+    RCC->CR |= RCC_CR_HSION;
+    WAIT_FOR(RCC->CR & RCC_CR_HSIRDY, CLOCK_ERR_SWITCH);
+
+    RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_SW) | RCC_CFGR_SW_HSI;
+    WAIT_FOR((RCC->CFGR & RCC_CFGR_SWS) == RCC_CFGR_SWS_HSI,
+             CLOCK_ERR_SWITCH);
+
+    RCC->D1CFGR = 0U;
+    RCC->D2CFGR = 0U;
+    RCC->D3CFGR = 0U;
+
+    RCC->CR &= ~RCC_CR_PLL1ON;
+    WAIT_WHILE(RCC->CR & RCC_CR_PLL1RDY, CLOCK_ERR_PLLRDY);
+
+    /*
      * 1. CORE VOLTAGE.
      *
      * PWR_CR3 is deliberately not touched. Its reset value already selects

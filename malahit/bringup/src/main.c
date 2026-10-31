@@ -32,6 +32,7 @@
 #include "board.h"
 #include "clock.h"
 #include "console.h"
+#include "fault.h"
 
 static const char *clock_error_text(int status)
 {
@@ -98,14 +99,50 @@ int main(void)
     board_power_on();
 
     console_init();
+
+    /*
+     * Before anything else this run has to say: did the last run die?
+     *
+     * The record lives at a fixed address in SRAM that survives a warm
+     * reset and a reload, so a crash reports itself here, in readable
+     * text, instead of having to be reconstructed from register dumps
+     * after the fact. That is not a luxury - an evening went into a crash
+     * that turned out to be an artefact of the loader rather than of the
+     * firmware, and this is the thing that would have said so in one line.
+     */
+    fault_report_previous();
+
     report();
 
     uint32_t next = board_millis();
     int      on   = 0;
+    uint32_t beat = 0;
 
     for (;;) {
         board_backlight(on);
+        int shown = on;        /* before the flip, or the line always lies */
         on = !on;
+
+        /*
+         * A heartbeat line every second, forever.
+         *
+         * The banner above prints once, at boot, which is useless for the
+         * job this console actually has to do first: finding out which
+         * physical pin PE8 comes out on. J6 is a bare 2x7 header with no
+         * silkscreen numbering and no ground pin, so locating UART7 means
+         * moving a probe around while something talks. A one-shot banner
+         * means re-running the whole load for every guess.
+         *
+         * Printing twice a second - this loop runs at 2 Hz - also makes
+         * the far more common failure obvious. Wrong baud rate gives
+         * steady garbage at a steady rate rather than silence, and the
+         * two look nothing alike.
+         */
+        if ((beat++ & 1U) == 0U) {
+            console_printf("[%u s] alive, sysclk %u Hz, backlight %s\n",
+                           board_millis() / 1000U, clock_sysclk_hz,
+                           shown ? "on" : "off");
+        }
 
         /*
          * Absolute deadlines rather than delay-from-now, so the period

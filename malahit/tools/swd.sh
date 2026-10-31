@@ -13,6 +13,8 @@
 #   ./swd.sh ram firmware.elf       load into AXI SRAM and run it, WITHOUT
 #                                   touching flash — the factory firmware
 #                                   survives and a power cycle restores it
+#   ./swd.sh fault                  print the last crash record, if any
+#   ./swd.sh clean                  silence the core after a crash
 #   ./swd.sh flash firmware.elf     program and verify over SWD
 #   ./swd.sh reset                  reset and run
 #   ./swd.sh -c "<openocd cmd>" ... run arbitrary commands, then exit
@@ -32,22 +34,16 @@ case "${1-}" in
     reset)   run -c "init" -c "reset run" -c "exit" ;;
     ram)
         ELF="${2:?usage: swd.sh ram <firmware.elf>}"
-        # reset halt first, so the image starts from a chip in its reset
-        # state rather than from whatever the factory firmware had already
-        # configured. The halt catches the core at the reset vector, before
-        # a single instruction of the flash image has run.
-        #
-        # Then start it by hand: no reset follows the load, so the core
-        # never pops SP and PC off the vector table itself. Both come out
-        # of our table at 0x24000000, and xPSR gets its Thumb bit set
-        # explicitly, which is the one thing that turns a silent HardFault
-        # into a working jump.
-        run -c "init" -c "reset halt" \
-            -c "load_image $ELF" \
-            -c "reg sp [mrw 0x24000000]" \
-            -c "reg pc [mrw 0x24000004]" \
-            -c "reg xPSR 0x01000000" \
-            -c "resume" -c "exit"
+        # ram_run lives in ../openocd.cfg. It cleans the core by hand
+        # instead of resetting it, because NRST is not wired on this
+        # board and "reset halt" would silently do nothing.
+        run -c "init" -c "ram_run $ELF" -c "exit"
+        ;;
+    fault)
+        run -c "init" -c "fault" -c "exit"
+        ;;
+    clean)
+        run -c "init" -c "core_clean" -c "exit"
         ;;
     flash)
         ELF="${2:?usage: swd.sh flash <firmware.elf>}"
