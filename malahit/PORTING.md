@@ -123,6 +123,11 @@ Each step should end with something visible on the radio.
    and proves the divider chain rather than merely asserting it.
 
    Runs from RAM (`make ram`), so none of it costs the factory image.
+
+   The console is on UART7, PE7/PE8 — pins 37 and 38 of the package on
+   units without the J6 header. A crash is recorded to a fixed address
+   and reported in plain text on the next boot, and a crashed run no
+   longer has to be power-cycled out of: see `src/fault.c`.
 2. **Panel.** ILI9488 over SPI3. Measure the real throughput and settle the
    16-bit-versus-18-bit-per-pixel question.
 3. **Touch.** Identify the controller on I2C3, read coordinates.
