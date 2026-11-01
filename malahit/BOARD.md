@@ -514,11 +514,36 @@ screen_x = ty;                 /* 0..479 */
 screen_y = ILI9488_H - 1 - tx; /* 0..319 */
 ```
 
-Verified by drawing a square where the firmware thinks the finger is: it
-lands under the finger, slightly to the right. The residual is small and
-uniform, so it is the touch glass sitting a little off the matrix rather
-than anything in the arithmetic — a calibration offset, not a formula
-change.
+**Calibrated on this radio**, four targets inset 40 px from the edges:
+
+| screen | raw |
+|---|---|
+| (40, 40) | (265, 46) |
+| (440, 40) | (265, 442) |
+| (440, 280) | (37, 440) |
+| (40, 280) | (38, 45) |
+
+Opposite corners agree on `tx` to within one count and on `ty` to within
+two, so the four readings form a clean rectangle in raw space: the panel
+is linear and the numbers are worth trusting. Averaging each edge gives
+`ty` = 45 at x = 40 and 441 at x = 440, `tx` = 265 at y = 40 and 37 at
+y = 280, hence
+
+```c
+#define TOUCH_TY_REF    45
+#define TOUCH_TX_REF   265
+#define TOUCH_SCALE_X  1034     /* 1.0101, x1024 */
+#define TOUCH_SCALE_Y (-1077)   /* -1.0526, x1024 */
+
+screen_x = (((ty - TOUCH_TY_REF) * TOUCH_SCALE_X) >> 10) + 40;
+screen_y = (((tx - TOUCH_TX_REF) * TOUCH_SCALE_Y) >> 10) + 40;
+```
+
+Both scales are within a few percent of unity, which is the sanity
+check — a controller bonded to this display should report over much the
+same span as the display. The small residual before calibration, a
+cursor sitting slightly right of the finger, was the glass offset, and
+these constants absorb it. `src/touch.c` carries them.
 
 **One oddity, unexplained.** `PC8` reads LOW continuously, with or
 without a finger. Nothing depends on it — the driver polls TD_STATUS on

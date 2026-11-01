@@ -431,91 +431,193 @@ int main(void)
      */
     #define FT_ADDR  0x38U
 
-    console_printf("\n  Touch the screen. A white square should appear\n");
-    console_printf("  under your finger. Where it actually appears tells\n");
-    console_printf("  us the orientation mapping.\n\n");
-
     /*
-     * G_MODE = 0x00, interrupt POLLING mode.
+     * FOUR-POINT CALIBRATION.
      *
-     * The datasheet's default is 0x01, interrupt TRIGGER mode, where
-     * the INT pin gives a pulse per report rather than sitting low for
-     * as long as a finger is down. A loop that samples the pin level
-     * misses pulses between samples and concludes the panel is dead.
-     * In polling mode the line stays low while there is a contact,
-     * which is what level-sampling wants.
+     * The swap-and-mirror transform lands the cursor under the finger
+     * but consistently a little to the right, and a uniform error like
+     * that is the touch glass sitting slightly off the matrix - a
+     * physical offset, not a mistake in the arithmetic. No amount of
+     * thinking about axes will remove it; it has to be measured.
      *
-     * The loop below does not depend on it either way: it reads
-     * TD_STATUS on a timer and believes the register, not the wire.
-     * The IRQ state is printed alongside so the two can be compared,
-     * because an interrupt-driven driver is what this eventually
-     * becomes and it is worth knowing now whether the line behaves.
+     * So: draw a target, wait for a finger, record what the controller
+     * said, four times, at the corners of an inset rectangle. Two
+     * targets share each edge, which gives two independent readings per
+     * axis and lets the fit average them instead of trusting one poke.
+     *
+     * Inset by 40 px rather than placed in the actual corners. Corners
+     * are the worst place to calibrate: capacitive panels are least
+     * linear at their edges, a finger cannot be centred on a point it
+     * is half off, and any error there is multiplied when extrapolated
+     * back across the screen.
+     *
+     * The result is printed as constants to paste into the driver, and
+     * then applied immediately so it can be checked by poking at it.
      */
-    {
-        PHASE(17);
-        uint8_t gmode[2] = { 0xA4U, 0x00U };
-        console_printf("  G_MODE <- 0x00 (level, not pulse): %s\n",
-                       i2c3_write(FT_ADDR, gmode, 2U) ? "ok" : "FAILED");
-    }
+    #define CAL_INSET_X   40
+    #define CAL_INSET_Y   40
+
+    static const struct { uint16_t x, y; const char *where; } targets[] = {
+        { CAL_INSET_X,                  CAL_INSET_Y,                  "top left"     },
+        { ILI9488_W - CAL_INSET_X,      CAL_INSET_Y,                  "top right"    },
+        { ILI9488_W - CAL_INSET_X,      ILI9488_H - CAL_INSET_Y,      "bottom right" },
+        { CAL_INSET_X,                  ILI9488_H - CAL_INSET_Y,      "bottom left"  },
+    };
+
+    uint32_t raw_x[4], raw_y[4];
 
     ili9488_set_format(ILI9488_FMT_18BIT);
-    ili9488_fill_screen(0U, 0U, 0U);
 
-    PHASE(18);
-    uint32_t last_beat = 0;
-    uint32_t touches = 0;
+    console_printf("\n  CALIBRATION - four targets, touch the centre of\n");
+    console_printf("  each cross as accurately as you can.\n\n");
 
-    for (;;) {
-        PHASE(19);
-        board_watchdog_feed();
+    for (uint32_t t = 0; t < 4U; t++) {
+        /* Clean slate, then a cross: two bars and a dot in the middle. */
+        ili9488_fill_screen(0U, 0U, 0U);
+        uint16_t cx = targets[t].x, cy = targets[t].y;
+        ili9488_fill_rect((uint16_t)(cx - 20U), (uint16_t)(cy - 1U),
+                          41U, 3U, 255U, 255U, 255U);
+        ili9488_fill_rect((uint16_t)(cx - 1U), (uint16_t)(cy - 20U),
+                          3U, 41U, 255U, 255U, 255U);
+        ili9488_fill_rect((uint16_t)(cx - 3U), (uint16_t)(cy - 3U),
+                          7U, 7U, 255U, 0U, 0U);
 
-        {
-            uint8_t reg0 = 0x00U;
-            uint8_t b[9];
+        console_printf("  target %u of 4, %s (%u,%u) - touch it\n",
+                       t + 1U, targets[t].where, cx, cy);
 
-            if (i2c3_write_read(FT_ADDR, &reg0, 1U, b, 9U)
+        /*
+         * Wait for a steady contact. Three consecutive reads that agree
+         * within a few counts, which throws away the first moment of a
+         * touch when the reported position is still moving as the
+         * contact area grows.
+         */
+        uint32_t px = 0, py = 0, stable = 0;
+
+        while (stable < 3U) {
+            board_watchdog_feed();
+
+            uint8_t reg0 = 0x00U, b[7];
+            if (i2c3_write_read(FT_ADDR, &reg0, 1U, b, 7U)
                 && (b[0x02] & 0x0FU) != 0U) {
-                uint32_t npoints = b[0x02] & 0x0FU;
-                uint32_t event   = (uint32_t)(b[0x03] >> 6);
-                uint32_t tx      = (((uint32_t)b[0x03] & 0x0FU) << 8) | b[0x04];
-                uint32_t ty      = (((uint32_t)b[0x05] & 0x0FU) << 8) | b[0x06];
-                uint32_t weight  = b[0x07];
-                uint32_t area    = (uint32_t)(b[0x08] >> 4);
+                uint32_t tx = (((uint32_t)b[0x03] & 0x0FU) << 8) | b[0x04];
+                uint32_t ty = (((uint32_t)b[0x05] & 0x0FU) << 8) | b[0x06];
 
-                /*
-                 * First guess at the transform: swap the axes, because
-                 * the panel is portrait and the display is landscape,
-                 * and mirror Y so that the origin ends up in the same
-                 * corner. Both halves are guesses and the square on
-                 * screen is the test.
-                 */
-                uint32_t sx = ty;
-                uint32_t sy = (tx < ILI9488_H) ? (ILI9488_H - 1U - tx) : 0U;
+                uint32_t dx = (tx > px) ? (tx - px) : (px - tx);
+                uint32_t dy = (ty > py) ? (ty - py) : (py - ty);
 
-                if (sx > ILI9488_W - 1U) { sx = ILI9488_W - 1U; }
-                if (sy > ILI9488_H - 1U) { sy = ILI9488_H - 1U; }
-
-                console_printf("  n=%u ev=%u raw(%u,%u) -> screen(%u,%u) "
-                               "w=%u a=%u\n",
-                               npoints, event, tx, ty, sx, sy, weight, area);
-
-                if (npoints > 0U) {
-                    uint16_t x = (uint16_t)((sx > 10U) ? (sx - 10U) : 0U);
-                    uint16_t y = (uint16_t)((sy > 10U) ? (sy - 10U) : 0U);
-                    if (x > ILI9488_W - 20U) { x = ILI9488_W - 20U; }
-                    if (y > ILI9488_H - 20U) { y = ILI9488_H - 20U; }
-                    ili9488_fill_rect(x, y, 20U, 20U, 255U, 255U, 255U);
-                    touches++;
-                }
+                stable = (stable > 0U && dx <= 4U && dy <= 4U)
+                       ? (stable + 1U) : 1U;
+                px = tx;
+                py = ty;
+            } else {
+                stable = 0;
             }
             board_delay_ms(30);
         }
 
-        if ((int32_t)(board_millis() - last_beat) > 3000) {
+        raw_x[t] = px;
+        raw_y[t] = py;
+        console_printf("    got raw(%u,%u)\n", px, py);
+
+        /* Acknowledge with a green cross, then wait for the finger to
+         * lift so the next target is not satisfied by the same touch. */
+        ili9488_fill_rect((uint16_t)(cx - 3U), (uint16_t)(cy - 3U),
+                          7U, 7U, 0U, 255U, 0U);
+
+        uint32_t lifted = 0;
+        while (lifted < 3U) {
+            board_watchdog_feed();
+            uint8_t reg0 = 0x00U, b[3];
+            if (i2c3_write_read(FT_ADDR, &reg0, 1U, b, 3U)
+                && (b[0x02] & 0x0FU) == 0U) {
+                lifted++;
+            } else {
+                lifted = 0;
+            }
+            board_delay_ms(30);
+        }
+    }
+
+    /*
+     * Fit. screen_x comes from ty, screen_y from tx, inverted - the
+     * axes established earlier. Two readings per edge, averaged.
+     *
+     * Integer arithmetic scaled by 1024 so the constants can be pasted
+     * into a driver that has no business doing floating point in an
+     * interrupt.
+     */
+    uint32_t ty_at_xlo = (raw_y[0] + raw_y[3]) / 2U;   /* screen x = 40  */
+    uint32_t ty_at_xhi = (raw_y[1] + raw_y[2]) / 2U;   /* screen x = 440 */
+    uint32_t tx_at_ylo = (raw_x[0] + raw_x[1]) / 2U;   /* screen y = 40  */
+    uint32_t tx_at_yhi = (raw_x[2] + raw_x[3]) / 2U;   /* screen y = 280 */
+
+    int32_t span_x = (int32_t)ty_at_xhi - (int32_t)ty_at_xlo;
+    int32_t span_y = (int32_t)tx_at_yhi - (int32_t)tx_at_ylo;
+
+    console_printf("\n  measured:\n");
+    console_printf("    ty = %u at screen x=%u, ty = %u at screen x=%u\n",
+                   ty_at_xlo, CAL_INSET_X, ty_at_xhi, ILI9488_W - CAL_INSET_X);
+    console_printf("    tx = %u at screen y=%u, tx = %u at screen y=%u\n",
+                   tx_at_ylo, CAL_INSET_Y, tx_at_yhi, ILI9488_H - CAL_INSET_Y);
+
+    if (span_x == 0 || span_y == 0) {
+        console_printf("\n  *** degenerate - two targets read the same. ***\n");
+        for (;;) { board_watchdog_feed(); }
+    }
+
+    int32_t scale_x = ((int32_t)(ILI9488_W - 2 * CAL_INSET_X) * 1024) / span_x;
+    int32_t scale_y = ((int32_t)(ILI9488_H - 2 * CAL_INSET_Y) * 1024) / span_y;
+
+    console_printf("\n  CONSTANTS - paste these into the touch driver:\n");
+    console_printf("    #define TOUCH_TY_REF   %u\n", ty_at_xlo);
+    console_printf("    #define TOUCH_TX_REF   %u\n", tx_at_ylo);
+    console_printf("    #define TOUCH_SCALE_X  %d   /* x1024 */\n", scale_x);
+    console_printf("    #define TOUCH_SCALE_Y  %d   /* x1024 */\n", scale_y);
+    console_printf("    screen_x = ((ty - TY_REF) * SCALE_X >> 10) + %u\n",
+                   CAL_INSET_X);
+    console_printf("    screen_y = ((tx - TX_REF) * SCALE_Y >> 10) + %u\n",
+                   CAL_INSET_Y);
+
+    console_printf("\n  Now calibrated. Touch anywhere - the square should\n");
+    console_printf("  sit under your finger. Corners too.\n\n");
+
+    ili9488_fill_screen(0U, 0U, 0U);
+
+    uint32_t last_beat = 0;
+
+    for (;;) {
+        board_watchdog_feed();
+
+        uint8_t reg0 = 0x00U, b[7];
+        if (i2c3_write_read(FT_ADDR, &reg0, 1U, b, 7U)
+            && (b[0x02] & 0x0FU) != 0U) {
+            uint32_t tx = (((uint32_t)b[0x03] & 0x0FU) << 8) | b[0x04];
+            uint32_t ty = (((uint32_t)b[0x05] & 0x0FU) << 8) | b[0x06];
+
+            int32_t sx = ((((int32_t)ty - (int32_t)ty_at_xlo) * scale_x) >> 10)
+                       + CAL_INSET_X;
+            int32_t sy = ((((int32_t)tx - (int32_t)tx_at_ylo) * scale_y) >> 10)
+                       + CAL_INSET_Y;
+
+            if (sx < 0) { sx = 0; }
+            if (sy < 0) { sy = 0; }
+            if (sx > (int32_t)ILI9488_W - 1) { sx = ILI9488_W - 1; }
+            if (sy > (int32_t)ILI9488_H - 1) { sy = ILI9488_H - 1; }
+
+            console_printf("  raw(%u,%u) -> (%d,%d)\n", tx, ty, sx, sy);
+
+            uint16_t x = (uint16_t)((sx > 8) ? (sx - 8) : 0);
+            uint16_t y = (uint16_t)((sy > 8) ? (sy - 8) : 0);
+            if (x > ILI9488_W - 17U) { x = ILI9488_W - 17U; }
+            if (y > ILI9488_H - 17U) { y = ILI9488_H - 17U; }
+            ili9488_fill_rect(x, y, 17U, 17U, 255U, 255U, 255U);
+
+            board_delay_ms(40);
+        }
+
+        if ((int32_t)(board_millis() - last_beat) > 5000) {
             last_beat = board_millis();
-            console_printf("  [%u s] %u touches so far, IRQ %s\n",
-                           board_millis() / 1000U, touches,
-                           i2c3_touch_irq_asserted() ? "LOW" : "high");
+            console_printf("  [%u s] waiting\n", board_millis() / 1000U);
         }
     }
 }
