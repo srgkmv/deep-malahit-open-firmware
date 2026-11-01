@@ -48,6 +48,22 @@ Chrom-ART, so it becomes DMA2D with little more than a rename.
 
 ### 3.1 The display, and the UI on top of it
 
+> **Answered, 01/11/2026: 18 bits per pixel, 460 800 bytes a frame.**
+> The panel accepts COLMOD 0x55 and reads it back as 0x05, then draws
+> nothing - the chip has the register bit for 16-bit serial and no
+> serial data path behind it. Its own datasheet gives data-format
+> figures for 3-bit and 18-bit on the 4-line interface and none for
+> 16-bit. Measured: 245 ms a frame at 15 MHz, about 122 ms at 30 MHz,
+> both at the full bus rate. See `BOARD.md` §6.
+>
+> The consequence for the framebuffer is the awkward one. RGB565 would
+> have been 307 kB in AXI SRAM and gone to the panel unchanged; instead
+> it is either 461 kB held in the panel's own format, which is nearly
+> all of AXI SRAM, or RGB565 converted to three bytes on the way out,
+> which costs CPU on every pixel. That choice is now a real design
+> decision rather than an assumption.
+
+
 800 × 480 → 480 × 320 is 3.4× fewer pixels. The upstream layout is not
 parameterised, it is hand-fitted: `main.c` is 39 094 lines and carries
 constants like `MAIN_W = 800`, `MENU_AREA_W(800)`, `RTTY_TEXT_COLS = 66`, with

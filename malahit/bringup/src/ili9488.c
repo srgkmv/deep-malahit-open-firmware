@@ -192,6 +192,44 @@ void ili9488_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
     CS_HIGH();
 }
 
+void ili9488_read_raw(uint8_t cmd, uint8_t *buf, uint32_t nbytes)
+{
+    DC_CMD();
+    CS_LOW();
+    spi3_write(&cmd, 1U);
+    DC_DATA();
+    spi3_read(buf, nbytes);
+    CS_HIGH();
+}
+
+uint32_t ili9488_read_reg(uint8_t cmd, uint32_t nbytes)
+{
+    uint8_t buf[5] = { 0, 0, 0, 0, 0 };
+
+    if (nbytes > 4U) { nbytes = 4U; }
+
+    /*
+     * NO DUMMY BYTE. Measured, not assumed: reading 0x0C raw returns
+     * 06 00 00 00 ... with the answer in the FIRST byte, and 0x06 is
+     * exactly the documented power-on value for COLMOD. An earlier
+     * version here skipped a leading dummy byte, as many ILI9488
+     * drivers do, and so returned the byte after the answer - a
+     * confident, plausible zero.
+     */
+    DC_CMD();
+    CS_LOW();
+    spi3_write(&cmd, 1U);
+    DC_DATA();
+    spi3_read(buf, nbytes);
+    CS_HIGH();
+
+    uint32_t v = 0;
+    for (uint32_t i = 0; i < nbytes; i++) {
+        v = (v << 8) | buf[i];
+    }
+    return v;
+}
+
 /* DWT cycle counter: the only timebase here fine enough to measure a
  * screen fill, SysTick being a 1 kHz tick. */
 static void cycles_init(void)

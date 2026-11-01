@@ -64,6 +64,35 @@ void ili9488_fill_screen(uint8_t r, uint8_t g, uint8_t b);
  */
 void ili9488_test_pattern(void);
 
+/*
+ * Ask the panel a question and get its own answer.
+ *
+ * ILI9488 read frames are: command byte with D/CX low, then one DUMMY
+ * byte, then the data, all with D/CX high and CS held low throughout.
+ * Returns up to 4 bytes, dummy already discarded.
+ *
+ * The two worth asking:
+ *   0x0C  RDDCOLMOD - the pixel format the panel believes it is in.
+ *         0x06 means 18 bits per pixel, 0x05 means 16.
+ *   0x04  RDDID     - manufacturer and device ID, which proves the read
+ *         path works before any answer from it is trusted.
+ */
+uint32_t ili9488_read_reg(uint8_t cmd, uint32_t nbytes);
+
+/*
+ * The same read, but handing back every byte exactly as it arrived,
+ * dummy and all.
+ *
+ * How many dummy bytes precede the answer is not the same for every
+ * command on this part, and guessing wrong turns a useful register
+ * into a plausible-looking zero - which is what happened: RDDID came
+ * back as 0x403300 and RDDCOLMOD as 0x00 twice, neither of which means
+ * anything. Reading 0xD3 raw settles it, because the answer is known
+ * in advance: 0x94 0x88 has to appear somewhere in the bytes, and
+ * wherever it lands tells you the offset for everything else.
+ */
+void ili9488_read_raw(uint8_t cmd, uint8_t *buf, uint32_t nbytes);
+
 /* Microseconds taken by the last full-screen fill, for the throughput
  * number that decides the UI design. */
 uint32_t ili9488_last_fill_us(void);

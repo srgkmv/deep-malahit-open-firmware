@@ -121,11 +121,33 @@ static int clock_bring_up(void)
      * simply never start. HSEBYP may only be changed while HSEON is clear,
      * so the order below is not negotiable.
      */
-    RCC->CR &= ~RCC_CR_HSEON;
-    WAIT_WHILE(RCC->CR & RCC_CR_HSERDY, CLOCK_ERR_HSERDY);
-    RCC->CR |= RCC_CR_HSEBYP;
-    RCC->CR |= RCC_CR_HSEON;
-    WAIT_FOR(RCC->CR & RCC_CR_HSERDY, CLOCK_ERR_HSERDY);
+    if ((RCC->CR & (RCC_CR_HSEBYP | RCC_CR_HSERDY))
+            != (RCC_CR_HSEBYP | RCC_CR_HSERDY)) {
+        /*
+         * Only touch HSE when it is not already exactly what we want.
+         *
+         * Stopping and restarting it unconditionally looks tidier and
+         * is a trap once clock security is enabled, because CSSHSEON
+         * can only be cleared by a reset. A second image loaded over a
+         * first one therefore starts with CSS armed, deliberately
+         * switches HSE off to reconfigure it, and CSS - entirely
+         * correctly - calls that a failed oscillator.
+         *
+         * That matched the symptom exactly: the FIRST load after a
+         * power-on always worked, because it replaced the factory
+         * firmware, which does not arm CSS. The second load, replacing
+         * ours, died every time.
+         *
+         * HSEBYP cannot be changed while HSEON is set, so the off/on
+         * dance is still needed when the bypass bit is wrong - which is
+         * only ever true on the first run after a real reset.
+         */
+        RCC->CR &= ~RCC_CR_HSEON;
+        WAIT_WHILE(RCC->CR & RCC_CR_HSERDY, CLOCK_ERR_HSERDY);
+        RCC->CR |= RCC_CR_HSEBYP;
+        RCC->CR |= RCC_CR_HSEON;
+        WAIT_FOR(RCC->CR & RCC_CR_HSERDY, CLOCK_ERR_HSERDY);
+    }
 
     /*
      * 3. PLL1. See clock.h for where 11 / 480 / 2 comes from.

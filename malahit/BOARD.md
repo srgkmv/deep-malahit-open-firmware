@@ -417,10 +417,44 @@ bus, but on this board **only the 4-wire SPI pins are used**: SDI, SDO,
 WRX/SCL, D/CX, CSX, RESET, with IM0/IM1/IM2 strapped by R23/R24/R25 (10 kΩ).
 Series resistors RN1/RN2 (33 Ω) on the signal lines.
 
-Open question to settle early: the ILI9488 is widely documented as accepting
-only **18-bit (3 bytes per pixel)** pixel data in SPI mode, not RGB565. If
-that holds here, a full frame is 480 × 320 × 3 = 460 800 bytes, which sets
-the ceiling on redraw rate. Measure it before designing the UI.
+**Settled, on hardware and in the datasheet: 18 bits per pixel, three
+bytes, and 16-bit is not available over this bus.**
+
+The panel will *accept* the format change - write COLMOD (0x3A) = 0x55
+and RDDCOLMOD (0x0C) reads back 0x05, so the register takes it - and then
+pixel writes do nothing at all. Not garbage, not a black screen: the
+previous picture simply stays. Confirmed by watching red and blue
+alternate with a 16-bit green phase between them that never appeared.
+
+The datasheet explains why, and contradicts itself on the way. Section
+4.7.2, the 4-line serial interface, lists 3, 16 and 18 bits per pixel as
+available formats - but its own data-format subsections are 4.7.2.1
+(3-bit) and 4.7.2.2 (18-bit) and nothing else. There is no "SPI data for
+16-bit/pixel" figure for this interface, while section 4.7.3 does have
+one for the 8-bit parallel bus. The chip has a COLMOD register bit for
+16-bit serial and no serial data path behind it.
+
+So the folklore is right, the bullet list is wrong, and the figures are
+the authority. **A frame is 480 x 320 x 3 = 460 800 bytes.**
+
+Measured throughput, SPI3 on pll1_q_ck:
+
+| SCK | full screen | frames/s |
+|---|---|---|
+| 15 MHz | 245 ms | 4 |
+| 30 MHz | ~122 ms | 8 |
+
+Both at the full bus rate, so the bus is the limit and DMA will free the
+CPU without making frames arrive faster. The clock ceiling is the panel's
+own write cycle, not the MCU's.
+
+READING THE PANEL BACK WORKS, and is worth more than it looks: it is how
+the format question was settled without anyone squinting at a screen.
+MISO is on PC11. One correction to the obvious implementation - **there
+is no dummy byte before the answer** for RDDCOLMOD; the data is the first
+byte returned. Many ILI9488 drivers skip a leading byte and so read the
+one after the answer, which for a register whose values are small looks
+exactly like a plausible zero.
 
 Note that 480 × 320 × 2 = 307 200 bytes, so unlike the DEEPSDR 101 a **full
 RGB565 framebuffer fits in AXI SRAM** with room to spare. The band-compositor

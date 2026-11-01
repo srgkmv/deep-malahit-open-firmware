@@ -183,33 +183,135 @@ int main(void)
      * formats - and then we use 16-bit, because it is a third less
      * data for the same picture.
      */
-    static const struct {
-        ili9488_fmt_t fmt;
-        const char   *fmt_name;
-        uint8_t       r, g, b;
-        const char   *colour;
-    } phases[] = {
-        { ILI9488_FMT_18BIT, "18-bit (3 bytes/px)", 255,   0,   0, "RED"   },
-        { ILI9488_FMT_16BIT, "16-bit (2 bytes/px)",   0, 255,   0, "GREEN" },
+    /*
+     * THREE PHASES, BECAUSE TWO WERE AMBIGUOUS.
+     *
+     * Red in 18-bit and green in 16-bit gave a screen that stayed red
+     * throughout. That is informative but not yet conclusive: a screen
+     * that never changes could mean the 16-bit write did nothing, or it
+     * could mean the panel stopped accepting anything at all after the
+     * first COLMOD change.
+     *
+     * Adding a third phase - blue, back in 18-bit - separates the two.
+     *
+     *   red, blue, red, blue ... and never green
+     *       -> 18-bit works, 16-bit is ignored. The panel discards
+     *          pixel data in a mode it does not support rather than
+     *          drawing something wrong, which is why nothing appeared.
+     *
+     *   red, then nothing ever again
+     *       -> the first COLMOD change wedged the panel, and the
+     *          question is still open.
+     *
+     * The bus is at 30 MHz for this run as well, double the previous
+     * one. If the colours are still clean at twice the clock, the frame
+     * time halves to about 122 ms and that is the number the interface
+     * gets designed around.
+     */
+    spi3_set_div(SPI3_DIV16);
+
+    /*
+     * ASK THE PANEL, DO NOT ASK A PERSON LOOKING AT IT.
+     *
+     * The datasheet settles what SHOULD be possible: with IM[2:0]
+     * strapped to 111 - and R23/R24/R25 pull all three to 3.3V on this
+     * board - the 4-line serial interface supports 3, 16 and 18 bits
+     * per pixel, DBI[2:0] = 001, 101 and 110. 16-bit is legal here, the
+     * folklore notwithstanding.
+     *
+     * But a green screen never appeared when 16-bit was selected, and
+     * "I only saw red" cannot distinguish between the panel ignoring
+     * the data, the panel ignoring the format change, or the two of us
+     * disagreeing about which six-second window was which.
+     *
+     * RDDCOLMOD (0x0C) returns the format the panel believes it is in.
+     * Write a format, read it back, and the panel answers for itself:
+     * 0x06 is 18 bits per pixel, 0x05 is 16. RDDID (0x04) goes first,
+     * because a read path that cannot fetch a known-constant device ID
+     * has no business being trusted about anything else.
+     */
+    spi3_set_div(SPI3_DIV16);
+
+    console_printf("\nAsking the panel directly\n");
+    console_printf("-------------------------\n");
+    console_printf("  raw bytes as they arrive, dummy included.\n");
+    console_printf("  0xD3 must contain 94 88 somewhere - that is the\n");
+    console_printf("  known answer, and where it lands gives the offset.\n\n");
+
+    static const struct { uint8_t cmd; const char *name; } regs[] = {
+        { 0xD3U, "RDDID4   (expect .. 00 94 88)" },
+        { 0x04U, "RDDID                        " },
+        { 0x09U, "RDDST    display status      " },
+        { 0x0CU, "RDDCOLMOD                    " },
     };
 
-    console_printf("\nTwo solid screens, six seconds each, round and round:\n");
-    console_printf("  18-bit -> RED      16-bit -> GREEN\n");
-    console_printf("Both clean and edge to edge = this panel takes both,\n");
-    console_printf("and 16-bit wins on size. Wrong colour or a band at the\n");
-    console_printf("bottom that never fills = that format is not supported.\n\n");
+    for (uint32_t r = 0; r < 4U; r++) {
+        uint8_t raw[6];
+        ili9488_read_raw(regs[r].cmd, raw, 6U);
+        console_printf("  %s : %02x %02x %02x %02x %02x %02x\n",
+                       regs[r].name,
+                       raw[0], raw[1], raw[2], raw[3], raw[4], raw[5]);
+    }
+
+    console_printf("\n  now the same register either side of a format change:\n");
+    for (uint32_t k = 0; k < 2U; k++) {
+        uint8_t raw[6];
+        ili9488_set_format((k == 0U) ? ILI9488_FMT_18BIT : ILI9488_FMT_16BIT);
+        ili9488_read_raw(0x0CU, raw, 6U);
+        console_printf("  COLMOD written 0x%02x -> 0x0C : %02x %02x %02x %02x %02x %02x\n",
+                       (k == 0U) ? 0x66U : 0x55U,
+                       raw[0], raw[1], raw[2], raw[3], raw[4], raw[5]);
+    }
+    console_printf("\n");
+
+    /*
+     * FOUR BANDS, TWICE, AND THE PANEL HAS ALREADY TOLD US THE
+     * INTERESTING PART.
+     *
+     * RDDCOLMOD reads back 0x05 after COLMOD 0x55, so 16-bit IS
+     * accepted - the panel says so itself. Which means the earlier
+     * "green never appeared" was not the panel refusing a format. It
+     * was our pixels being wrong in that format, and a wrong green is
+     * most likely a dark one, easily read as a gap between the red and
+     * the blue either side of it.
+     *
+     * So stop flashing whole screens of one colour. Four horizontal
+     * bands - white, red, green, blue - drawn once in 18-bit and once
+     * in 16-bit, put both formats on the screen in a form that can be
+     * compared rather than remembered. If the 16-bit picture has the
+     * same four bands in the same four colours, the format works and
+     * costs a third less data. If the colours are permuted, the byte
+     * order is wrong. If a band is missing or the picture is short,
+     * the pixel count is wrong.
+     */
+    static const struct { uint8_t r, g, b; const char *name; } bands[] = {
+        { 255, 255, 255, "white" },
+        { 255,   0,   0, "red"   },
+        {   0, 255,   0, "green" },
+        {   0,   0, 255, "blue"  },
+    };
+
+    console_printf("Four horizontal bands, top to bottom:\n");
+    console_printf("  WHITE / RED / GREEN / BLUE\n");
+    console_printf("Six seconds in 18-bit, six in 16-bit, round and round.\n");
+    console_printf("Same four colours both times = 16-bit works.\n\n");
 
     uint32_t round = 0;
 
     for (;;) {
-        uint32_t i = round % 2U;
+        ili9488_fmt_t fmt = ((round & 1U) == 0U) ? ILI9488_FMT_18BIT
+                                                 : ILI9488_FMT_16BIT;
+        ili9488_set_format(fmt);
 
-        ili9488_set_format(phases[i].fmt);
-        ili9488_fill_screen(phases[i].r, phases[i].g, phases[i].b);
+        uint32_t bh = ILI9488_H / 4U;
+        for (uint32_t i = 0; i < 4U; i++) {
+            ili9488_fill_rect(0U, (uint16_t)(i * bh), ILI9488_W, (uint16_t)bh,
+                              bands[i].r, bands[i].g, bands[i].b);
+        }
 
-        console_printf("NOW SHOWING: %s  in %s   (%u ms to paint)\n",
-                       phases[i].colour, phases[i].fmt_name,
-                       ili9488_last_fill_us() / 1000U);
+        console_printf("NOW SHOWING: four bands in %s  (COLMOD reads back 0x%02x)\n",
+                       (fmt == ILI9488_FMT_18BIT) ? "18-bit" : "16-bit",
+                       ili9488_read_reg(0x0CU, 1U));
 
         uint32_t until = board_millis() + 6000U;
         while ((int32_t)(board_millis() - until) < 0) {

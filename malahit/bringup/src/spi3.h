@@ -52,6 +52,22 @@ void spi3_set_div(spi3_div_t div);
 /* Actual SCK frequency for the current divider, for reporting. */
 uint32_t spi3_hz(void);
 
+/*
+ * Read bytes back from the panel.
+ *
+ * The driver is configured simplex-transmit, which is right for pushing
+ * pixels and useless for asking the panel a question, so this switches
+ * to full duplex for the duration and back afterwards. It also drops
+ * the clock: ILI9488 read cycles are specified far slower than writes,
+ * and a read that works at 15 MHz on one board will not on the next.
+ *
+ * Asking the panel is worth the trouble. Whether it accepted a pixel
+ * format is otherwise decided by a human looking at a screen and saying
+ * what colour it seems to be, which is exactly the kind of evidence
+ * that has already sent this project down two wrong paths today.
+ */
+void spi3_read(uint8_t *data, uint32_t len);
+
 /* CFG2 as the peripheral actually holds it. Master mode can be cleared
  * by hardware on a mode fault, so this is worth checking after init
  * rather than assuming the write landed - see spi3.c. */

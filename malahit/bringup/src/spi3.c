@@ -201,3 +201,41 @@ void spi3_write_repeat(const uint8_t *pattern, uint32_t pattern_len,
         total -= chunk;
     }
 }
+
+void spi3_read(uint8_t *data, uint32_t len)
+{
+    spi3_div_t saved = s_div;
+
+    SPI3->CR1 &= ~SPI_CR1_SPE;
+
+    /* Full duplex, and slow: reads are the fragile direction. */
+    SPI3->CFG2 = (SPI3->CFG2 & ~SPI_CFG2_COMM_Msk);
+    SPI3->CFG1 = (SPI3->CFG1 & ~SPI_CFG1_MBR_Msk)
+               | ((uint32_t)SPI3_DIV64 << SPI_CFG1_MBR_Pos);
+
+    SPI3->IFCR = 0xFFFFFFFFU;
+    SPI3->CR2  = len;
+    SPI3->CR1 |= SPI_CR1_SPE;
+    SPI3->CR1 |= SPI_CR1_CSTART;
+
+    volatile uint8_t *txdr = (volatile uint8_t *)&SPI3->TXDR;
+    volatile uint8_t *rxdr = (volatile uint8_t *)&SPI3->RXDR;
+
+    for (uint32_t i = 0; i < len; i++) {
+        while (!(SPI3->SR & SPI_SR_TXP)) { }
+        *txdr = 0x00U;                      /* clock out anything */
+        while (!(SPI3->SR & SPI_SR_RXP)) { }
+        data[i] = *rxdr;
+    }
+
+    while (!(SPI3->SR & SPI_SR_EOT)) { }
+    SPI3->IFCR = 0xFFFFFFFFU;
+    SPI3->CR1 &= ~SPI_CR1_SPE;
+
+    /* Back to transmit-only at the previous speed. */
+    SPI3->CFG2 = (SPI3->CFG2 & ~SPI_CFG2_COMM_Msk)
+               | (1UL << SPI_CFG2_COMM_Pos);
+    SPI3->CFG1 = (SPI3->CFG1 & ~SPI_CFG1_MBR_Msk)
+               | ((uint32_t)saved << SPI_CFG1_MBR_Pos);
+    s_div = saved;
+}
