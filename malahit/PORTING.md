@@ -146,7 +146,9 @@ Each step should end with something visible on the radio.
    longer has to be power-cycled out of: see `src/fault.c`.
 2. **Panel.** ILI9488 over SPI3. Measure the real throughput and settle the
    16-bit-versus-18-bit-per-pixel question.
-3. **Touch.** Identify the controller on I2C3, read coordinates.
+3. **Touch.** *Done* — FT6236 at 0x38 on I2C3, CIPHER 0x36 and
+   FOCALTECH_ID 0x11. Coordinates decoded and mapped to the landscape
+   display; see `BOARD.md` §6. `src/i2c3.c` is the bus driver.
 4. **Codec.** NAU8822 control over SPI, SAI1 master with MCLK = 256 × Fs,
    loopback a tone. Find the maximum stable Fs — this answers §3.2.
 5. **Tuner.** MSi001 register sequence, tune, check I/Q quality and what

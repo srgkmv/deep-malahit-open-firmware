@@ -461,15 +461,70 @@ RGB565 framebuffer fits in AXI SRAM** with room to spare. The band-compositor
 approach in `gfx2.c` exists because the GD32 had 192 kB; it is not needed
 here.
 
-### Touch
+### Touch — FT6236, address 0x38
 
-Capacitive, on **I2C3** (`PA8` SCL / `PC9` SDA) with IRQ on `PC8` and reset
-on `PC7`. The controller part number is not given on the schematic — read its
-I²C address off the bus, or open the unit. Likely an FT6x36 or GT911.
+Capacitive, on **I2C3** (`PA8` SCL / `PC9` SDA) with IRQ on `PC8` and
+reset on `PC7`. The schematic never names the controller; the bus does.
 
-The DEEPSDR 101 uses a resistive XPT2046 over bit-banged SPI, so
-`User/touch.c` and `User/touch_calib.c` are replaced wholesale; capacitive
-panels need no calibration.
+Confirmed on hardware by scanning 0x08..0x77 — exactly one device
+answers:
+
+```
+bus idle levels: SCL=1 SDA=1
+  device at 0x38
+  0x38 chip id 0x36, vendor 0x11   <- CIPHER 0x36, FOCALTECH_ID 0x11
+```
+
+That is an **FT6236** (the family runs FT6206/FT6236/FT6336/FT6436,
+distinguished by CIPHER at 0xA3). Register map in
+`docs/FT6236-FT6336-FT6436L-FT6436_Datasheet.pdf`; the useful part is
+the first fifteen bytes:
+
+| Reg | Meaning |
+|---|---|
+| 0x00 | DEV_MODE |
+| 0x01 | GEST_ID |
+| 0x02 | TD_STATUS, `[3:0]` = points down |
+| 0x03 | P1_XH — `[7:6]` event, `[3:0]` X high nibble |
+| 0x04 | P1_XL |
+| 0x05 | P1_YH — `[7:4]` touch id, `[3:0]` Y high nibble |
+| 0x06 | P1_YL |
+| 0x07 | P1_WEIGHT — reads 0 on this part |
+| 0x08 | P1_MISC — area, reads 0 |
+| 0x09–0x0E | the same six for a second finger |
+| 0xA3 | CIPHER = 0x36 |
+| 0xA4 | G_MODE — see below |
+| 0xA8 | FOCALTECH_ID = 0x11 |
+
+Event is 00 press, 01 lift, 10 contact, 11 none.
+
+**Set G_MODE (0xA4) to 0x00.** It powers up at 0x01, "interrupt trigger
+mode", where INT gives a pulse per report instead of sitting low while a
+finger is down. Code that samples the pin level misses the pulses
+between samples and concludes the panel is dead. 0x00 is level mode.
+
+**Coordinates come in the panel's own orientation**, 320 across by 480
+down, portrait, while the display is driven landscape. Measured over 910
+reported points: `tx` spans 0..314 and `ty` spans 10..479, so the full
+native range with no scaling needed. The transform is a swap and one
+mirror:
+
+```c
+screen_x = ty;                 /* 0..479 */
+screen_y = ILI9488_H - 1 - tx; /* 0..319 */
+```
+
+Verified by drawing a square where the firmware thinks the finger is: it
+lands under the finger, slightly to the right. The residual is small and
+uniform, so it is the touch glass sitting a little off the matrix rather
+than anything in the arithmetic — a calibration offset, not a formula
+change.
+
+**One oddity, unexplained.** `PC8` reads LOW continuously, with or
+without a finger. Nothing depends on it — the driver polls TD_STATUS on
+a timer and believes the register — but an interrupt-driven driver
+cannot be written until this is understood. Suspect the line's polarity
+or a missing pull-up.
 
 ### FM25W256 — FRAM
 

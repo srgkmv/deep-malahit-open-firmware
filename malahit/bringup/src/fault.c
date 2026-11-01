@@ -18,7 +18,24 @@
  */
 static void fault_park(void)
 {
-    for (;;) { }
+    /*
+     * Keep feeding the watchdog while parked.
+     *
+     * A crashed run that stops feeding it gets reset a few seconds
+     * later, the reset drops PC6, the switched rail dies and the radio
+     * switches itself off - taking with it the crash record, the
+     * debug port and any chance of looking at what happened. The whole
+     * point of parking instead of spinning in the handler was to leave
+     * the machine inspectable; letting the watchdog undo that would be
+     * silly.
+     *
+     * Written straight to the register rather than through
+     * board_watchdog_feed(), because this runs after a fault and
+     * should not depend on anything that might be what broke.
+     */
+    for (;;) {
+        IWDG1->KR = 0xAAAAU;
+    }
 }
 
 void fault_record(uint32_t *frame, uint32_t exc_return)

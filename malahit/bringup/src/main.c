@@ -35,6 +35,29 @@
 #include "fault.h"
 #include "spi3.h"
 #include "ili9488.h"
+#include "i2c3.h"
+
+/*
+ * HOW FAR DID IT GET.
+ *
+ * A single number, bumped at each stage of startup, living at a fixed
+ * place in memory so it can be read over SWD with one command:
+ *
+ *     swd.sh -c init -c halt -c "mdw <addr> 1"
+ *
+ * This exists because the console is not trustworthy enough to be the
+ * only witness. Several runs have produced zero bytes on the UART
+ * while the firmware was demonstrably executing, and when the evidence
+ * and the machine disagree the machine wins. A progress marker cannot
+ * be lost to a baud rate, a termios setting, a capture that started
+ * late, or a radio that switched off between the output and the eye.
+ *
+ * Deliberately NOT in .bss: a value of zero has to mean "stopped
+ * before the first marker", and .bss is full of zeros already. It
+ * starts at 0xFFFFFFFF, which no stage ever writes.
+ */
+uint32_t g_phase = 0xFFFFFFFFU;
+#define PHASE(n)  do { g_phase = (n); __DSB(); } while (0)
 
 static const char *clock_error_text(int status)
 {
@@ -109,9 +132,12 @@ int main(void)
      * them will answer - which from the debugger looks exactly like a
      * driver bug. See board.h.
      */
+    PHASE(1);
     board_power_on();
+    PHASE(2);
 
     console_init();
+    PHASE(3);
 
     /*
      * Before anything else this run has to say: did the last run die?
@@ -124,8 +150,10 @@ int main(void)
      * firmware, and this is the thing that would have said so in one line.
      */
     fault_report_previous();
+    PHASE(4);
 
     report();
+    PHASE(5);
 
     /*
      * STEP 2: THE PANEL, AND THE QUESTION IT HAS TO ANSWER.
@@ -145,13 +173,16 @@ int main(void)
      * against - not a calculation from the clock rate, which ignores the
      * per-byte overhead that turns out to dominate.
      */
+    PHASE(6);
     spi3_init(SPI3_DIV16);
+    PHASE(7);
     uint32_t cfg2 = spi3_check();
     console_printf("panel     : SPI3 at %u Hz, CFG2 0x%08x%s\n",
                    spi3_hz(), cfg2,
                    (cfg2 & (1UL << 22)) ? "" :
                    "  *** MASTER BIT CLEARED - mode fault, SPI will not clock ***");
     ili9488_init(ILI9488_FMT_18BIT);
+    PHASE(8);
     board_backlight(1);
     console_printf("panel     : initialised, backlight on\n\n");
 
@@ -265,59 +296,226 @@ int main(void)
     console_printf("\n");
 
     /*
-     * FOUR BANDS, TWICE, AND THE PANEL HAS ALREADY TOLD US THE
-     * INTERESTING PART.
+     * STEP 3: FIND OUT WHAT THE TOUCH PANEL IS.
      *
-     * RDDCOLMOD reads back 0x05 after COLMOD 0x55, so 16-bit IS
-     * accepted - the panel says so itself. Which means the earlier
-     * "green never appeared" was not the panel refusing a format. It
-     * was our pixels being wrong in that format, and a wrong green is
-     * most likely a dark one, easily read as a gap between the red and
-     * the blue either side of it.
+     * The schematic names four nets - I2C3_TOUCH_SCL, _SDA, _IRQ,
+     * _RST - and never says which controller is behind them. So ask
+     * the bus. A scan of the 7-bit address space takes a moment and
+     * narrows it to one or two candidates immediately, because the
+     * usual suspects live at known addresses:
      *
-     * So stop flashing whole screens of one colour. Four horizontal
-     * bands - white, red, green, blue - drawn once in 18-bit and once
-     * in 16-bit, put both formats on the screen in a form that can be
-     * compared rather than remembered. If the 16-bit picture has the
-     * same four bands in the same four colours, the format works and
-     * costs a third less data. If the colours are permuted, the byte
-     * order is wrong. If a band is missing or the picture is short,
-     * the pixel count is wrong.
+     *   0x38          FT6206 / FT6236 / FT6336, by far the most common
+     *   0x5D or 0x14  GT911
+     *   0x15          CST816 and relatives
+     *   0x48          NS2009, a resistive controller with an I2C face
+     *
+     * Then read whatever identifies it, and dump the first registers
+     * raw either way - a name is nice but the register contents are
+     * what the driver gets written against.
      */
-    static const struct { uint8_t r, g, b; const char *name; } bands[] = {
-        { 255, 255, 255, "white" },
-        { 255,   0,   0, "red"   },
-        {   0, 255,   0, "green" },
-        {   0,   0, 255, "blue"  },
-    };
+    PHASE(9);
+    i2c3_init();
+    PHASE(10);
+    console_printf("\nTouch panel on I2C3 (PA8 SCL, PC9 SDA)\n");
+    console_printf("-------------------------------------\n");
 
-    console_printf("Four horizontal bands, top to bottom:\n");
-    console_printf("  WHITE / RED / GREEN / BLUE\n");
-    console_printf("Six seconds in 18-bit, six in 16-bit, round and round.\n");
-    console_printf("Same four colours both times = 16-bit works.\n\n");
+    i2c3_touch_reset();
+    PHASE(11);
+    console_printf("  reset pulsed on PC7; IRQ (PC8) reads %s\n",
+                   i2c3_touch_irq_asserted() ? "LOW - asserted"
+                                             : "high - idle");
 
-    uint32_t round = 0;
+    PHASE(12);
+    uint32_t lines = i2c3_line_levels();
+    PHASE(13);
+    console_printf("  bus idle levels: SCL=%u SDA=%u  %s\n",
+                   (lines >> 1) & 1U, lines & 1U,
+                   (lines == 3U) ? "(both high, as they should be)"
+                                 : "*** A LINE IS LOW - no pull-ups, a "
+                                   "stuck device, or the wrong pins ***");
+
+    console_printf("  scanning 0x08..0x77 ...\n");
+
+    uint8_t found[8];
+    uint32_t nfound = 0;
+
+    PHASE(14);
+    for (uint8_t a = 0x08U; a <= 0x77U; a++) {
+        g_phase = 0x1400U | a;
+        board_watchdog_feed();
+        if (i2c3_probe(a)) {
+            console_printf("    device at 0x%02x\n", a);
+            if (nfound < 8U) { found[nfound++] = a; }
+        }
+    }
+
+    PHASE(15);
+    if (nfound == 0U) {
+        console_printf("    NOTHING ANSWERED.\n"
+                       "    Either the bus is not pulled up, or the\n"
+                       "    controller is still held in reset, or SCL and\n"
+                       "    SDA are not where the schematic says.\n");
+    }
+
+    /* Dump the low registers of whatever answered. Done with a repeated
+     * start - write the register index, read back - which is how all of
+     * these parts are addressed. */
+    PHASE(16);
+    for (uint32_t d = 0; d < nfound; d++) {
+        uint8_t reg0 = 0x00U;
+        uint8_t buf[16];
+
+        board_watchdog_feed();
+        if (i2c3_write_read(found[d], &reg0, 1U, buf, 16U)) {
+            console_printf("  0x%02x regs 0x00..0x0f:", found[d]);
+            for (uint32_t i = 0; i < 16U; i++) {
+                console_printf(" %02x", buf[i]);
+            }
+            console_printf("\n");
+        } else {
+            console_printf("  0x%02x did not answer a register read\n",
+                           found[d]);
+        }
+
+        /* FT6x36 keeps its identity high up: 0xA3 is the chip code
+         * (0x36, 0x64, 0x11 and friends) and 0xA8 the vendor, 0x11 for
+         * FocalTech. Harmless to ask of anything else. */
+        uint8_t rega = 0xA3U;
+        uint8_t id[2];
+        if (i2c3_write_read(found[d], &rega, 1U, id, 1U)) {
+            uint8_t regv = 0xA8U;
+            uint8_t vend = 0;
+            (void)i2c3_write_read(found[d], &regv, 1U, &vend, 1U);
+            console_printf("  0x%02x chip id 0x%02x, vendor 0x%02x%s\n",
+                           found[d], id[0], vend,
+                           (vend == 0x11U) ? "  <- FocalTech FT6x36" : "");
+        }
+
+        /* GT911 answers at 0x8140 with four ASCII bytes naming itself. */
+        uint8_t gt[2] = { 0x81U, 0x40U };
+        uint8_t pid[4];
+        if (i2c3_write_read(found[d], gt, 2U, pid, 4U)) {
+            console_printf("  0x%02x id-at-0x8140 = '%c%c%c%c'\n",
+                           found[d],
+                           (pid[0] >= 32 && pid[0] < 127) ? pid[0] : '.',
+                           (pid[1] >= 32 && pid[1] < 127) ? pid[1] : '.',
+                           (pid[2] >= 32 && pid[2] < 127) ? pid[2] : '.',
+                           (pid[3] >= 32 && pid[3] < 127) ? pid[3] : '.');
+        }
+    }
+
+    /*
+     * FT6236 / FT6236U, per the user. Register map, which is shared by
+     * the whole FT6x06/FT6x36 family:
+     *
+     *   0x00 DEV_MODE      0 = normal reporting
+     *   0x01 GEST_ID       gesture, 0 when the firmware has none
+     *   0x02 TD_STATUS     [3:0] = number of points currently down
+     *   0x03 P1_XH         [7:6] event, [3:0] X high nibble
+     *   0x04 P1_XL                        X low byte
+     *   0x05 P1_YH         [7:4] touch id, [3:0] Y high nibble
+     *   0x06 P1_YL                        Y low byte
+     *   0x07 P1_WEIGHT     pressure, often unimplemented
+     *   0x08 P1_MISC       [7:4] contact area
+     *   0x09..0x0E         the same six bytes for the second finger
+     *
+     * The event field is 00 press down, 01 lift up, 10 contact, 11 none.
+     *
+     * COORDINATES ARE IN THE PANEL'S OWN ORIENTATION - 320 across by 480
+     * down, portrait - while the display is driven landscape through
+     * MADCTL 0x28. So they need swapping, and probably mirroring in one
+     * axis. Rather than reason about which, the code draws a white
+     * square where it thinks the finger is: if the square lands under
+     * the finger the mapping is right, and if it lands somewhere else
+     * its position says exactly which transform is missing.
+     */
+    #define FT_ADDR  0x38U
+
+    console_printf("\n  Touch the screen. A white square should appear\n");
+    console_printf("  under your finger. Where it actually appears tells\n");
+    console_printf("  us the orientation mapping.\n\n");
+
+    /*
+     * G_MODE = 0x00, interrupt POLLING mode.
+     *
+     * The datasheet's default is 0x01, interrupt TRIGGER mode, where
+     * the INT pin gives a pulse per report rather than sitting low for
+     * as long as a finger is down. A loop that samples the pin level
+     * misses pulses between samples and concludes the panel is dead.
+     * In polling mode the line stays low while there is a contact,
+     * which is what level-sampling wants.
+     *
+     * The loop below does not depend on it either way: it reads
+     * TD_STATUS on a timer and believes the register, not the wire.
+     * The IRQ state is printed alongside so the two can be compared,
+     * because an interrupt-driven driver is what this eventually
+     * becomes and it is worth knowing now whether the line behaves.
+     */
+    {
+        PHASE(17);
+        uint8_t gmode[2] = { 0xA4U, 0x00U };
+        console_printf("  G_MODE <- 0x00 (level, not pulse): %s\n",
+                       i2c3_write(FT_ADDR, gmode, 2U) ? "ok" : "FAILED");
+    }
+
+    ili9488_set_format(ILI9488_FMT_18BIT);
+    ili9488_fill_screen(0U, 0U, 0U);
+
+    PHASE(18);
+    uint32_t last_beat = 0;
+    uint32_t touches = 0;
 
     for (;;) {
-        ili9488_fmt_t fmt = ((round & 1U) == 0U) ? ILI9488_FMT_18BIT
-                                                 : ILI9488_FMT_16BIT;
-        ili9488_set_format(fmt);
+        PHASE(19);
+        board_watchdog_feed();
 
-        uint32_t bh = ILI9488_H / 4U;
-        for (uint32_t i = 0; i < 4U; i++) {
-            ili9488_fill_rect(0U, (uint16_t)(i * bh), ILI9488_W, (uint16_t)bh,
-                              bands[i].r, bands[i].g, bands[i].b);
+        {
+            uint8_t reg0 = 0x00U;
+            uint8_t b[9];
+
+            if (i2c3_write_read(FT_ADDR, &reg0, 1U, b, 9U)
+                && (b[0x02] & 0x0FU) != 0U) {
+                uint32_t npoints = b[0x02] & 0x0FU;
+                uint32_t event   = (uint32_t)(b[0x03] >> 6);
+                uint32_t tx      = (((uint32_t)b[0x03] & 0x0FU) << 8) | b[0x04];
+                uint32_t ty      = (((uint32_t)b[0x05] & 0x0FU) << 8) | b[0x06];
+                uint32_t weight  = b[0x07];
+                uint32_t area    = (uint32_t)(b[0x08] >> 4);
+
+                /*
+                 * First guess at the transform: swap the axes, because
+                 * the panel is portrait and the display is landscape,
+                 * and mirror Y so that the origin ends up in the same
+                 * corner. Both halves are guesses and the square on
+                 * screen is the test.
+                 */
+                uint32_t sx = ty;
+                uint32_t sy = (tx < ILI9488_H) ? (ILI9488_H - 1U - tx) : 0U;
+
+                if (sx > ILI9488_W - 1U) { sx = ILI9488_W - 1U; }
+                if (sy > ILI9488_H - 1U) { sy = ILI9488_H - 1U; }
+
+                console_printf("  n=%u ev=%u raw(%u,%u) -> screen(%u,%u) "
+                               "w=%u a=%u\n",
+                               npoints, event, tx, ty, sx, sy, weight, area);
+
+                if (npoints > 0U) {
+                    uint16_t x = (uint16_t)((sx > 10U) ? (sx - 10U) : 0U);
+                    uint16_t y = (uint16_t)((sy > 10U) ? (sy - 10U) : 0U);
+                    if (x > ILI9488_W - 20U) { x = ILI9488_W - 20U; }
+                    if (y > ILI9488_H - 20U) { y = ILI9488_H - 20U; }
+                    ili9488_fill_rect(x, y, 20U, 20U, 255U, 255U, 255U);
+                    touches++;
+                }
+            }
+            board_delay_ms(30);
         }
 
-        console_printf("NOW SHOWING: four bands in %s  (COLMOD reads back 0x%02x)\n",
-                       (fmt == ILI9488_FMT_18BIT) ? "18-bit" : "16-bit",
-                       ili9488_read_reg(0x0CU, 1U));
-
-        uint32_t until = board_millis() + 6000U;
-        while ((int32_t)(board_millis() - until) < 0) {
-            board_watchdog_feed();
-            __WFI();
+        if ((int32_t)(board_millis() - last_beat) > 3000) {
+            last_beat = board_millis();
+            console_printf("  [%u s] %u touches so far, IRQ %s\n",
+                           board_millis() / 1000U, touches,
+                           i2c3_touch_irq_asserted() ? "LOW" : "high");
         }
-        round++;
     }
 }
