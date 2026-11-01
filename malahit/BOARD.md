@@ -8,6 +8,13 @@ marked **[measured]**, confirmed on a real unit over SWD.
 This is *not* the DEEPSDR 101 board. See `../README.md` for the firmware this
 port starts from, and `PORTING.md` for what has to change.
 
+**Datasheets live in `../../docs/`**, outside the repository: MSi001,
+NAU8822 (Rev 3.3), ILI9488, FT6236, FM25W256, PE4259, PE42641, BGA614 and
+the FT2232D. Every page reference in this file is to the copy there.
+Anything quoted from one is quoted rather than remembered — several of
+the expensive mistakes in this port came from recalling a register map
+instead of opening it.
+
 ---
 
 ## 1. MCU
@@ -78,8 +85,29 @@ C71/C72 = 10 pF. Backup domain is fed from `CPU_VBAT`.
 `SAI1_CODEC_MCLK` is an **MCU output** (`PE2`), so the STM32 is the clock
 master and the NAU8822 is the slave. MCLK must be exactly **256 × Fs**. The
 stock firmware runs 160 / 80 / 40 kHz (panorama spans 160 / 80 / 40 kHz);
-the DEEPSDR firmware assumes 192 / 96 / 48 kHz. Which of the two this port
-ends up using is an open question — see `PORTING.md`.
+the DEEPSDR firmware assumes 192 / 96 / 48 kHz.
+
+**Settled on hardware, 01/11/2026: this board holds 192 / 96 / 48 kHz**,
+and stays clean all the way to 320 kHz. So the port keeps the DEEPSDR
+rates. `PORTING.md` §3.2 has the measured table.
+
+MCLK comes from **PLL2, dedicated to the audio chain** and retuned for
+every sample rate, because the kernel clock has to be an exact multiple
+of 256 × Fs and `pll1_q_ck` (240 MHz, the SPI3 clock) is not. With
+`NODIV` = 0 and `OSR` = 0 the SAI generates
+
+    sai1_ker_ck = 256 × Fs × MCKDIV,    MCKDIV = 1..63
+
+and derives FS and BCLK from the same chain, which also satisfies the
+codec's requirement that FS, BCLK and IMCLK all share one reference.
+PLL2's reference is fixed at 11 MHz (`DIVM2` = 2) rather than the 2 MHz
+PLL1 has to live with: MCLK jitter lands directly on the I/Q sampling
+instants, so on this radio it is the receiver's own noise floor.
+
+**Odd values of `DIVP2` are legal** — confirmed on hardware, with P = 67,
+23 and 18 all producing the right measured frame rate. RM0433 forbids
+odd `DIVP1` and says nothing of the kind about PLL2 or PLL3, and the
+solver uses that freedom.
 
 ---
 
@@ -331,6 +359,26 @@ notes under the table.
 > The SAI mapping is a textbook full-duplex pair: block **A** is the master
 > transmitter (FS + SCK + SD_A to the codec DAC), block **B** is the
 > synchronous slave receiver (SD_B from the codec ADC, carrying I/Q).
+>
+> **`CKSTR` must be SET on the receiving block** — measured, because the
+> documentation is not reliable here. RM0433 describes `CKSTR` = 0 as
+> sampling received data on the rising edge, which is what I²S wants;
+> ST's own HAL sets `CKSTR` for every receiver, which says the opposite.
+> On this board, clear is wrong and set is right.
+>
+> Getting it wrong does not look like a timing error, which is why it
+> cost a cycle to find. Sampling on the same edge the codec changes its
+> data returns the PREVIOUS bit, so every sample arrives shifted one
+> place and the sign bit is whatever the last bit of the previous slot
+> happened to be. A quiet input reading −310 then comes back alternating
+> between +32613 and −155, and the summary statistics — mean 16384, rms
+> 16384 — are arithmetically indistinguishable from an overloaded input.
+> It sends you looking in the analogue half of the board.
+>
+> What settles it is the raw words. `7f65 ff62 ff68 ff64 7f65` — only
+> bit 15 moving, everything below it near-constant — is a framing
+> offset and cannot be a signal. `bringup/src/main.c` now tries all four
+> combinations at startup and picks the one that reads near zero.
 
 ### Port H
 
@@ -356,9 +404,149 @@ I/Q baseband goes to the codec's microphone inputs:
 Known hardware limit, not a firmware one: the PLL cannot cover roughly
 **263–390 MHz**.
 
-Input band filters are switched by `BPF1`…`BPF6` (`PE10`–`PE15`) plus the
-preamp on `PE0`. The mapping from frequency to filter still has to be
-determined — see `PORTING.md`.
+Control format, datasheet §5: **24-bit words, MSB first, clocked in on the
+rising edge of CLK, and latched on the RISING EDGE OF EN** — so EN is an
+ordinary active-low chip select and its rising edge *is* the write. The
+**address is the last four bits sent**, i.e. the bottom of the word, with
+data from bit 4 up. Nine-plus-twenty-bit fields and an address at the
+bottom mean a byte-oriented driver cannot talk to this part at all;
+`src/msi001.c` uses SPI1 with a native 24-bit frame.
+
+The bit layout was checked against both worked examples in datasheet
+table 16 before any of it ran — THRESH = 312 decodes from its register
+word, and INT = 32 with FRAC = 51 gives exactly 1672.5 MHz for a 26 MHz
+part. Also, in one line of body text outside the register table:
+**register 5 bits 19 and 21 must be set high**, which the table itself
+contradicts for bit 19. The worked example settles it; both are set.
+
+### Synthesiser, with a 22 MHz reference **[measured]**
+
+`XTAL_SEL` = 001, and that choice also fixes the AM up-convert first IF at
+**132 MHz** (table 23 — each supported crystal has its own value).
+
+    FLO = (4 × FREF1 / LODIV) × (INT + (FRAC × 4096 + AFC) / (THRESH × 4096))
+
+with `THRESH` pinned at 4095, giving a tuning step of **0.33 Hz** in AM
+mode. LO dividers: AM 16, VHF 32, B3 16, B4/5 4, L 2. In the AM modes the
+LO must clear the first IF too, so `FLO = Fc + 132 MHz`; everywhere else
+it sits on the carrier.
+
+Verified on the bench against a generator at 10.000 MHz: tuning to
+9 997 000 Hz computed `INT` = 25, `FRAC` = 3348, `AFC` = 905, reported 0 Hz
+error, and sweeping the tuned frequency ±5 kHz in 500 Hz steps put the
+response peak **exactly** on the predicted tuning with about 20 dB of
+discrimination against neighbouring steps.
+
+### Band filters **[measured]**
+
+Three PE42641 SP4T switches, controlled by `BPF1`…`BPF6` (`PE10`–`PE15`),
+plus the preamp on `PE0`. Truth table: `RF1` = V2:0 V1:0, `RF2` = 1,0,
+`RF3` = 0,1, `RF4` = 1,1. Each switch is drawn in the same style, with
+`V2` taking the lower-numbered line of its pair:
+
+| Switch | V2 | V1 |
+|---|---|---|
+| input (RF_IN → filter) | `BPF3` | `BPF4` |
+| output (filter → tuner) | `BPF5` | `BPF6` |
+| VHF sub-band | `BPF1` | `BPF2` |
+
+**The two switches do not use the same code for the same band**, because
+each filter is wired to a different port at each end. This is the trap in
+this bank: selecting a band by writing the same two bits to both ends
+connects the input of one filter to the output of another, and the result
+is not a weak signal but no signal.
+
+| Band | input port | output port | mask (BPF1 = bit 0) |
+|---|---|---|---|
+| 0–12 MHz | RF2 (1,0) | RF2 (1,0) | **0x14** |
+| 12–30 MHz | RF4 (1,1) | RF1 (0,0) | **0x0C** |
+| 30–60 MHz | RF1 (0,0) | RF4 (1,1) | **0x30** |
+| VHF | RF3 (0,1) | RF3 (0,1) | **0x28** + sub-band |
+
+VHF sub-band switch: VHF1 = RF1 (0x00), B4/5 = RF2 (0x01), L band = RF3
+(0x02), VHF2 = RF4 (0x03).
+
+Confirmed by sweeping all 64 combinations against the 10 MHz generator.
+Exactly two paths pass strongly and they are the two whose passbands
+border 10 MHz — 0x14 (the 0–12 filter) and 0x0C (the 12–30 filter) — at
+about **23 dB** above the other 60 combinations. `BPF1`/`BPF2` are
+don't-care on HF, so each real path appears four times in the sweep.
+
+### Front end gains **[measured]**
+
+At 10 MHz, against the same generator, levels taken from the **FFT peak**:
+
+| Change | Carrier level | peak at |
+|---|---|---|
+| AM **port 2** (75 Ω), preamp off, 0 dB GR | −18.4 dBFS | +3000 Hz |
+| AM **port 1** (1 kΩ), preamp off, 0 dB GR | −43.1 dBFS | −937 Hz |
+| AM port 2, **preamp on** | −3.7 dBFS | +3000 Hz |
+| AM port 2, 20 dB gain reduction | −37.7 dBFS | +3000 Hz |
+| AM port 2, 40 dB gain reduction | −58.0 dBFS | +3000 Hz |
+| AM port 2, 59 dB gain reduction | −75.3 dBFS | +71625 Hz |
+
+**Use AM port 2.** It is at least 24.7 dB better here, which is what the
+input impedances predict — port 1 is 1 kΩ for a ferrite rod, port 2 is
+75 Ω for an antenna, and this board feeds the tuner from the filter bank.
+"At least", because on port 1 the carrier is no longer the strongest
+thing in the band: the peak column shows the search landing on something
+else at −937 Hz, which is the measurement saying so rather than
+pretending. The same happens at 59 dB of gain reduction.
+
+The preamp (BGA614 on `PE0`) is worth **+14.7 dB**. Programmed gain
+reduction tracks measurement within about 0.7 dB at 20 dB and 0.4 dB at
+40 dB, which is the evidence that register 1 is being written correctly.
+
+> ### Do not measure an absolute level in a single DFT bin
+>
+> These figures were first taken with `iq_measure()`, which evaluates one
+> bin at exactly Fs/64 — arithmetically perfect and the wrong instrument.
+> **The generator and this radio do not share a reference**, so the
+> carrier arrives at 3000 Hz plus whatever the two oscillators disagree
+> by. That bin is 192000/8192 = 23.4 Hz wide, so an offset of a hundred
+> hertz puts the carrier several bins away and the measurement reads
+> mostly window skirt.
+>
+> It under-read by **16 dB**: −20.6 dBFS against the FFT's −3.7 dBFS for
+> the same signal. Everything *relative* in the table above survived,
+> because the offset is common to all the rows and cancels in a ratio;
+> the absolute numbers did not, and are corrected here.
+>
+> Image rejection is a ratio of two bins equally far off-tune, so it
+> survives too — but it still has to be measured with the carrier clear
+> of the noise floor.
+
+Note that all three gain controls are **reductions**: zero means maximum
+sensitivity, the opposite of what most of the upstream AGC code assumes.
+
+### I/Q quality **[measured]**
+
+With the carrier well clear of the noise floor (preamp on):
+
+- **image rejection 22.7 to 32.2 dB** uncorrected, across runs
+- **DC / LO leakage −7.7 dBFS, which is 15 dB *above* the carrier** and
+  only 8 dB from clipping the ADC
+
+The image figure is what `iqbal.c` exists to improve on. **The DC figure
+is the open problem of the RF chain**: with the preamp on, the mixer's own
+offset is within 8 dB of full scale, so most of the ADC's range is being
+spent digitising the receiver's own error rather than signal. That is a
+sensitivity loss, not a cosmetic one, and it is the first thing to attack
+in step 7.
+
+More precisely: the mixer's own offset is the largest single
+thing in the band and it eats ADC headroom that the wanted signal could
+have used. `src/msi001.c` currently selects **static** DC calibration,
+which recalibrates on every synthesiser programming and then holds — the
+right choice for a receiver, since the periodic and continuous modes keep
+digging a hole at DC, and on a zero-IF receiver DC is the tuned frequency
+itself. If the leakage turns out to drift, register 6's timers and the
+periodic modes are the answer, but that should be a response to measured
+drift rather than a precaution.
+
+Measuring either number needs care: with the preamp off the image sits in
+the noise, and the first version of this test reported it as anything
+between 8 and 31 dB on consecutive captures.
 
 ### NAU8822 — codec
 
@@ -369,6 +557,83 @@ interface is I²S to SAI1.
 Serves two jobs at once: it is the **I/Q ADC** for the receiver (stereo line
 in from MSi001) and the **audio DAC** plus speaker amplifier for the output.
 That means ADC and DAC share one sample rate.
+
+The control format, from §9.7 of the datasheet: **16 bits a transaction,
+7 bits of register address then 9 bits of data**, MSB first, sampled on
+the rising edge of SCLK — and **latched into the register on the RISING
+EDGE OF CSB**. So CS framing is not housekeeping here, it is the write;
+a CS that rises one bit early latches a 15-bit word, which the part
+reads as a different register entirely. `TSCK` is 80 ns minimum (12.5
+MHz); `src/nau8822.c` runs SPI6 at 1.875 MHz, which is as fast as a few
+dozen configuration words ever need to be.
+
+Nine data bits is also why a byte-oriented SPI driver cannot talk to
+this part at all. SPI6 is configured for 16-bit frames.
+
+**Outputs, from the schematic:**
+
+| Codec pin | Goes to |
+|---|---|
+| `LSPKOUT` / `RSPKOUT` | **LS1, the internal speaker, BRIDGE TIED** |
+| `LHP` / `RHP` | J5, the 3.5 mm jack, through 100 µF and a 10 µH choke |
+| `AUXOUT1` / `AUXOUT2` | not connected |
+| `LLIN`/`GPIO2`, `RLIN`/`GPIO3`, `LAUXIN`, `RAUXIN` | not connected |
+
+**LS1 has no ground connection.** It sits between `LSPKOUT` and
+`RSPKOUT`, so the two amplifiers must drive it in antiphase: register 43
+`RSUBBYP` routes the right speaker amplifier through the submixer, whose
+documented job is to invert RMIX for exactly this. That is worth 6 dB,
+and it is why a radio this small is as loud as it is. Wire it in phase
+by mistake and the speaker still works, very quietly, driven only by the
+mismatch between the two amplifiers.
+
+`VDDSPK` is **`Vskp_CODEC`, which is BAT itself** — the speaker supply
+comes straight off the battery through Q4, so it is 4.2 V on a charger
+and 3.0 V on a flat cell. It therefore spans the 3.6 V threshold that
+decides whether the datasheet's 1.5× output boost (`SPKBST`) is allowed.
+A setting that depends on the state of charge is a setting that will be
+wrong one day, so the boost stays off and the loudness comes from the
+bridge tie instead.
+
+**There is no headphone detect.** J5 has only tip, ring and sleeve, and
+the codec's jack-sense inputs are GPIO2 and GPIO3, both left
+unconnected. Speaker-versus-headphone has to be a menu item, not a
+sensor.
+
+`RN5`/`RN6` are 33 Ω series networks on all the control and I²S lines.
+
+### The ADC high-pass filter must be OFF, and this is not an audio decision
+
+R14 resets to `0x100`, which enables a first-order 3.7 Hz filter to block
+DC — correct for a microphone and actively wrong here. The MSi001
+delivers quadrature baseband, so **zero Hz at the ADC is the centre of
+the receiver's passband**, the tuned frequency itself. Leaving the
+default would carve a notch out of the middle of every signal the radio
+is pointed at.
+
+The consequence runs the other way too, and is useful: with the filter
+off the ADC output carries a real DC offset, which is what makes the
+write-only control interface verifiable at all (see below).
+
+### Verifying a write-only control interface **[measured]**
+
+There is no read-back pin, so no register can be confirmed by asking.
+Three effects were used instead, and all three answered:
+
+- **R14[0] `LADCPL`** inverts the sign of the left ADC output. With the
+  high-pass filter off the channel carries a standing offset, so one bit
+  flips the sign of a large number. Measured: L mean −313 became +16322
+  under the earlier framing fault, and tracks cleanly now.
+- **R15/R16 ADC digital volume = 0** produced **exactly zero** on both
+  channels. That is the single most useful measurement of the whole
+  step: it proves the samples arriving over I²S really are the
+  converter's output, which rules out every "the codec is not running"
+  explanation in one line.
+- **R45/R46 PGA gain** moves the whole chain.
+
+Quiet-input noise floor at 192 kHz, inputs AC-coupled from an
+unconfigured MSi001: **L mean −313 rms 7, R mean −44 rms 12** counts of
+16-bit full scale.
 
 **Variant: this unit has the NAU8822L**, not the NAU8822A that most Chinese
 clones carry. The original Malahit used the L; field reports blame the
@@ -409,6 +674,20 @@ audio quality degrades. Since the MCU already supplies MCLK, SAI1 must be
 the I²S master and generate BCLK and FS from the same clock tree — which it
 does, and which is the opposite of how the DEEPSDR 101 is wired, where the
 AIC3204 is master and the GD32 is the slave.
+
+### Display throughput **[measured]**
+
+A full 480 × 320 frame at 18 bpp is 460 800 bytes and takes **129 ms** at
+SPI3 = 30 MHz — 7.7 frames a second — of which the 1024-point complex FFT
+is 1.7 ms. The display is the entire cost of a panorama on this radio and
+the FFT is a rounding error against it.
+
+Measured both ways: drawing column by column into a 960-byte buffer costs
+the same as building a whole 460 kB frame and sending it in one transfer,
+within a few percent, because the per-transfer overhead of a window set
+and a RAMWR is a dozen bytes against 960 bytes of pixels. **So the
+framebuffer is not needed** — which answers the question `PORTING.md`
+§3.1 raised about spending 460 kB of AXI SRAM on one.
 
 ### ILI9488 — display
 

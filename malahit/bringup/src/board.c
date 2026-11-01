@@ -17,9 +17,60 @@ uint32_t board_millis(void)
 void board_delay_ms(uint32_t ms)
 {
     uint32_t start = s_millis;
+
+    /*
+     * THE ONLY UNBOUNDED WAIT IN THIS PROJECT USED TO BE HERE, AND IT
+     * WAS THE WORST PLACE FOR ONE.
+     *
+     * This loop spins until SysTick says enough milliseconds have gone
+     * by. If SysTick is not ticking it never ends - and the first call
+     * is inside board_power_on(), BEFORE console_init(), so the failure
+     * produces not one byte of explanation. Worse, the radio does not
+     * sit there looking broken: thirty-two seconds later the watchdog
+     * that board_watchdog_tame() could only slow down resets the part,
+     * the reset returns PC6 to an input, R38 pulls the peripheral rail
+     * low, and the radio SWITCHES ITSELF OFF. From the bench that looks
+     * like a hardware fault, and it takes the debug port with it,
+     * because X1 is on that same rail.
+     *
+     * Two changes. The watchdog is fed from inside the loop, so a long
+     * delay can never be the thing that trips it. And a cycle-count
+     * backstop ends the wait even if no tick ever arrives: four times
+     * longer than the delay should take, so it never fires in normal
+     * use, and when it does fire the result is a delay of the wrong
+     * length rather than a radio that has gone dark.
+     *
+     * __WFI() had to go with it. Sleeping until an interrupt arrives is
+     * exactly wrong when the question is whether interrupts arrive at
+     * all - the backstop below would never get to count.
+     */
+    uint64_t guard = (uint64_t)(ms + 1U) * (clock_sysclk_hz / 1000U);
+
     while ((s_millis - start) < ms) {
-        __WFI();
+        board_watchdog_feed();
+        if (guard-- == 0U) { break; }
     }
+}
+
+uint64_t board_cycles(void)
+{
+    uint32_t load = SysTick->LOAD + 1U;     /* cycles in one tick */
+    uint32_t ms, ms2, val;
+
+    /*
+     * SysTick counts DOWN from LOAD to zero, so the elapsed part of the
+     * current tick is (load - 1 - val). Read the millisecond count on
+     * both sides of the register and retry if it moved: a tick between
+     * the two reads means VAL has already wrapped and belongs to the
+     * next millisecond.
+     */
+    do {
+        ms  = s_millis;
+        val = SysTick->VAL;
+        ms2 = s_millis;
+    } while (ms != ms2);
+
+    return (uint64_t)ms * load + (uint64_t)(load - 1U - val);
 }
 
 /* PC6 = 3.3V_ON, the enable for everything outside the MCU. */

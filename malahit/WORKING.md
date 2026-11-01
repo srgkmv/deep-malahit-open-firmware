@@ -95,9 +95,61 @@ five separate bugs that each looked like something else:
 - **CSSHSEON**, once armed by our own firmware, cannot be cleared except
   by a reset, so the next image's deliberate HSE teardown looked like an
   oscillator failure.
+- **The D-cache was on.** The worst of the five, and the only one where
+  the inherited state corrupts the image itself rather than a
+  peripheral. Its own section is below.
 
 Every "the reset value is fine" is really "whatever the previous
 firmware left is fine". **Write the registers you depend on.**
+
+---
+
+## The caches, and why the SECOND load used to fail
+
+A debugger writes AXI SRAM through the AHB access port, which goes
+**around** the CPU's caches and invalidates nothing. The factory
+firmware leaves the D-cache enabled — `SCB_CCR` measured `0x00070200` on
+arrival, bit 16 set — and `SystemInit()` only ever enabled the I-cache,
+so DC stayed on. Loading an image therefore left the previous run's
+lines, dirty, for the very addresses the loader had just overwritten.
+
+The symptom is worth memorising, because nothing about it points at a
+cache:
+
+- The **first** load after a power-on always worked. The factory
+  firmware's cached lines cover flash at `0x08000000`, not SRAM at
+  `0x24000000`, so there was nothing stale to hit.
+- The **second** load — our image over our image, same addresses — ran a
+  mixture of two builds. A PLL solver reported that no solution existed
+  for arithmetic that is provably correct on a host. Then an UNALIGNED
+  hard fault, whose recorded PC and LR **could not both have come from
+  the same binary**.
+
+That last detail is the tell, and it generalises: when a stacked PC and
+LR disagree about which program they belong to, the instruction stream
+is stale, not wrong. Stop debugging the program.
+
+Fixed in two places, because neither is sufficient alone:
+
+- `core_clean` in `openocd-helpers.cfg` clears IC and DC in `SCB_CCR`
+  and invalidates the I-cache **before** `load_image` writes a byte.
+  Only the loader can do this: by the time the firmware's reset handler
+  runs, the reset handler is the thing that might have come from a stale
+  line.
+- `Reset_Handler` in `startup_stm32h743.S` clears both caches and
+  invalidates the I-cache as its first act after setting the stack, so
+  the firmware does not depend on which loader started it.
+
+Both **invalidate and never clean**. The usual sequence for disabling a
+data cache cleans it first so dirty lines reach memory; here those dirty
+lines hold the *old* image and memory holds the *new* one, so cleaning
+would write the old program back over the new one. Discarding them is
+the entire point, and it is only safe before the `.data` copy.
+
+The D-cache's own stale lines are left sitting in the array rather than
+walked by a set/way loop: with DC clear they are never looked up and
+never evicted. Anything that later turns the D-cache on must invalidate
+first — which CMSIS's `SCB_EnableDCache()` does.
 
 ---
 
@@ -124,6 +176,45 @@ In rough order of how often it has been the answer:
 6. **Read the register back.** Hardware clears bits behind your back:
    a mode fault cleared `CFG2.MASTER` on SPI3, and the symptom was a
    transfer that started, accepted its byte and never completed.
+7. **Is this the second load?** If the first load after a power cycle
+   works and later ones do not, it is the caches — see above. Try a
+   power cycle before believing anything a repeat load tells you.
+8. **Is the format string lying to you?** `console_printf()` is a few
+   dozen lines in `console.c` and supports a small set of conversions.
+   An unsupported one — `%+3d` was the one that bit — falls through to
+   a default case that prints the characters and **does not consume the
+   argument**, so every later argument on that line shifts by one. The
+   visible result was a neat column of decibel figures that were
+   actually a different variable, ending in a `%s` reading a pointer
+   out of an integer and printing heap bytes. `%+d` now works; the
+   lesson is that a format string is code.
+
+   Same family: `%u` takes a 32-bit argument, so printing a `uint64_t`
+   with it shows the low word. That produced a magnitude and a dBFS
+   figure for the same quantity that disagreed by 29 dB, on adjacent
+   lines.
+10. **Is the measurement looking where the signal is?** A single-bin DFT
+   is exact arithmetic and a poor instrument for an absolute level:
+   the generator and this radio do not share a reference, so a carrier
+   nominally 3 kHz off lands some tens of hertz away from that, and a
+   23 Hz bin then reads window skirt instead of carrier. It under-read
+   by **16 dB**. Ratios between bins survive this; absolute levels do
+   not. Use the FFT peak for anything absolute.
+11. **Was the constant fitted or remembered?** A log2 polynomial written
+   from memory was exact at every power of two - so log2(1), log2(8)
+   and log2(0.5) all checked out - and 1.5 bits wrong in between, which
+   made every spectrum level uniformly 4.5 dB low. A uniform error is
+   the kind that gets absorbed into a calibration constant and never
+   found. The replacement is a least-squares fit with a measured
+   maximum error.
+9. **Did the measurement actually happen?** Two register settings that
+   produce *byte-identical* results have not demonstrated that the
+   register does nothing; they have demonstrated that one of the two
+   measurements never ran. `sai1_stream()` returns a frame count and
+   `main.c` ignored it, so a failed capture was silently re-averaged
+   from the previous buffer and printed as a new result. Identical
+   numbers out of an analogue measurement should be unbelievable on
+   sight. **Check the return value of anything that fills a buffer.**
 
 ---
 
@@ -159,13 +250,72 @@ That also rules out `st-info` and `st-flash`, which only speak HLA.
 
 ---
 
+## If the radio switches itself off
+
+Two different things look the same from the bench, and both end with
+`Error connecting DP: cannot read IDR`, because PC6 going low takes the
+22 MHz oscillator's supply with it and the debug port dies too.
+
+- **A reset.** Any reset returns PC6 to an input, R38 pulls `3.3V_ON`
+  low, and the radio is off. The usual cause is the factory watchdog,
+  which cannot be stopped — only stretched to about 32 seconds by
+  `board_watchdog_tame()` — so a firmware that hangs for half a minute
+  switches the radio off rather than sitting there looking broken.
+- **A hang before the console.** `board_delay_ms()` used to spin forever
+  if SysTick was not ticking, and its first call is inside
+  `board_power_on()`, so the failure produced not one byte of
+  explanation before the watchdog finished the job. It now feeds the
+  watchdog from inside the loop and has a cycle-count backstop: a dead
+  SysTick costs a delay of the wrong length instead of a dark radio.
+
+`main()` also brings the console up **first**, before the rail and
+before SysTick, which it can because UART7 is on MCU pins on the
+always-on rail and `SystemInit()` has already raised PC6 and locked the
+PLL. The first line of output now precedes everything that can hang.
+
+---
+
 ## State, 01/11/2026
 
 Done and verified on hardware: clock tree at 480 MHz from the 22 MHz
 bypass oscillator, switched rail, console, crash reporting, the ILI9488
-panel at 18 bits per pixel, and an FT6236 touch controller calibrated
-against four targets.
+panel at 18 bits per pixel, an FT6236 touch controller calibrated
+against four targets, and **the NAU8822 codec with SAI1 as I²S master**.
 
-Next: the NAU8822 codec and SAI1, and the question the whole port turns
-on — whether it will hold 192 kHz, or whether everything downstream has
-to live with 160 and a resampler. `PORTING.md` §3.2 has the detail.
+**The question the port turned on is answered: 192 kHz works.** Measured
+clean from 8 kHz to 320 kHz with zero FIFO errors, breaking up only at
+384 kHz, against a datasheet ceiling of 48 kHz. The upstream DSP tree
+keeps its rates and needs no resampler — `PORTING.md` §3.2 has the table
+and the reasoning that makes it evidence rather than assertion. A 1 kHz
+tone comes out of the speaker.
+
+**Step 5 is done too: the radio receives.** The MSi001 tunes, the band
+filter bank is understood and switched, and a generator at 10 MHz
+arrives as a clean tone in the expected bin. Tuning error 0 Hz, image
+rejection 32 dB, LO leakage 4 dB above the carrier. `BOARD.md` §6 has
+the measured tables.
+
+Bench note: the signal generator here is an **OSA103, which is also an
+FTDI device** — `0403:6001`, serial `AH7J76J7`, against the programmer's
+`0403:6010` with no serial at all. `openocd-ft2232d.cfg` pins the
+product ID, so the two cannot be confused; widening that match would let
+OpenOCD bit-bang SWD into the generator. The OSA103 does not create a
+`ttyUSB` node, so the console on `/dev/ttyUSB0` is unaffected.
+
+**Step 6 is done: there is a spectrum on the screen.** A 1024-point
+complex FFT across 480 columns, the generator visible with its peak at
++19 875 Hz where +20 000 was asked for - bin 106 of 187.5 Hz, the
+nearest bin, so exactly right. 129 ms a frame, 7.7 fps, of which the FFT
+is 1.7 ms: the panel is the entire cost.
+
+Next: step 7, AM, audio out of the speaker. The first thing to attack
+there is the **mixer DC offset**, not the demodulator: it measures 15 dB
+above the wanted carrier and within 8 dB of clipping the ADC, so most of
+the converter's range is currently spent on the receiver's own error.
+`BOARD.md` §6 has the numbers and the `DCCAL` options.
+
+Also outstanding, and now the limiting factor rather than a refinement:
+**SAI DMA with the MPU regions to make it safe.** The transmit FIFO is
+eight words, 83 µs at 48 kHz, so any blocking console write is an
+audible gap — one click per printed line, measured. Polling is fine for
+CPU load and hopeless for continuity.

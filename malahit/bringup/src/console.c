@@ -95,6 +95,29 @@ void console_printf(const char *fmt, ...)
 
         char pad   = ' ';
         int  width = 0;
+        int  plus  = 0;
+
+        /*
+         * '+' - always show a sign.
+         *
+         * This exists because its absence did real damage. An unknown
+         * flag falls through to the default case below, which prints
+         * the two characters and MOVES ON WITHOUT CONSUMING THE
+         * ARGUMENT - so one "%+3d" in a format string shifts every
+         * later argument in that line by one. The visible result was a
+         * column of plausible-looking decibel figures that were
+         * actually the wrong variable, followed by a %s reading a
+         * pointer from an integer and printing heap bytes.
+         *
+         * Numbers that are meaningful with a sign are exactly the ones
+         * a measurement prints - frequency offsets, errors, image
+         * ratios - so the flag belongs here rather than being worked
+         * around at every call site.
+         */
+        if (*fmt == '+') {
+            plus = 1;
+            fmt++;
+        }
         if (*fmt == '0') {
             pad = '0';
             fmt++;
@@ -111,9 +134,11 @@ void console_printf(const char *fmt, ...)
             int32_t v = va_arg(ap, int32_t);
             if (v < 0) {
                 console_putc('-');
-                put_unsigned((uint32_t)(-v), 10U, width, pad);
+                put_unsigned((uint32_t)(-v), 10U, width ? width - 1 : 0, pad);
             } else {
-                put_unsigned((uint32_t)v, 10U, width, pad);
+                if (plus) { console_putc('+'); }
+                put_unsigned((uint32_t)v, 10U,
+                             (plus && width) ? width - 1 : width, pad);
             }
             break;
         }

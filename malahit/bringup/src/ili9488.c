@@ -158,6 +158,39 @@ void ili9488_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
     cmd_data(0x2B, buf, 4U);                     /* page address set     */
 }
 
+/*
+ * Push a prepared block of pixels. ONE window, ONE transfer.
+ *
+ * This is what a spectrum display needs and what fill_rect() cannot
+ * give it. Drawing 480 columns with fill_rect() means 480 window
+ * settings and 480 separate SPI runs, and on this bus the per-transfer
+ * overhead - CS, the RAMWR command, SPE, CSTART, waiting for EOT -
+ * costs more than the pixels do. Building the whole area in RAM and
+ * sending it in a single run turns a frame from hundreds of small
+ * transactions into one big one, and the bus is then the only limit:
+ * 480 x 160 x 3 bytes is 230 kB, about 61 ms at 30 MHz.
+ *
+ * `px` must already be in the panel's own format - three bytes a pixel
+ * at 18 bits, with the data in the TOP six bits of each byte - because
+ * converting here would mean touching every pixel twice.
+ */
+void ili9488_blit(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
+                  const uint8_t *px)
+{
+    if (w == 0U || h == 0U) { return; }
+
+    ili9488_window(x, y, (uint16_t)(x + w - 1U), (uint16_t)(y + h - 1U));
+
+    DC_CMD();
+    CS_LOW();
+    uint8_t ramwr = 0x2C;
+    spi3_write(&ramwr, 1U);
+    DC_DATA();
+    spi3_write(px, (uint32_t)w * (uint32_t)h
+                   * ((s_fmt == ILI9488_FMT_16BIT) ? 2U : 3U));
+    CS_HIGH();
+}
+
 void ili9488_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
                        uint8_t r, uint8_t g, uint8_t b)
 {

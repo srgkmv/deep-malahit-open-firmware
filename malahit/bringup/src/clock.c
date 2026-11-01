@@ -278,17 +278,32 @@ int clock_init(void)
 void SystemInit(void)
 {
     /*
-     * Instruction cache on: free, and it cannot be wrong - the I-cache is
-     * never stale because this image does not modify its own code.
+     * Instruction cache on. SCB_EnableICache() invalidates before it
+     * enables, so this cannot inherit a stale line.
      *
-     * Data cache deliberately OFF. On this chip the D-cache is the single
-     * most common source of "works, except sometimes": any DMA buffer that
-     * is not either in a non-cacheable MPU region or explicitly cleaned
-     * and invalidated will silently read or write stale bytes. There is no
-     * DMA in this bring-up image, so there is nothing to gain yet, and
-     * turning it on now would mean the panel and SAI stages inherit a
-     * bug that was already there. It goes on together with the MPU
-     * regions, in the step that first needs DMA.
+     * Data cache deliberately OFF - and the word "deliberately" was a
+     * lie here for several steps, which is worth recording rather than
+     * quietly fixing. This comment used to say the D-cache was off while
+     * the code never actually cleared DC, so DC was whatever the
+     * previous firmware left. The factory firmware leaves it ON, and an
+     * image loaded over SWD inherits that: SCB_CCR was measured reading
+     * 0x00070200 on arrival, bit 16 set.
+     *
+     * The real switch-off now happens in startup_stm32h743.S, before the
+     * .data copy, which is the only place it can be done safely - see
+     * the long comment there. By the time this function runs, DC is off
+     * for certain and there is nothing left to do but say so.
+     *
+     * Why off at all: on this chip the D-cache is the single most common
+     * source of "works, except sometimes". Any DMA buffer that is not
+     * either in a non-cacheable MPU region or explicitly cleaned and
+     * invalidated will silently read or write stale bytes. Nothing in
+     * this bring-up image uses DMA - the SAI runs polled for exactly
+     * this reason, see sai1.h - so there is nothing to gain yet. It goes
+     * on together with the MPU regions, in the step that first needs
+     * DMA, and CMSIS's SCB_EnableDCache() invalidates by set and way
+     * before enabling, which discards anything an earlier run left
+     * behind.
      */
     SCB_EnableICache();
 

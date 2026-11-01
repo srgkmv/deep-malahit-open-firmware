@@ -1,12 +1,26 @@
 # Porting this firmware to the Malahit DSP-1
 
-Status, 01/11/2026: **steps 0 to 3 of §4 are done and verified on
+Status, 01/11/2026: **steps 0 to 6 of §4 are done and verified on
 hardware.** Clock tree at 480 MHz from the 22 MHz bypass oscillator,
 switched rail, UART7 console, crash reporting, the ILI9488 panel
-drawing at 18 bits per pixel, and an FT6236 touch controller calibrated
-against four targets.
+drawing at 18 bits per pixel, an FT6236 touch controller calibrated
+against four targets, and the NAU8822 codec on SAI1 as I²S master.
 
-Next is step 4, the codec — and the question the whole port turns on.
+**The question the whole port turned on is answered: 192 kHz works** —
+§3.2. The upstream DSP tree keeps its sample rates and needs no
+resampler, which is the difference between a driver swap and retuning
+every filter corner in `User/`.
+
+**The radio now receives, and shows what it receives.** A generator at
+10 MHz is tuned, filtered, mixed to baseband, digitised, transformed and
+drawn on the panel, with the peak where the arithmetic predicts. Every
+stage answers to the register that controls it. Nothing is demodulated
+yet.
+
+Next is step 7, AM — audio out of the speaker. The first thing to attack
+there is not the demodulator but **the mixer's DC offset**, which
+measures 15 dB above the wanted carrier and within 8 dB of clipping the
+ADC; see `BOARD.md` §6.
 
 - `BOARD.md` is the hardware reference: pin map, rails, clocks, and what
   each peripheral turned out to be.
@@ -39,8 +53,8 @@ And the target is a big step up: Cortex-M7 at 480 MHz against M4F at 200 MHz,
 
 | Upstream file(s) | Lines | Replaced by |
 |---|---|---|
-| `ms5351.c`, `lo_gen_gd32.c` | 1577 | `msi001.c` — 3-wire control on PA4/PA5/PA7, 22 MHz reference, Mirics register map: LO PLL, band mode (AM1/AM2/VHF/B3/B4/B5/L), LNA/mixer/baseband gain, baseband filter width, DC offset |
-| `rf_lpf.c` | 110 | `BPF1`…`BPF6` on PE10–PE15 plus `PREAMP` on PE0 |
+| `ms5351.c`, `lo_gen_gd32.c` | 1577 | `msi001.c` — **written and verified**: 24-bit write-only control on PA4/PA5/PA7 (SPI1), 22 MHz reference, Mirics register map: LO PLL, band mode, LNA/mixer/baseband gain, baseband filter width, DC offset |
+| `rf_lpf.c` | 110 | **done** — `BPF1`…`BPF6` on PE10–PE15 plus `PREAMP` on PE0; three PE42641 switches, masks measured, `BOARD.md` §6 |
 | `aic3204.c` | 1143 | `nau8822.c` — SPI control, not I²C; different register map; built-in speaker amp |
 | `gd32_i2s.c` | 1305 | SAI1 on the H743, **master** (the MCU drives MCLK from PE2), with DMA |
 | `rm68120_exmc.c`, `lcd_dma.c` | 1401 | ILI9488 over SPI3 + DMA |
@@ -72,6 +86,14 @@ Chrom-ART, so it becomes DMA2D with little more than a rename.
 > all of AXI SRAM, or RGB565 converted to three bytes on the way out,
 > which costs CPU on every pixel. That choice is now a real design
 > decision rather than an assumption.
+>
+> **Answered by measurement, 01/11/2026: no framebuffer is needed.**
+> Drawing the spectrum one 320-pixel column at a time into a 960-byte
+> buffer costs the same as building a whole 460 kB frame and sending it
+> in a single transfer - within a few percent - because the overhead of a
+> window set and a RAMWR is a dozen bytes against 960 bytes of pixels.
+> The bus is the limit either way, at 129 ms a full frame, and the 460 kB
+> stays free for the DSP tree.
 
 
 800 × 480 → 480 × 320 is 3.4× fewer pixels. The upstream layout is not
@@ -90,12 +112,51 @@ done and reviewed on a desktop before any of it runs on the radio.
 
 ### 3.2 Sample rate
 
+> ### ANSWERED, 01/11/2026: 192 kHz WORKS. The DSP tree keeps its rates.
+>
+> Measured on the radio, 8 kHz to 384 kHz, SAI1 as I²S master with
+> MCLK = 256 × Fs from PE2 and the codec's own PLL bypassed:
+>
+> | Fs | measured | ADC noise rms | verdict |
+> |---|---|---|---|
+> | 8 000 | 8 000 | 2 | ok |
+> | 48 000 | 47 999 | 3 | ok |
+> | 96 000 | 95 999 | 3 | ok |
+> | 160 000 | 159 999 | 6 | ok |
+> | **192 000** | **191 999** | **7** | **ok** |
+> | 240 000 | 239 998 | 10 | ok |
+> | 320 000 | 319 997 | 15 | ok |
+> | 384 000 | 383 997 | 182 | breaking up |
+>
+> Zero transmit underruns and zero receive overruns at every rate.
+>
+> The noise column is what makes this evidence rather than assertion. A
+> sigma-delta spreads its quantisation noise across the sampled band, so
+> the in-band RMS should grow as √Fs and no faster — and from 8 kHz to
+> 320 kHz it does, a 40× rate increase for a 7.5× noise increase against
+> √40 = 6.3. A converter that had quietly stopped working would still
+> have delivered the right *number* of samples at the right rate; it
+> would not have delivered a noise floor that tracks the square root of
+> the rate. At 384 kHz the trend breaks outright — rms 182 against 15 one
+> step earlier, extremes at −4142 and +9995 — which is a modulator losing
+> stability.
+>
+> So the datasheet's 48 kHz ceiling (IMCLK ≤ 12.288 MHz) is exceeded by
+> **four times with margin to spare**: 192 kHz needs IMCLK = 49.152 MHz
+> and the part is still clean at 81.92 MHz. The margin is undocumented
+> but it is not marginal.
+>
+> **Consequence: nothing downstream has to be retuned.** The upstream
+> 48 / 96 / 192 kHz rates transplant unchanged, the SSB branch still
+> decimates by 4 to 12 kHz, and HFDL, STANAG, FT8, WSPR and the rest keep
+> the input rate they were written for. No resampler.
+
 Upstream runs 48 / 96 / 192 kHz, and the SSB branch decimates by 4 to
 **12 kHz**, which is what HFDL, STANAG, FT8 and the rest of the digital modes
 expect at their input. The stock Malahit firmware runs 160 / 80 / 40 kHz;
 dividing 160 by 4 gives 20 kHz and every digital mode lands on the wrong rate.
 
-Two ways out:
+Two ways out, of which the first turned out to work:
 
 1. Find out whether the NAU8822 will run at 192 kHz on *this* board. The
    often-quoted "PLL only locks between 90 and 100 MHz" constraint applies to
@@ -103,10 +164,25 @@ Two ways out:
    from PE2, so the codec's own PLL is out of the picture. If 192 kHz works,
    the entire DSP chain keeps its rates untouched.
 2. Otherwise insert a rational resampler. `hfdl_rational_resampler.c` already
-   exists and can be generalised.
+   exists and can be generalised. **Not needed.**
 
-Settle this early — it decides how much of §2 is a driver swap and how much is
-a retune of every filter corner, decimation factor and time constant.
+### One thing 22 MHz cannot do: land exactly on either rate
+
+Neither 192 nor 160 kHz is exactly synthesisable from this oscillator, and
+no choice of dividers changes that. A PLL output is HSE/M × (N + FRACN/8192)
+/ P, and both target MCLKs carry a factor of 5³ in the denominator —
+49.152 MHz is 6144/125 MHz, 40.96 MHz is 1024/25. The only place a factor
+of five can come from is M or P, and working it through, an exact
+49.152 MHz needs M × P = 1375k, which forces N above 3000 against a
+hardware maximum of 512.
+
+In practice this does not matter at all. With MCKDIV and P between them
+offering thousands of places for the fractional divider to sit, the solver
+in `bringup/src/sai1.c` lands within a few hundred parts per **billion**:
+192 kHz comes out at 191999.988 Hz. X1 is a commercial oscillator module
+whose own tolerance measured 1500 ppm in step 1 — four orders of magnitude
+larger. The residual division error is not what will ever be wrong with
+this receiver.
 
 ### 3.3 Storage
 
@@ -159,22 +235,90 @@ Each step should end with something visible on the radio.
 3. **Touch.** *Done* — FT6236 at 0x38 on I2C3, CIPHER 0x36 and
    FOCALTECH_ID 0x11. Coordinates decoded and mapped to the landscape
    display; see `BOARD.md` §6. `src/i2c3.c` is the bus driver.
-4. **Codec.** *Next.* NAU8822 control over SPI, SAI1 master with
-   MCLK = 256 × Fs, loopback a tone. Find the maximum stable Fs — this
-   answers §3.2, and §3.2 decides how much of the upstream DSP tree
-   transplants unchanged.
+4. **Codec.** *Done* — `bringup/src/nau8822.c` and `bringup/src/sai1.c`.
+   SAI1 block A is the I²S master transmitter and owns the clocks, block
+   B a synchronous slave receiver carrying I/Q; MCLK = 256 × Fs out of
+   PE2 from a dedicated fractional PLL2; the NAU8822 runs as a 16-bit
+   I²S slave with its own PLL bypassed. **192 kHz confirmed on hardware
+   (§3.2), and a 1 kHz tone comes out of the speaker.**
 
-   Three things are known going in. The control interface is
-   **write-only** — there is no read-back pin, so every register has to
-   be verified by its effect rather than by asking. SAI1 must be the
-   **master**, because MCLK comes from the MCU on PE2, which is the
-   opposite of the DEEPSDR wiring where the codec drives the clocks.
-   And the datasheet caps IMCLK at 12.288 MHz, a 48 kHz ceiling that the
-   factory firmware already exceeds by more than three times, so the
-   margin is real but undocumented.
-5. **Tuner.** MSi001 register sequence, tune, check I/Q quality and what
-   `iqbal.c` makes of it.
-6. **Spectrum.** First real milestone: FFT on screen, a signal visible.
+   Three things were known going in and all three mattered. The control
+   interface is **write-only** — there is no read-back pin, so every
+   register has to be verified by its effect rather than by asking; the
+   three effects that worked are in `BOARD.md` §6. SAI1 must be the
+   **master**, because MCLK comes from the MCU on PE2, the opposite of
+   the DEEPSDR wiring. And the datasheet's 12.288 MHz IMCLK ceiling is
+   exceeded four times over with margin left.
+
+   Four things were not known, and each cost real time:
+
+   - **`CKSTR` for the receiver.** RM0433 and ST's own HAL disagree, and
+     the wrong choice does not look like a timing error — it looks like
+     a railed converter at every sample rate. See `sai1.h`.
+   - **The D-cache was on**, left by the factory firmware, so every
+     *second* load over SWD ran a mixture of two builds. See
+     `WORKING.md`; this one was worth an evening.
+   - **The speaker is bridge-tied** across LSPKOUT and RSPKOUT with no
+     ground, so R43 `RSUBBYP` is mandatory, not an optimisation.
+   - **The ADC high-pass filter defaults to ON**, which would notch out
+     the centre of the receiver's passband.
+
+   Still polled, not DMA, deliberately: the D-cache question belongs in
+   a step that is about DMA together with the MPU regions that make it
+   safe, rather than smuggled into the step that is about the codec. At
+   192 kHz a frame is 2500 CPU cycles and four words, so polling is
+   nowhere near the limit — but the transmit FIFO is 83 µs deep, which
+   means any blocking console write is an audible gap. That, and not CPU
+   load, is what makes DMA necessary next.
+5. **Tuner.** *Done* — `bringup/src/msi001.c`. Register sequence, 24-bit
+   write-only control on SPI1, the synthesiser arithmetic for a 22 MHz
+   reference, band selection and the filter bank.
+
+   Verified against a signal generator at 10.000 MHz:
+
+   - tuning computed `INT`/`FRAC`/`AFC` with **0 Hz error** and a 0.33 Hz
+     step, and sweeping the tuned frequency ±5 kHz put the response peak
+     **exactly** on the predicted tuning. That is the test that cannot be
+     passed by accident — a wrong reference, LO divider or FRAC field
+     would still receive something, just not there.
+   - the band filter masks were predicted from the schematic and then
+     confirmed by sweeping all 64 combinations: the two paths that pass
+     are the two whose passbands border 10 MHz, 23 dB above the rest.
+   - **AM port 2**, not port 1: 33.6 dB better, as the 75 Ω versus 1 kΩ
+     input impedances predict.
+   - gain reduction tracks measurement within 2.6 dB over its 59 dB range.
+   - **image rejection 32.2 dB** uncorrected, and **LO leakage 4 dB above
+     the carrier** at DC.
+
+   `BOARD.md` §6 has the tables. The last two numbers are the ones that
+   matter downstream: 32 dB is what `iqbal.c` starts from, and the DC
+   leakage is large enough to be a headroom problem rather than a
+   cosmetic one.
+6. **Spectrum.** *Done* — `bringup/src/fft.c`, `bringup/src/spectrum.c`.
+   A 1024-point complex FFT of the I/Q pair, Hann windowed, 187.5 Hz a
+   bin over the full 192 kHz span, drawn across 480 columns with the
+   tuned frequency in the middle.
+
+   **A generator at 10 MHz is visible on the radio's own screen**, with
+   its peak where the arithmetic says it should be: tuned 20 kHz low, the
+   peak lands at +19 875 Hz, which is bin 106 of 187.5 Hz — the nearest
+   bin to +20 000 and therefore exactly right.
+
+   Complex, not real: the receiver is zero-IF, so a carrier 20 kHz above
+   the tuning and one 20 kHz below are different signals and must not
+   fold onto each other. A real FFT would discard precisely what the
+   quadrature front end was built to provide.
+
+   Costs: **129 ms a frame**, 7.7 fps, of which the FFT is 1.7 ms. The
+   display is the whole cost and the bus is the limit.
+
+   No libm - this image links `-nostdlib` - so the twiddles and the Hann
+   window are built from the half-angle identities, halving down from
+   cos(pi) = -1, which reaches every angle a power-of-two FFT needs
+   exactly. The one place that went wrong was a log2 polynomial written
+   from memory instead of fitted: it was exact at powers of two, so every
+   obvious test passed, and 1.5 bits out elsewhere, which made every
+   level uniformly 4.5 dB low. Fitted properly it is 0.0006 dB.
 7. **AM.** Audio out of the speaker.
 8. **Graft the upstream DSP tree** mode by mode.
 9. **Relayout the UI** at 480 × 320, in the simulator first.

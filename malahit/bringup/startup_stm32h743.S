@@ -66,6 +66,59 @@ Reset_Handler:
     msr   basepri, r0
     isb
 
+    /*
+     * 1b. THE CACHES, AND THIS HAS TO BE THE FIRST THING AFTER THE STACK.
+     *
+     *     This image runs from AXI SRAM, and the debugger writes it there
+     *     through the AHB access port - which goes round the CPU's caches
+     *     and does not invalidate them. The previous run's lines for
+     *     those same addresses are therefore still in the I-cache and the
+     *     D-cache, dirty, describing a program that no longer exists.
+     *
+     *     It cost a confusing evening. The FIRST load after a power-on
+     *     always worked, because the factory firmware's cached lines
+     *     covered flash at 0x08000000 and not SRAM at 0x24000000. The
+     *     SECOND load - our image over our image, same addresses - ran a
+     *     mixture of the two builds: a PLL solver that reported no
+     *     solution existed for arithmetic that is provably correct, and
+     *     then an UNALIGNED hard fault whose recorded PC and LR could not
+     *     both have come from the same binary. That last detail is the
+     *     tell. When the stacked PC and LR disagree about which program
+     *     they belong to, the instruction stream is stale, not wrong.
+     *
+     *     clock.c has always claimed the data cache was off here. It was
+     *     not: SystemInit() enabled the I-cache and never touched DC, so
+     *     DC was whatever ran before, and the factory firmware leaves it
+     *     ON. Measured: SCB_CCR read 0x00070200 on arrival.
+     *
+     *     INVALIDATE, DO NOT CLEAN. The usual sequence for disabling a
+     *     data cache cleans it first, so that dirty lines reach memory.
+     *     Here that is precisely the wrong thing: those dirty lines hold
+     *     the OLD image and memory holds the NEW one, so cleaning would
+     *     write the old program back over the new one. Discarding them is
+     *     the whole point, and it is only safe this early - before the
+     *     .data copy below has written anything worth keeping.
+     *
+     *     The D-cache's own stale lines are left sitting in the array
+     *     rather than invalidated by a set/way loop: with DC clear they
+     *     are never looked up and never evicted. Anything that later
+     *     turns the D-cache on must invalidate first - which is what
+     *     CMSIS's SCB_EnableDCache() does, so the normal route is safe.
+     */
+    ldr   r0, =0xE000ED14          /* SCB->CCR */
+    ldr   r1, [r0]
+    bic   r1, r1, #(1 << 16)       /* DC: data cache off */
+    bic   r1, r1, #(1 << 17)       /* IC: instruction cache off */
+    str   r1, [r0]
+    dsb
+    isb
+
+    ldr   r0, =0xE000EF50          /* SCB->ICIALLU */
+    movs  r1, #0
+    str   r1, [r0]                 /* whole I-cache invalid */
+    dsb
+    isb
+
     /* 2. Our own vector table, before anything can interrupt us. */
     ldr   r0, =g_pfnVectors
     ldr   r1, =0xE000ED08          /* SCB->VTOR */

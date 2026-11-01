@@ -54,6 +54,15 @@ void ili9488_fill_rect(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
 void ili9488_fill_screen(uint8_t r, uint8_t g, uint8_t b);
 
 /*
+ * Blit a prepared pixel block in one transfer. `px` is already in the
+ * panel's format - three bytes a pixel at 18 bits, data in the top six
+ * bits of each byte. See the comment in ili9488.c for why a spectrum
+ * cannot be drawn with fill_rect().
+ */
+void ili9488_blit(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
+                  const uint8_t *px);
+
+/*
  * Eight colour bars with a one-pixel white border, drawn left to right:
  * black, red, green, blue, yellow, cyan, magenta, white.
  *

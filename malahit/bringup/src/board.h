@@ -88,4 +88,29 @@ const char *board_reset_cause(void);
 uint32_t board_millis(void);
 void     board_delay_ms(uint32_t ms);
 
+/*
+ * CPU cycles since board_power_on(), from the same SysTick, read as the
+ * millisecond count plus the position inside the current tick.
+ *
+ * This exists because measuring a sample rate needs far better than
+ * millisecond resolution: 50 ms of audio at 192 kHz is 9600 frames, and
+ * a one-millisecond uncertainty would be a 2 % error on the answer -
+ * enough to hide a wrong divider. Against the CPU clock the same
+ * measurement resolves to a few parts per million.
+ *
+ * DWT->CYCCNT would be the obvious instrument and is deliberately not
+ * used. It lives behind DEMCR in the core debug block, and this project
+ * has already lost a day to firmware that depended on the debug power
+ * domain being alive: one adapter left CDBGPWRUPREQ asserted after
+ * OpenOCD exited and the other did not, so the same image faulted on a
+ * register it had read a hundred times. SysTick is ours and is always
+ * there.
+ *
+ * The retry loop closes the race where the tick fires between reading
+ * the counter and reading the millisecond count: the two would then
+ * belong to different ticks and the result would jump a millisecond
+ * backwards.
+ */
+uint64_t board_cycles(void);
+
 #endif /* MALAHIT_BOARD_H */
