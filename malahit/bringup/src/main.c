@@ -138,7 +138,8 @@ int main(void)
          * steady garbage at a steady rate rather than silence, and the
          * two look nothing alike.
          */
-        if ((beat++ & 1U) == 0U) {
+        (void)beat++;
+        {
             console_printf("[%u s] alive, sysclk %u Hz, backlight %s\n",
                            board_millis() / 1000U, clock_sysclk_hz,
                            shown ? "on" : "off");

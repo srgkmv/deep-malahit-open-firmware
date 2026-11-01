@@ -37,6 +37,35 @@ Reset_Handler:
     /* 1. Our own stack, no matter how we got here. */
     ldr   sp, =_estack
 
+    /*
+     * 1a. Interrupts allowed again.
+     *
+     *     A reset clears PRIMASK; an image started by a debugger
+     *     inherits it from whatever ran before, and fault_record() parks
+     *     a crashed run with interrupts disabled on purpose. Inheriting
+     *     that means SysTick never ticks, so board_delay_ms() inside
+     *     board_power_on() waits forever on a counter nothing
+     *     increments - a hang BEFORE console_init(), with no console yet
+     *     to report it. Silent, and it cost two evenings.
+     *
+     *     CONTROL is deliberately NOT touched here. Clearing it looks
+     *     like the same kind of tidying and is not: it selects which
+     *     stack pointer is live, so getting it wrong relative to the SP
+     *     load above crashes before the first C function, and it crashes
+     *     while VTOR still points at someone else's vector table, which
+     *     turns an ordinary fault into a lockup that only a power cycle
+     *     clears. Nothing in this firmware uses the process stack, and
+     *     an exception return to Thread mode already leaves SPSEL at 0.
+     *     The loader clears CONTROL before it sets the stack pointer,
+     *     which is the right place for it - see ram_run in
+     *     ../openocd.cfg.
+     */
+    movs  r0, #0
+    msr   primask, r0
+    msr   faultmask, r0
+    msr   basepri, r0
+    isb
+
     /* 2. Our own vector table, before anything can interrupt us. */
     ldr   r0, =g_pfnVectors
     ldr   r1, =0xE000ED08          /* SCB->VTOR */
@@ -123,10 +152,44 @@ LoopFillZerobss:
  * is debuggable - attach whenever, read the record - and it cannot make
  * anything worse.
  */
+/*
+ * .thumb_func BEFORE EVERY ONE OF THESE LABELS, AND IT IS NOT OPTIONAL.
+ *
+ * A label in a .thumb section is still only a DATA label as far as the
+ * assembler is concerned. `.word SomeLabel` then stores an even address,
+ * and an even address in a vector table means the core enters the handler
+ * with the Thumb bit clear: INVSTATE, escalation to HardFault, and - since
+ * the HardFault vector is one of the broken ones - lockup.
+ *
+ * That is not hypothetical. These five handlers were written without it,
+ * and the vector table came out with 0x24000da4 where it needed
+ * 0x24000da5. The fault reporter below never recorded anything, because
+ * the very act of taking a fault locked the part up. The Reset_Handler
+ * above was fine all along - it carries .type %function - and the weak
+ * aliases were fine too, because .thumb_set marks its target. Only the
+ * handlers written out by hand were wrong, including Default_Handler,
+ * which every one of the 150 interrupt vectors points at.
+ *
+ * Check it, do not trust it:
+ *     arm-none-eabi-objdump -s -j .isr_vector build/bringup.elf
+ * every word after the first must be ODD.
+ */
     .section .text.Default_Handler,"ax",%progbits
+    .type    Default_Handler, %function
+    .thumb_func
 Default_Handler:
-    mrs   r0, ipsr
-    b     fault_unexpected
+    /*
+     * Same treatment as a real fault: hand the exception frame to C so it
+     * can be recorded AND so the handler can be left by a normal
+     * exception return. fault_record() reads which exception this was out
+     * of IPSR; it does not need to be told.
+     */
+    tst   lr, #4
+    ite   eq
+    mrseq r0, msp
+    mrsne r0, psp
+    mov   r1, lr
+    b     fault_record
     .size Default_Handler, .-Default_Handler
 
 /*
@@ -136,6 +199,8 @@ Default_Handler:
  */
     .section .text.HardFault_Handler,"ax",%progbits
     .global HardFault_Handler
+    .type    HardFault_Handler, %function
+    .thumb_func
 HardFault_Handler:
     tst   lr, #4
     ite   eq
@@ -147,6 +212,8 @@ HardFault_Handler:
 
     .section .text.MemManage_Handler,"ax",%progbits
     .global MemManage_Handler
+    .type    MemManage_Handler, %function
+    .thumb_func
 MemManage_Handler:
     tst   lr, #4
     ite   eq
@@ -158,6 +225,8 @@ MemManage_Handler:
 
     .section .text.BusFault_Handler,"ax",%progbits
     .global BusFault_Handler
+    .type    BusFault_Handler, %function
+    .thumb_func
 BusFault_Handler:
     tst   lr, #4
     ite   eq
@@ -169,6 +238,8 @@ BusFault_Handler:
 
     .section .text.UsageFault_Handler,"ax",%progbits
     .global UsageFault_Handler
+    .type    UsageFault_Handler, %function
+    .thumb_func
 UsageFault_Handler:
     tst   lr, #4
     ite   eq

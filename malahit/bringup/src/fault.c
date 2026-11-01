@@ -11,6 +11,16 @@
  * run, from fault_report_previous(), where the machine works.
  */
 
+/*
+ * Where a crashed run goes to wait. Thread mode, interrupts off, doing
+ * nothing - see the long note in fault_record() for why it is reached by
+ * returning from the handler instead of by looping inside it.
+ */
+static void fault_park(void)
+{
+    for (;;) { }
+}
+
 void fault_record(uint32_t *frame, uint32_t exc_return)
 {
     volatile fault_record_t *r = FAULT_REC;
@@ -39,12 +49,44 @@ void fault_record(uint32_t *frame, uint32_t exc_return)
     __DSB();
 
     /*
-     * Spin, do not breakpoint. See the long comment in
-     * startup_stm32h743.S: a bkpt with no debugger attached double-faults
-     * and locks the core, which destroys exactly the evidence just
-     * written and leaves the part unable to accept the next image.
+     * DO NOT SPIN HERE, AND DO NOT BREAKPOINT. RETURN.
+     *
+     * The breakpoint half is explained in startup_stm32h743.S: with no
+     * debugger attached it double-faults and locks the core.
+     *
+     * Spinning inside the handler looks safe and is not, for a reason
+     * that took a while to see. HardFault has no "active" bit in SHCSR -
+     * unlike MemManage, BusFault, SysTick and the rest, there is nothing
+     * to write a zero into. While a HardFault is active the core will not
+     * run anything else, and the ONLY things that clear that state are an
+     * exception return and a reset. A debugger can halt the core, load a
+     * fresh image, set SP and PC and resume, and the core will simply sit
+     * there executing nothing - which is exactly the symptom we chased,
+     * repeatedly, mistaking it for a locked-up part.
+     *
+     * On this board that matters more than it would elsewhere: NRST is
+     * not wired to the adapter, and a reset would hand control back to
+     * the factory firmware in flash anyway, which then sleeps and takes
+     * the debug port with it. So "just reset it" costs a power cycle,
+     * every single crash.
+     *
+     * Returning normally from the handler is what deactivates HardFault.
+     * So: rewrite the stacked PC to point at fault_park(), force the
+     * stacked xPSR to a clean Thumb state, and return. The core lands in
+     * Thread mode in a quiet loop, fully halt-able and fully restartable,
+     * and the next ram_run starts a new image without anyone touching the
+     * radio.
+     *
+     * Interrupts off first, so whatever was firing cannot fire again into
+     * a machine that has already given up.
      */
-    for (;;) { }
+    __disable_irq();
+
+    frame[6] = (uint32_t)(void *)fault_park & ~1UL;  /* stacked PC   */
+    frame[7] = 0x01000000UL;                         /* stacked xPSR */
+
+    __DSB();
+    __ISB();
 }
 
 void fault_unexpected(uint32_t ipsr)
