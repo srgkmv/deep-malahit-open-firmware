@@ -1,9 +1,19 @@
 # Porting this firmware to the Malahit DSP-1
 
-Status: **bring-up. Steps 0 and 1 of §4 are done and verified on hardware.**
-`bringup/` builds a RAM image that brings the clock tree up to 480 MHz,
-switches the peripheral rail on and runs a console; `BOARD.md` is the
-hardware reference it was written from.
+Status, 01/11/2026: **steps 0 to 3 of §4 are done and verified on
+hardware.** Clock tree at 480 MHz from the 22 MHz bypass oscillator,
+switched rail, UART7 console, crash reporting, the ILI9488 panel
+drawing at 18 bits per pixel, and an FT6236 touch controller calibrated
+against four targets.
+
+Next is step 4, the codec — and the question the whole port turns on.
+
+- `BOARD.md` is the hardware reference: pin map, rails, clocks, and what
+  each peripheral turned out to be.
+- `WORKING.md` is how to build, load and debug without losing an
+  evening. **Read it first in a new session**; most of it is lessons
+  rather than instructions.
+- `bringup/` is the code.
 
 The upstream firmware targets the DEEPSDR 101 (GD32F450VET6, 800 × 480
 parallel panel, QSD mixer, MS5351 LO, TLV320AIC3204 codec, external SPI NOR
@@ -149,8 +159,19 @@ Each step should end with something visible on the radio.
 3. **Touch.** *Done* — FT6236 at 0x38 on I2C3, CIPHER 0x36 and
    FOCALTECH_ID 0x11. Coordinates decoded and mapped to the landscape
    display; see `BOARD.md` §6. `src/i2c3.c` is the bus driver.
-4. **Codec.** NAU8822 control over SPI, SAI1 master with MCLK = 256 × Fs,
-   loopback a tone. Find the maximum stable Fs — this answers §3.2.
+4. **Codec.** *Next.* NAU8822 control over SPI, SAI1 master with
+   MCLK = 256 × Fs, loopback a tone. Find the maximum stable Fs — this
+   answers §3.2, and §3.2 decides how much of the upstream DSP tree
+   transplants unchanged.
+
+   Three things are known going in. The control interface is
+   **write-only** — there is no read-back pin, so every register has to
+   be verified by its effect rather than by asking. SAI1 must be the
+   **master**, because MCLK comes from the MCU on PE2, which is the
+   opposite of the DEEPSDR wiring where the codec drives the clocks.
+   And the datasheet caps IMCLK at 12.288 MHz, a 48 kHz ceiling that the
+   factory firmware already exceeds by more than three times, so the
+   margin is real but undocumented.
 5. **Tuner.** MSi001 register sequence, tune, check I/Q quality and what
    `iqbal.c` makes of it.
 6. **Spectrum.** First real milestone: FFT on screen, a signal visible.
