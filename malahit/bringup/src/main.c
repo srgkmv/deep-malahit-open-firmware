@@ -79,6 +79,7 @@ static void report(void)
                    *(volatile uint32_t *)0x1FF1E804,
                    *(volatile uint32_t *)0x1FF1E808);
 
+    console_printf("last reset: %s\n", board_reset_cause());
     console_printf("clock     : %s\n", clock_error_text(clock_status));
     console_printf("  HSE     : %u Hz, bypass (X1 module on PH0)\n", HSE_HZ);
     console_printf("  SYSCLK  : %u Hz\n", clock_sysclk_hz);
@@ -158,43 +159,63 @@ int main(void)
     console_printf("  black red green blue yellow cyan magenta white,\n");
     console_printf("  inside a one-pixel white frame that must close.\n\n");
 
+    /*
+     * THE SIMPLEST QUESTION THAT SETTLES IT.
+     *
+     * Colour bars turned out to be a poor discriminator: they take a
+     * second to paint at this bus speed, and watching eight rectangles
+     * appear one by one tells you nothing about which of two formats
+     * just drew them. The eye has nothing to compare against.
+     *
+     * So: solid screens, one colour each, alternating. The format is
+     * wrong if EITHER goes wrong, and both failure modes are visible
+     * from across the room:
+     *
+     *   - wrong colour. Send RGB565 to a panel expecting three bytes
+     *     and the bytes regroup into different pixels entirely; red
+     *     comes out as something else, usually a muddy pattern.
+     *   - short fill. Two bytes per pixel into a panel that wants three
+     *     covers only two thirds of the window, so the bottom third of
+     *     the screen keeps whatever was there before.
+     *
+     * A clean full-screen red followed by a clean full-screen green,
+     * both reaching all four edges, means this panel takes both
+     * formats - and then we use 16-bit, because it is a third less
+     * data for the same picture.
+     */
+    static const struct {
+        ili9488_fmt_t fmt;
+        const char   *fmt_name;
+        uint8_t       r, g, b;
+        const char   *colour;
+    } phases[] = {
+        { ILI9488_FMT_18BIT, "18-bit (3 bytes/px)", 255,   0,   0, "RED"   },
+        { ILI9488_FMT_16BIT, "16-bit (2 bytes/px)",   0, 255,   0, "GREEN" },
+    };
+
+    console_printf("\nTwo solid screens, six seconds each, round and round:\n");
+    console_printf("  18-bit -> RED      16-bit -> GREEN\n");
+    console_printf("Both clean and edge to edge = this panel takes both,\n");
+    console_printf("and 16-bit wins on size. Wrong colour or a band at the\n");
+    console_printf("bottom that never fills = that format is not supported.\n\n");
+
     uint32_t round = 0;
 
     for (;;) {
-        ili9488_fmt_t fmt = ((round & 1U) == 0U) ? ILI9488_FMT_18BIT
-                                                 : ILI9488_FMT_16BIT;
-        const char *name = (fmt == ILI9488_FMT_18BIT) ? "18-bit (3 bytes/px)"
-                                                      : "16-bit (2 bytes/px)";
+        uint32_t i = round % 2U;
 
-        ili9488_set_format(fmt);
+        ili9488_set_format(phases[i].fmt);
+        ili9488_fill_screen(phases[i].r, phases[i].g, phases[i].b);
 
-        /* Time a plain full-screen fill first: one colour, no geometry,
-         * the cleanest throughput number available. */
-        ili9488_fill_screen(0U, 0U, 0U);
-        uint32_t us = ili9488_last_fill_us();
+        console_printf("NOW SHOWING: %s  in %s   (%u ms to paint)\n",
+                       phases[i].colour, phases[i].fmt_name,
+                       ili9488_last_fill_us() / 1000U);
 
-        uint32_t bytes = ILI9488_W * ILI9488_H
-                       * ((fmt == ILI9488_FMT_18BIT) ? 3U : 2U);
-
-        console_printf("%s\n", name);
-        console_printf("  full screen : %u us  (%u bytes, %u kB/s)\n",
-                       us, bytes,
-                       us ? (bytes * 1000U) / us : 0U);
-        console_printf("  that is     : %u frames/s if nothing else ran\n",
-                       us ? 1000000U / us : 0U);
-
-        ili9488_test_pattern();
-
-        console_printf("  bars are up. Correct picture here means this\n"
-                       "  panel speaks %s.\n\n", name);
-
-        /* Four seconds to look at it, blinking the backlight is NOT what
-         * we want now - it would make the bars hard to judge. */
-        uint32_t until = board_millis() + 4000U;
+        uint32_t until = board_millis() + 6000U;
         while ((int32_t)(board_millis() - until) < 0) {
+            board_watchdog_feed();
             __WFI();
         }
-
         round++;
     }
 }

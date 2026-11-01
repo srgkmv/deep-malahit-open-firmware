@@ -56,6 +56,34 @@ void board_rail_on_early(void);
  */
 void board_backlight(int on);
 
+/*
+ * WHY A FIRMWARE THAT USES NO WATCHDOG HAS TO DEAL WITH ONE.
+ *
+ * Loading over SWD does not reset the chip, so whatever the factory
+ * firmware had running is still running when our image starts - and the
+ * independent watchdog, once started, CANNOT BE STOPPED by anything
+ * short of a reset. Our image never feeds it, so some seconds later it
+ * resets the part. PC6 goes low with the reset, the switched rail dies,
+ * and from the outside the radio simply switches itself off in the
+ * middle of whatever it was doing.
+ *
+ * That is exactly what was seen: colour bars appeared on the panel and
+ * the radio went dark moments later.
+ *
+ * board_watchdog_tame() stretches the timeout to its maximum - about 32
+ * seconds - and feeds it once. board_watchdog_feed() keeps it fed from
+ * the main loop. Both are harmless if no watchdog is running.
+ */
+void board_watchdog_tame(void);
+void board_watchdog_feed(void);
+
+/*
+ * Why the last reset happened, decoded from RCC_RSR, as a string. Reads
+ * the flags once at startup and clears them, so each boot reports its
+ * own cause and not an accumulation.
+ */
+const char *board_reset_cause(void);
+
 /* Milliseconds since board_power_on(). Driven by SysTick. */
 uint32_t board_millis(void);
 void     board_delay_ms(uint32_t ms);

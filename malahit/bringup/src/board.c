@@ -42,6 +42,80 @@ static void gpio_output(GPIO_TypeDef *port, uint32_t pin)
     port->PUPDR   &= ~(3UL << (pin * 2U));
 }
 
+static char s_reset_cause[96];
+
+const char *board_reset_cause(void)
+{
+    return s_reset_cause;
+}
+
+static void append(const char *t)
+{
+    uint32_t n = 0;
+    while (s_reset_cause[n] != 0 && n < sizeof s_reset_cause - 1U) { n++; }
+    if (n > 0U && n < sizeof s_reset_cause - 3U) {
+        s_reset_cause[n++] = ',';
+        s_reset_cause[n++] = ' ';
+    }
+    while (*t != 0 && n < sizeof s_reset_cause - 1U) { s_reset_cause[n++] = *t++; }
+    s_reset_cause[n] = 0;
+}
+
+static void reset_cause_latch(void)
+{
+    uint32_t rsr = RCC->RSR;
+
+    s_reset_cause[0] = 0;
+
+    if (rsr & RCC_RSR_PORRSTF)   { append("power-on"); }
+    if (rsr & RCC_RSR_BORRSTF)   { append("brown-out"); }
+    if (rsr & RCC_RSR_PINRSTF)   { append("NRST pin"); }
+    if (rsr & RCC_RSR_SFTRSTF)   { append("software"); }
+    if (rsr & RCC_RSR_IWDG1RSTF) { append("INDEPENDENT WATCHDOG"); }
+    if (rsr & RCC_RSR_WWDG1RSTF) { append("window watchdog"); }
+    if (rsr & RCC_RSR_LPWRRSTF)  { append("illegal low-power"); }
+    if (s_reset_cause[0] == 0)   { append("none recorded"); }
+
+    /* Clear, so the next boot reports its own cause rather than every
+     * cause since the battery was last connected. */
+    RCC->RSR |= RCC_RSR_RMVF;
+}
+
+void board_watchdog_tame(void)
+{
+    /*
+     * The IWDG cannot be turned off. It can, however, be slowed right
+     * down and fed, and that is enough: 0x5555 unlocks the prescaler and
+     * reload registers, /256 with a reload of 0xFFF puts the timeout at
+     * roughly 32 seconds on the 32 kHz LSI, and 0xAAAA reloads the
+     * counter.
+     *
+     * If no watchdog is running this writes to a peripheral nobody is
+     * watching and nothing happens, which is the right behaviour for
+     * something that has to run before we know.
+     */
+    IWDG1->KR  = 0x5555U;
+    IWDG1->PR  = 7U;        /* /256 */
+    IWDG1->RLR = 0x0FFFU;   /* maximum reload */
+
+    /*
+     * PR and RLR are not accepted immediately: the peripheral runs on
+     * the LSI, so each write takes a few LSI cycles to cross over and
+     * reports busy in SR until it has. Reloading the counter before
+     * that finishes uses the OLD prescaler, which is the short one we
+     * are trying to escape. Bounded, because this must not hang if no
+     * watchdog is running and the registers never move.
+     */
+    for (uint32_t i = 0; i < 200000U && IWDG1->SR != 0U; i++) { }
+
+    IWDG1->KR  = 0xAAAAU;
+}
+
+void board_watchdog_feed(void)
+{
+    IWDG1->KR = 0xAAAAU;
+}
+
 void board_rail_on_early(void)
 {
     RCC->AHB4ENR |= RCC_AHB4ENR_GPIOCEN;
@@ -49,6 +123,12 @@ void board_rail_on_early(void)
 
     gpio_output(RAIL_PORT, RAIL_PIN);
     RAIL_PORT->BSRR = (1UL << RAIL_PIN);
+
+    /* Before anything else slow happens: the factory firmware's
+     * watchdog is still ticking and does not care that a different
+     * image is running now. */
+    reset_cause_latch();
+    board_watchdog_tame();
 
     /*
      * Wait for the LD3985 to bring the rail up and for the oscillator

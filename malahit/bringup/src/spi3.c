@@ -55,6 +55,24 @@ void spi3_init(spi3_div_t div)
     RCC->APB1LENR |= RCC_APB1LENR_SPI3EN;
     (void)RCC->APB1LENR;
 
+    /*
+     * SAY WHICH KERNEL CLOCK. DO NOT INHERIT ONE.
+     *
+     * SPI123SEL defaults to 000 = pll1_q_ck, and this code assumed the
+     * default. It should not have: an image loaded over SWD inherits
+     * every RCC setting the previous firmware left behind, and the
+     * factory firmware here sets SPI123SEL = 100 = per_ck, which is HSI
+     * at 64 MHz.
+     *
+     * The symptom was a bus that measured exactly 3.75 times slower than
+     * it should - 240/64 - at every divider, with the times scaling
+     * perfectly as the divider changed. Perfect scaling says the bus is
+     * the limit; the constant factor says the bus is not the speed you
+     * think. Both were true at once, which is why it took a readback of
+     * D2CCIP1R to see.
+     */
+    RCC->D2CCIP1R &= ~RCC_D2CCIP1R_SPI123SEL_Msk;   /* 000 = pll1_q_ck */
+
     gpio_af(GPIOC, 10U, 6U);   /* SCK  */
     gpio_af(GPIOC, 11U, 6U);   /* MISO - configured, not yet used */
     gpio_af(GPIOC, 12U, 6U);   /* MOSI */
