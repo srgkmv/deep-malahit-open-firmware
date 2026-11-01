@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # Flash a .bin to a Malahit DSP-1 over the STM32 ROM bootloader.
 #
-# Enter DFU by closing jumper JP1 and powering up. JP1 is wired straight to
-# BOOT0 through R15, with R17 holding it low otherwise — it is pure hardware,
-# so this route still works no matter how badly a flashed image misbehaves.
-# That is the reason this radio cannot be bricked from software.
+# Enter DFU the way this unit offers it: HOLD THE ENCODER BUTTONS AND
+# PRESS THE POWER BUTTON. There is no JP1 on this board - the schematic
+# shows the jumper, but it is not fitted - so BOOT0 cannot be reached
+# and the button combination is implemented by the FACTORY FIRMWARE.
+#
+# Which means this route is NOT a hardware safety net. It lives in the
+# very image that flashing replaces. Read BOARD.md section 4 before
+# writing anything to flash: there has to be another way back first.
 #
 # Usage:  ./flash-dfu.sh firmware.bin
 set -euo pipefail
@@ -20,7 +24,7 @@ fi
 
 if ! dfu-util -l 2>/dev/null | grep -q '0483:df11'; then
     echo "No STM32 DFU device found." >&2
-    echo "Power the radio up with jumper JP1 closed, then plug in USB." >&2
+    echo "Hold the encoder buttons and press power to enter DFU." >&2
     exit 1
 fi
 
@@ -28,4 +32,4 @@ echo "Writing $BIN ($SIZE bytes) to 0x08000000 ..."
 dfu-util -a 0 -s 0x08000000:leave -D "$BIN"
 
 echo
-echo "Done. Open JP1 and power-cycle to run the new image."
+echo "Done. Power-cycle to run the new image."

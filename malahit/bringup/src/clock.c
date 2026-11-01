@@ -192,6 +192,27 @@ static int clock_bring_up(void)
     WAIT_FOR((FLASH->ACR & FLASH_ACR_LATENCY) == FLASH_ACR_LATENCY_4WS,
              CLOCK_ERR_SWITCH);
 
+    /*
+     * 5a. CLOCK SECURITY, AND ON THIS BOARD IT EARNS ITS KEEP.
+     *
+     * CSS watches HSE and, if it stops, raises an NMI and drags the
+     * system clock back to HSI by itself. On most boards that guards
+     * against a cracked crystal. Here it guards against something much
+     * more likely: X1 sits on the switched 3.3V rail, so anything that
+     * clears PC6 takes the system clock's own source away.
+     *
+     * Measured, not imagined. Clearing PC6 by hand over SWD while the
+     * part was running on PLL1 stopped the whole clock tree dead -
+     * including the debug port, which went from answering to "cannot
+     * read IDR" between one command and the next, leaving a radio that
+     * only a power cycle could recover.
+     *
+     * With CSS on, the same mistake costs an NMI and a drop to 64 MHz
+     * instead of a dead chip. Nothing in this project should ever clear
+     * PC6 while running, but "should never" is not a mechanism.
+     */
+    RCC->CR |= RCC_CR_CSSHSEON;
+
     /* 5. Go. */
     RCC->CFGR = (RCC->CFGR & ~RCC_CFGR_SW) | RCC_CFGR_SW_PLL1;
     WAIT_FOR((RCC->CFGR & RCC_CFGR_SWS) == RCC_CFGR_SWS_PLL1,
@@ -258,4 +279,29 @@ void SystemInit(void)
     board_rail_on_early();
 
     clock_init();
+}
+
+/*
+ * HSE has stopped. The clock security system has already switched the
+ * system clock to HSI by itself, so by the time this runs the part is
+ * alive at 64 MHz rather than dead - which is the entire point.
+ *
+ * On this radio the overwhelmingly likely cause is not a broken
+ * oscillator but a lost supply: X1 is on the switched 3.3V rail, so
+ * whatever just cleared PC6 is the culprit. Record it and carry on; the
+ * caller can see clock_css_fired and say so on the console, which is a
+ * great deal more useful than the silence that preceded this handler.
+ */
+volatile uint32_t clock_css_fired;
+
+void NMI_Handler(void)
+{
+    clock_css_fired++;
+
+    RCC->CICR = RCC_CICR_HSECSSC;   /* acknowledge, or it re-enters */
+
+    clock_sysclk_hz = 64000000U;
+    clock_ahb_hz    = 64000000U;
+    clock_apb1_hz   = 64000000U;
+    SystemCoreClock = clock_sysclk_hz;
 }

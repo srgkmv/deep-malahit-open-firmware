@@ -2,8 +2,9 @@
 # Read the whole 2 MB of internal flash out of a Malahit DSP-1 and save it,
 # named by date and by the chip's own unique ID, so two radios never collide.
 #
-# Works over DFU (jumper JP1 closed at power-up). The part ships with RDP
-# level 0, so there is nothing to defeat.
+# Works over DFU - hold the encoder buttons and press power to get there
+# on this unit; there is no JP1 fitted. The part ships with RDP level 0,
+# so there is nothing to defeat.
 #
 # Usage:  ./backup-flash.sh [output-directory]
 set -euo pipefail
@@ -13,7 +14,7 @@ mkdir -p "$OUTDIR"
 
 if ! dfu-util -l 2>/dev/null | grep -q '0483:df11'; then
     echo "No STM32 DFU device found." >&2
-    echo "Power the radio up with jumper JP1 closed, then plug in USB." >&2
+    echo "Hold the encoder buttons and press power to enter DFU." >&2
     exit 1
 fi
 

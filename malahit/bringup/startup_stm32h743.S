@@ -294,7 +294,10 @@ g_pfnVectors:
     .thumb_set \name, Default_Handler
     .endm
 
-    weak_handler NMI_Handler
+    /* NMI is NOT weak-aliased to Default_Handler: on this board it is
+     * how the clock security system reports that HSE has stopped, which
+     * is a thing that can actually happen here - see clock.c. nmi_css()
+     * in clock.c handles it. */
     weak_handler SVC_Handler
     weak_handler DebugMon_Handler
     weak_handler PendSV_Handler

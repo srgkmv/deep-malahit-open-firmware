@@ -80,4 +80,9 @@ extern uint32_t clock_sysclk_hz;
 extern uint32_t clock_ahb_hz;
 extern uint32_t clock_apb1_hz;
 
+/* Non-zero once the clock security system has reported HSE stopping.
+ * On this board that almost certainly means PC6 went low and took the
+ * oscillator's supply with it - see clock.c. */
+extern volatile uint32_t clock_css_fired;
+
 #endif /* MALAHIT_CLOCK_H */

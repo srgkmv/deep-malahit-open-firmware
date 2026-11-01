@@ -155,15 +155,43 @@ only speak HLA, so they will not work here either — use OpenOCD.
 
 See `openocd.cfg` next to this file; `tools/swd.sh` wraps it.
 
-### ROM DFU — jumper JP1
+### ROM DFU — BY BUTTON, NOT BY JUMPER
 
-`BOOT0` (pin 94) is held low by R17 (10 kΩ) and pulled high through JP1 +
-R15 (470 Ω). Closing JP1 at power-up enters the STM32 system bootloader,
-which enumerates as `0483:df11` with `@Internal Flash /0x08000000/16*128Kg`.
+The schematic shows `BOOT0` (pin 94) held low by R17 (10 kΩ) and pulled
+high through jumper **JP1** + R15 (470 Ω). **On this unit JP1 is not
+fitted**, and the schematic is from 2020, so do not assume it is there.
 
-**This jumper is the safety net: it is pure hardware, so no firmware we write
-can lock us out.** The radio cannot be bricked by a bad flash as long as JP1
-is reachable.
+DFU is instead reached the way the factory firmware offers it: **hold the
+encoder buttons and press the power button.** The device then enumerates
+as `0483:df11` with `@Internal Flash /0x08000000/16*128Kg`.
+
+Three consequences, and the third one matters a great deal.
+
+1. **Any reset leaves DFU.** NRST restarts the factory firmware with no
+   buttons held, so it boots normally, and if nobody presses anything it
+   settles into a low-power state that takes the debug port with it. The
+   symptom is `cannot read IDR` on the next attach, which reads like a
+   dead adapter and is a sleeping radio. This is why `openocd.cfg` does
+   not reset and why `core_clean` exists.
+
+2. **SWD does not need DFU.** It needs the core awake. Simply switching
+   the radio on normally is enough to attach, load a RAM image over the
+   running factory firmware and go.
+
+3. **The route into the bootloader is a feature of the firmware we
+   intend to replace.** Erase flash and the button combination goes with
+   it. Before anything is written to flash, there has to be another way
+   back:
+   - the `JP1`/R15 pads next to pin 94, if they exist unpopulated on
+     this board — worth looking for with a meter, because shorting
+     BOOT0 high is the one recovery that no firmware can take away;
+   - or SWD, which works as long as our own firmware never disables the
+     debug port and never sleeps without a way to wake;
+   - or our firmware implementing the same courtesy the factory one
+     does: a button combination at boot that jumps to `0x1FF00000`.
+
+   Item three is cheap to write and should exist before the first flash
+   write, not after it.
 
 ### Debug UART — header J6
 
