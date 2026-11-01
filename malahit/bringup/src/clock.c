@@ -1,5 +1,6 @@
 #include "stm32h7xx.h"
 #include "clock.h"
+#include "board.h"
 
 /*
  * CMSIS declares this in system_stm32h7xx.h and defines it in
@@ -247,6 +248,14 @@ void SystemInit(void)
      * regions, in the step that first needs DMA.
      */
     SCB_EnableICache();
+
+    /*
+     * Power before clocks. The 22 MHz oscillator that HSE needs sits on
+     * the switched 3.3V rail, so PC6 has to be high and the module has
+     * to have settled before clock_init() so much as looks at HSEON.
+     * See board.h.
+     */
+    board_rail_on_early();
 
     clock_init();
 }

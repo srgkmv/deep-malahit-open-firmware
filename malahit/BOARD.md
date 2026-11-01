@@ -49,6 +49,23 @@ without restriction.
 22 MHz also feeds `REF_CLK_MSI001`, so the tuner reference and the MCU
 reference are the same oscillator.
 
+> ### X1 IS ON THE SWITCHED RAIL. READ §3 BEFORE WRITING CLOCK CODE.
+>
+> Pin 4 of the module takes its supply through ferrite bead L27 from the
+> net labelled **`3.3V`** — U4's output, the rail gated by `PC6` — and
+> **not** from `3.3V_CPU`. After a reset the processor is running and its
+> own reference oscillator is switched off.
+>
+> So firmware must raise `PC6` and let the module settle **before** it
+> touches `HSEON`. Get the order wrong and `clock_init()` reports a dead
+> oscillator on a board whose oscillator is merely unpowered, which is
+> not a diagnosis anybody reaches quickly.
+>
+> It hides well, too. Reloading an image over SWD does not reset the
+> GPIOs, so once any run has set `PC6` every later run inherits a
+> powered oscillator and the bug stays invisible. It only appeared here
+> the day a working hardware reset did.
+
 This matters: `RCC_CR.HSEBYP` must be set before enabling HSE, and every PLL
 divider has to be worked out for 22 MHz, not for the 8/25 MHz that most
 STM32H7 examples assume.

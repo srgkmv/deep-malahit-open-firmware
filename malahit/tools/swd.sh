@@ -21,7 +21,17 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CFG="$HERE/../openocd.cfg"
+
+# Which cable. Default is the ST-LINK; export ADAPTER=ft2232d for the
+# FTDI dongle, which is the one that can actually drive reset.
+#
+#   ADAPTER=ft2232d ./swd.sh id
+#   ADAPTER=ft2232d make ram      (the makefile passes it through)
+case "${ADAPTER:-stlink}" in
+    stlink)   CFG="$HERE/../openocd.cfg" ;;
+    ft2232d)  CFG="$HERE/../openocd-ft2232d.cfg" ;;
+    *)        echo "unknown ADAPTER: $ADAPTER (stlink | ft2232d)" >&2; exit 1 ;;
+esac
 
 run() { openocd -f "$CFG" "$@"; }
 

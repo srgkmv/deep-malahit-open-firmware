@@ -28,6 +28,28 @@
 void board_power_on(void);
 
 /*
+ * THE RAIL HAS TO COME UP BEFORE THE CLOCK TREE, AND HERE IS WHY.
+ *
+ * X1, the 22 MHz oscillator that HSE runs on, takes its supply from the
+ * SWITCHED 3.3V rail - pin 4 of the module, through ferrite bead L27,
+ * from U4's output. Not from 3.3V_CPU. So until PC6 is high there is no
+ * 22 MHz, HSE cannot start, PLL1 cannot lock, and clock_init() reports a
+ * dead oscillator on a board whose oscillator is merely unpowered.
+ *
+ * This is called from SystemInit() BEFORE clock_init(), which is earlier
+ * than board_power_on() can run - there is no SysTick yet, so the settle
+ * time is a counted loop rather than a delay.
+ *
+ * It hid for a long time. Every run until a real reset existed inherited
+ * a PC6 that some earlier run had already set, because GPIO state
+ * survives reloading an image. The day the FT2232D gave us a working
+ * reset, PC6 went back to zero, the oscillator lost power, and the
+ * firmware started failing in the clock bring-up with symptoms that
+ * looked like everything except a missing clock.
+ */
+void board_rail_on_early(void);
+
+/*
  * Panel backlight: PB8 -> R27/R28 -> Q1 (IRLML2502) -> the panel's LED
  * anode. Plain on/off here. PB8 can do PWM later through TIM4_CH3 (AF2) or
  * TIM16_CH1 (AF1); brightness control is not a bring-up problem.

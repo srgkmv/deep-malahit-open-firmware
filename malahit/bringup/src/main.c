@@ -33,33 +33,45 @@
 #include "clock.h"
 #include "console.h"
 #include "fault.h"
+#include "spi3.h"
+#include "ili9488.h"
 
 static const char *clock_error_text(int status)
 {
     switch (status) {
     case CLOCK_OK:         return "ok";
     case CLOCK_ERR_VOSRDY: return "core voltage never became ready (VOSRDY)";
-    case CLOCK_ERR_HSERDY: return "HSE never started - is X1 (22 MHz) running?";
+    case CLOCK_ERR_HSERDY: return "HSE never started - X1 unpowered? it is on the SWITCHED 3.3V rail (PC6)";
     case CLOCK_ERR_PLLRDY: return "PLL1 never locked";
     case CLOCK_ERR_SWITCH: return "SYSCLK never switched to PLL1";
     default:               return "unknown";
     }
 }
 
+/*
+ * NOTHING HERE READS DBGMCU, AND THAT IS DELIBERATE.
+ *
+ * This used to print the device and revision ID out of DBGMCU->IDCODE at
+ * 0x5C001000, which worked perfectly - right up until the debug adapter
+ * changed. DBGMCU lives in the debug power domain, and that domain is
+ * only guaranteed to be powered while a debugger is holding
+ * CDBGPWRUPREQ. One adapter left it asserted after OpenOCD exited and
+ * the other did not, so the same firmware that had printed its chip ID
+ * a hundred times took a precise bus error (CFSR 0x00008200) on the very
+ * first line of its banner, before the console had said anything at all.
+ *
+ * Firmware has no business depending on whether someone has a debugger
+ * plugged in. The chip ID is a debugger's question; "swd.sh id" asks it.
+ * What stays here is what the CPU can always read: flash size and the
+ * unique ID, both in system memory, and the clock tree, which is ours.
+ */
 static void report(void)
 {
-    uint32_t idcode = DBGMCU->IDCODE;
-    uint32_t rev    = idcode >> 16;
 
     console_printf("\n\n");
     console_printf("Malahit DSP-1 - bring-up step 1\n");
     console_printf("================================\n");
 
-    console_printf("chip      : dev 0x%x  rev 0x%x (%s)\n",
-                   idcode & 0xFFFUL, rev,
-                   (rev == 0x2003U) ? "V, 480 MHz capable"
-                 : (rev == 0x1003U) ? "Y, 400 MHz max"
-                                    : "unrecognised");
     console_printf("flash     : %u kB\n",
                    (uint32_t)(*(volatile uint16_t *)0x1FF1E880));
     console_printf("unique id : %08x %08x %08x\n",
@@ -114,46 +126,75 @@ int main(void)
 
     report();
 
-    uint32_t next = board_millis();
-    int      on   = 0;
-    uint32_t beat = 0;
+    /*
+     * STEP 2: THE PANEL, AND THE QUESTION IT HAS TO ANSWER.
+     *
+     * The ILI9488 is widely said to accept only 18-bit pixels over SPI -
+     * three bytes each - even though it does RGB565 on its parallel bus.
+     * If that holds here, a full frame is 460 800 bytes instead of
+     * 307 200, and that single fact sets the budget for the whole user
+     * interface: how fast a waterfall can scroll, whether the spectrum
+     * can be redrawn every frame, what a framebuffer costs in AXI SRAM.
+     *
+     * Rather than believe the internet, ask the panel. The loop below
+     * draws the same eight colour bars in both formats, four seconds
+     * each, and prints how long the full-screen fill took in each case.
+     * Whichever picture looks right is the format this panel supports,
+     * and the measured microseconds are the real number to design
+     * against - not a calculation from the clock rate, which ignores the
+     * per-byte overhead that turns out to dominate.
+     */
+    spi3_init(SPI3_DIV16);
+    uint32_t cfg2 = spi3_check();
+    console_printf("panel     : SPI3 at %u Hz, CFG2 0x%08x%s\n",
+                   spi3_hz(), cfg2,
+                   (cfg2 & (1UL << 22)) ? "" :
+                   "  *** MASTER BIT CLEARED - mode fault, SPI will not clock ***");
+    ili9488_init(ILI9488_FMT_18BIT);
+    board_backlight(1);
+    console_printf("panel     : initialised, backlight on\n\n");
+
+    console_printf("Watch the screen. Eight bars, left to right:\n");
+    console_printf("  black red green blue yellow cyan magenta white,\n");
+    console_printf("  inside a one-pixel white frame that must close.\n\n");
+
+    uint32_t round = 0;
 
     for (;;) {
-        board_backlight(on);
-        int shown = on;        /* before the flip, or the line always lies */
-        on = !on;
+        ili9488_fmt_t fmt = ((round & 1U) == 0U) ? ILI9488_FMT_18BIT
+                                                 : ILI9488_FMT_16BIT;
+        const char *name = (fmt == ILI9488_FMT_18BIT) ? "18-bit (3 bytes/px)"
+                                                      : "16-bit (2 bytes/px)";
 
-        /*
-         * A heartbeat line every second, forever.
-         *
-         * The banner above prints once, at boot, which is useless for the
-         * job this console actually has to do first: finding out which
-         * physical pin PE8 comes out on. J6 is a bare 2x7 header with no
-         * silkscreen numbering and no ground pin, so locating UART7 means
-         * moving a probe around while something talks. A one-shot banner
-         * means re-running the whole load for every guess.
-         *
-         * Printing twice a second - this loop runs at 2 Hz - also makes
-         * the far more common failure obvious. Wrong baud rate gives
-         * steady garbage at a steady rate rather than silence, and the
-         * two look nothing alike.
-         */
-        (void)beat++;
-        {
-            console_printf("[%u s] alive, sysclk %u Hz, backlight %s\n",
-                           board_millis() / 1000U, clock_sysclk_hz,
-                           shown ? "on" : "off");
-        }
+        ili9488_set_format(fmt);
 
-        /*
-         * Absolute deadlines rather than delay-from-now, so the period
-         * stays 1000 ms whatever else creeps into the loop later. At this
-         * size it makes no difference; it is a habit worth keeping before
-         * the loop grows a panel driver.
-         */
-        next += 500U;
-        while ((int32_t)(board_millis() - next) < 0) {
+        /* Time a plain full-screen fill first: one colour, no geometry,
+         * the cleanest throughput number available. */
+        ili9488_fill_screen(0U, 0U, 0U);
+        uint32_t us = ili9488_last_fill_us();
+
+        uint32_t bytes = ILI9488_W * ILI9488_H
+                       * ((fmt == ILI9488_FMT_18BIT) ? 3U : 2U);
+
+        console_printf("%s\n", name);
+        console_printf("  full screen : %u us  (%u bytes, %u kB/s)\n",
+                       us, bytes,
+                       us ? (bytes * 1000U) / us : 0U);
+        console_printf("  that is     : %u frames/s if nothing else ran\n",
+                       us ? 1000000U / us : 0U);
+
+        ili9488_test_pattern();
+
+        console_printf("  bars are up. Correct picture here means this\n"
+                       "  panel speaks %s.\n\n", name);
+
+        /* Four seconds to look at it, blinking the backlight is NOT what
+         * we want now - it would make the bars hard to judge. */
+        uint32_t until = board_millis() + 4000U;
+        while ((int32_t)(board_millis() - until) < 0) {
             __WFI();
         }
+
+        round++;
     }
 }

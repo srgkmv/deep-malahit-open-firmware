@@ -42,11 +42,36 @@ static void gpio_output(GPIO_TypeDef *port, uint32_t pin)
     port->PUPDR   &= ~(3UL << (pin * 2U));
 }
 
+void board_rail_on_early(void)
+{
+    RCC->AHB4ENR |= RCC_AHB4ENR_GPIOCEN;
+    (void)RCC->AHB4ENR;
+
+    gpio_output(RAIL_PORT, RAIL_PIN);
+    RAIL_PORT->BSRR = (1UL << RAIL_PIN);
+
+    /*
+     * Wait for the LD3985 to bring the rail up and for the oscillator
+     * module to start. No timebase exists yet - this runs before the PLL
+     * and before SysTick - so it is a counted loop, and the count is
+     * deliberately generous: at the 64 MHz the part boots on, 400 000
+     * iterations is somewhere above 10 ms, against a few hundred
+     * microseconds for the regulator and a millisecond or so for a
+     * crystal oscillator module to settle. Nothing is in a hurry here,
+     * and an oscillator that is still ramping when the PLL tries to lock
+     * is a failure that looks like a hardware fault.
+     */
+    for (volatile uint32_t i = 0; i < 400000U; i++) { }
+}
+
 void board_power_on(void)
 {
     RCC->AHB4ENR |= RCC_AHB4ENR_GPIOBEN | RCC_AHB4ENR_GPIOCEN;
     (void)RCC->AHB4ENR;
 
+    /* PC6 is already high - board_rail_on_early() raised it before the
+     * clock tree was touched, because HSE depends on it. Repeating it is
+     * harmless and keeps this function honest about what it leaves on. */
     gpio_output(RAIL_PORT, RAIL_PIN);
     gpio_output(BL_PORT, BL_PIN);
 
