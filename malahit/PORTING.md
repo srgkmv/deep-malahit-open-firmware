@@ -430,10 +430,46 @@ Each step should end with something visible on the radio.
    upstream code in the image passes ours: **10 403 lines against 7381**,
    plus nine CMSIS-DSP sources.
 
-   What remains is the actual relayout: `main.c`'s 39 094 lines are
-   hand-fitted to 800 × 480. That is still the largest piece of work in
-   the port — but it is now a layout problem and not a driver problem,
-   and `deepsdr-ui` can do it on a PC, which is what §3.1 proposed.
+   **The 480 × 320 relayout is done, and it was done on a PC** — which
+   is what §3.1 proposed and what made it cheap. `make malahit` in
+   `deepsdr-ui/` renders the whole main screen from the real firmware
+   files at the port's geometry, so every iteration was a PNG and not a
+   trip to the bench.
+
+   The geometry lives in `compat/malahit_layout.h`, used by the host
+   render and the firmware build alike so the two cannot drift:
+
+   | | upstream 800×480 | here 480×320 |
+   |---|---|---|
+   | header | 64 | 34 |
+   | status | 40 | 16 |
+   | spectrum | 240 | 142 (trace 120) |
+   | waterfall | 72 | 92 |
+   | actions | 50 | 30 |
+
+   The waterfall ends up **larger than upstream's** on a panel a third
+   shorter, because the chrome was halved and the type with it.
+
+   Three things had to be understood rather than guessed:
+
+   - **`gfx2_text()` lays out a LINE BOX, not a glyph.** `font_ui_11` is
+     11 px tall but its line box is 14, and two of them are 28 — which
+     is why the action bar needed 30 rows and not 26. The buttons were
+     not badly centred, the text did not fit.
+   - **Scaling offsets by the band height is wrong when the type does
+     not scale with it.** The faces stop at `font_ui_11`, so a chip
+     still needs room for its text whatever the band does. Chips are
+     sized from the face instead.
+   - **Generated faces where none existed.** Nothing sat between
+     `font_num_20` at 21 px and `font_num_44` at 46 px, so the frequency
+     readout was either a label or did not fit. `font_num_31` was
+     generated with upstream's own tool. It fits a 34-row header only
+     because the face is digits-only and its descent is empty.
+
+   What remains of §3.1 is `main.c`'s 39 094 lines, which carry the
+   screens this render does not: menus, the band list, the keypad, the
+   FT8 map. Those are `ui_digi.c` and friends, already separate modules,
+   and the same harness renders them.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

@@ -45,9 +45,30 @@ divergence is never a surprise:
   `GFX2_BAND_H` already used, and verified not to change the DEEPSDR
   build or the `deepsdr-ui` host build. It belongs upstream.
 - `User/gfx.h` — `GFX_SCREEN_WIDTH` and `GFX_SCREEN_HEIGHT` likewise.
+- `User/spec_chrome.h`, `User/ui_top.h`, `User/ui_act.h` — the layout
+  constants wrapped in `#ifndef` the same way.
+- `User/ui_top.c`, `User/ui_act.c`, `User/spec_chrome.c` — about
+  thirty-five numeric offsets inside the drawing functions replaced by
+  named constants derived from the band heights, each written so that
+  the old value falls out at the old band height.
 
-Both are the same one-line change for the same reason, and neither
-alters anything when no `-D` is given.
+All of them are generic: a constant becoming configurable, or a literal
+becoming a named expression. None adds anything Malahit-specific, and
+with no `-D` the DEEPSDR gets what it always got — **verified by
+rendering its 800 x 480 main screen before and after and comparing the
+PPM byte for byte**, after every step.
+
+### Fonts generated for this port
+
+`compat/font_ui_8.h`, `compat/font_ui_8b.h` and `compat/font_num_31.h`
+were produced by upstream's own `deepsdr-ui/tools/gen_assets.py` from
+DejaVu, the same source and the same 4 bpp format as the faces it ships.
+11.6 kB in total. They are new files; no upstream font was regenerated
+or modified.
+
+Licence unchanged: DejaVu is under the Bitstream Vera / DejaVu terms,
+which permit embedding and redistribution, and that is already why
+upstream uses it.
 
 Everything else upstream is byte-identical. Two mechanisms keep it that
 way and both are documented where they are used:

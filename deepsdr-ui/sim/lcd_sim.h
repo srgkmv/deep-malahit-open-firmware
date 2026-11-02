@@ -3,8 +3,14 @@
 
 #include <stdint.h>
 
+/* Sobreescribibles, para que un port pueda renderizar su propio panel
+ * en este mismo banco. Sin -D no cambia nada. */
+#ifndef LCD_W
 #define LCD_W 800
+#endif
+#ifndef LCD_H
 #define LCD_H 480
+#endif
 
 /*
  * Contadores de coste del bus EXMC.

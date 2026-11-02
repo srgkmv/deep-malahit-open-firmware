@@ -63,6 +63,111 @@ out/spec3b: sim/spec3b.c sim/lcd_sim.c vendor/gfx.c vendor/spectrum.c gfx2/gfx2.
 	@mkdir -p out
 	$(CC) $(CFLAGS) $(GFX2) $(VENDOR) -o $@ $^ $(LDLIBS)
 
+#
+# EL PUERTO AL MALAHIT DSP-1: LA MISMA PANTALLA A 480x320.
+#
+# Usa sim/principal.c tal cual - la maqueta de la pantalla principal - y
+# cambia solo dos cosas: el tamano del panel simulado y la geometria, que
+# viene de malahit/compat/malahit_layout.h. Ese fichero es el MISMO que
+# usa la compilacion de la radio, asi que lo que sale en el PNG y lo que
+# sale en el panel no pueden separarse.
+#
+# Y NO usa vendor/, que son los ficheros del firmware ORIGINAL y este
+# repositorio no distribuye: tira de ../User/gfx.c y ../User/spectrum.c,
+# que son los de este arbol y los que el puerto compila de verdad.
+#
+#
+# -include DE LAS DOS CABECERAS DEL PANEL, Y POR QUE HACE FALTA.
+#
+# ../User/gfx.c pide "rm68120_exmc.h" entre comillas, y para un include
+# entre comillas el compilador mira PRIMERO en el directorio del fichero
+# que lo pide: gana ../User/rm68120_exmc.h, el de verdad, cuyo
+# rm68120_dato() escribe en 0x60020000 -la ventana EXMC del GD32-. En un
+# PC esa direccion no existe y el render se cae con SIGSEGV dentro de
+# rm68120_dato().
+#
+# Eso es justo lo que vendor/ resuelve para los otros bancos: son COPIAS
+# en una carpeta donde el fichero de verdad no esta, asi que hostinc/
+# gana. Aqui no hay copia -se compila ../User/gfx.c tal cual- asi que
+# hace falta otra via.
+#
+# Forzar la cabecera de hostinc ANTES: define ella misma la guarda
+# RM68120_EXMC_H, y cuando gfx.c llega a su #include la encuentra ya
+# definida y el fichero de verdad se queda en nada. Sin -D y sin tocar
+# ningun fichero. Es el mismo mecanismo que usa la compilacion de la
+# radio, al reves: alli se sustituye por una propia, aqui por la del
+# simulador.
+#
+MALAHIT_LAYOUT = -I ../malahit/compat -I ../User -include malahit_layout.h \
+                 -include hostinc/rm68120_exmc.h -include hostinc/lcd_dma.h \
+                 -DLCD_W=480 -DLCD_H=320
+
+#
+# LAS TIPOGRAFIAS, A LA MITAD, SIN TOCAR UN SOLO FICHERO.
+#
+# ui_top.c y compania nombran las fuentes como identificadores sueltos
+# -&font_ui_14b- asi que un -D las redirige todas de golpe. No hay que
+# editar nada ni inventar una capa de indireccion.
+#
+# OJO: esto NO puede aplicarse a fonts_data.c, que es quien DEFINE esos
+# simbolos. Si se le aplica, la definicion de font_ui_14b pasa a
+# llamarse font_ui_11 y el enlace se cae con un simbolo duplicado. Por
+# eso fonts_data.c se compila aparte, sin el remapeo.
+#
+# La mas pequena que hay es font_ui_11; de 15 px a 11 es un 73%, no un
+# 50%. El lector de frecuencia si baja de verdad: font_num_44 son 46 px
+# y font_num_20 son 21, o sea un 46%. Para bajar el texto de la interfaz
+# a la mitad de verdad harian falta caras de 7-8 px, que no estan en el
+# juego de assets y habria que generar con tools/gen_assets.py.
+#
+#
+# DOS JUEGOS DE CARAS, Y POR ESO SE COMPILA ui_top.c APARTE.
+#
+# El remapeo es por UNIDAD DE TRADUCCION, asi que cada fichero puede
+# llevar el suyo. ui_top.c es el unico que necesita la cara de 8 px -las
+# chapas de estado y la pastilla del mando, que son seis en una fila de
+# 480-; la regla del espectro y los botones de abajo se leen bien a 11 y
+# encogerlos tambien seria empeorarlos sin motivo.
+#
+# ui_top.c usa font_ui_18b para el modo, la banda y MEM, y font_ui_14/14b
+# para las chapas: por eso basta con remapear 14 y 14b a la de 8 y dejar
+# 18b en 11. Las chapas encogen y los rotulos grandes no.
+#
+MALAHIT_FONTS_COMMON = -Dfont_ui_18b=font_ui_11 \
+                       -Dfont_ui_14b=font_ui_11 \
+                       -Dfont_ui_14=font_ui_11 \
+                       -Dfont_num_20=font_ui_11
+
+MALAHIT_FONTS_TOP = -include font_num_31.h -include font_ui_8.h \
+                    -include font_ui_8b.h \
+                    -Dfont_num_44=font_num_31 \
+                    -Dfont_ui_18b=font_ui_11 \
+                    -Dfont_ui_14b=font_ui_8b \
+                    -Dfont_ui_14=font_ui_8 \
+                    -Dfont_num_20=font_ui_11
+
+out/malahit_top.o: ../User/ui_top.c
+	@mkdir -p out
+	$(CC) $(CFLAGS) $(GFX2) $(MALAHIT_LAYOUT) $(MALAHIT_FONTS_TOP) -c -o $@ $<
+
+out/malahit_fonts.o: gfx2/fonts_data.c
+	@mkdir -p out
+	$(CC) $(CFLAGS) $(GFX2) -c -o $@ $<
+
+out/malahit: sim/principal.c sim/lcd_sim.c ../User/gfx.c ../User/spectrum.c \
+             gfx2/gfx2.c gfx2/spec_chrome.c gfx2/ui_act.c \
+             out/malahit_top.o out/malahit_fonts.o
+	@mkdir -p out
+	$(CC) $(CFLAGS) $(GFX2) $(MALAHIT_LAYOUT) $(MALAHIT_FONTS_COMMON) \
+	      -o $@ $^ $(LDLIBS)
+
+.PHONY: malahit
+malahit: out/malahit
+	./out/malahit
+	@mv -f out/principal.ppm out/malahit.ppm 2>/dev/null || true
+	@$(MAKE) png
+	@echo "  -> out/malahit.ppm y out/malahit.png"
+
 out/spec3blayout: sim/spec3b_layout.c sim/lcd_sim.c gfx2/gfx2.c gfx2/fonts_data.c
 	@mkdir -p out
 	$(CC) $(CFLAGS) $(GFX2) -o $@ $^ $(LDLIBS)
