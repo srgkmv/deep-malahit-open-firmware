@@ -44,8 +44,14 @@
 #include "sai1.h"
 #include "msi001.h"
 #include "iqmeas.h"
-#include "fft.h"
-#include "spectrum.h"
+#include "fft.h"          /* ../../User/fft.c - upstream */
+#include "panbringup.h"
+#include "iqbal.h"        /* ../../User/iqbal.c - upstream */
+#include "gfx2.h"         /* ../../User/gfx2.c  - upstream */
+#include "gfx2_font.h"
+#include "rm68120_ili9488.h"   /* g_lcd_ciclos, and our panel backend */
+
+extern const gfx2_font_t font_ui_14b, font_ui_11, font_num_20;
 #include "spi3.h"
 #include "ili9488.h"
 
@@ -177,14 +183,22 @@ static void tone_fill(int16_t *buf, uint32_t frames,
 static int16_t s_rx[CAP_FRAMES * 2U];
 
 /*
- * FFT working arrays. 1024 floats each is 4 kB apiece - cheap, and
- * static rather than on the stack because 12 kB of locals in main()
- * would be most of a default stack frame budget and the fault it caused
- * would look like anything but an array.
+ * UPSTREAM'S TRANSFORM WANTS I AND Q IN SEPARATE ARRAYS.
+ *
+ * fft_compute_db_iq() takes two int16 pointers, not one interleaved
+ * block - which is what sdr_rx.c hands it upstream, where the DMA
+ * de-interleaves on the way in. The SAI here delivers them interleaved
+ * (slot 0 Q, slot 1 I), so they are split on the way to the transform.
+ *
+ * That split is not waste: it is the shape the whole upstream DSP tree
+ * expects, so doing it here once is what lets demod_am.c and the rest
+ * be used unmodified later.
  */
-static float   s_fft_re[FFT_N];
-static float   s_fft_im[FFT_N];
-static int16_t s_db10[FFT_N];
+#define PAN_BINS    512U        /* must be a power of two, <= FFT_SIZE */
+
+static int16_t s_i[PAN_BINS];
+static int16_t s_q[PAN_BINS];
+static float   s_db[PAN_BINS];
 static int16_t s_tone[1024U * 2U];
 
 /* ------------------------------------------------------------------ */
@@ -458,7 +472,7 @@ static void test_control_bus(void)
     console_printf("  register is verified by its effect on the samples.\n\n");
 
     nau8822_set_adc_invert(0);
-    nau8822_set_adc_swap(0);
+    nau8822_set_adc_swap(NAU_ADCPHS_DEFAULT);
     board_delay_ms(20);
     if (capture() == 0U) {
         console_printf("  no frames at all - nothing below can be read.\n\n");
@@ -568,7 +582,7 @@ static void test_control_bus(void)
     (void)capture();
     stats(s_rx, CAP_FRAMES, 0U, &b_l);
     stats(s_rx, CAP_FRAMES, 1U, &b_r);
-    nau8822_set_adc_swap(0);
+    nau8822_set_adc_swap(NAU_ADCPHS_DEFAULT);
 
     console_printf("  R4[1]  ADCPHS=1 : L mean %6d            "
                    "R mean %6d          <- should be the pair above,\n"
@@ -739,6 +753,82 @@ static void test_rate_sweep(void)
 
 
 /* ================================================================== */
+/* STEP 7/C: UPSTREAM'S GRAPHICS LAYER ON THIS PANEL                  */
+/* ================================================================== */
+
+/*
+ * Everything drawn below is drawn by ../../User/gfx2.c - the DEEPSDR's
+ * own band compositor, 969 lines, compiled for this board without an
+ * edit. The only thing this port supplies is three functions over SPI;
+ * see compat/rm68120_ili9488.h.
+ *
+ * gfx2 works by bands: it reserves GFX2_BAND_H rows, calls this
+ * callback once per band with a surface covering that strip, and
+ * pushes each band to the panel before composing the next. The draw
+ * code therefore runs several times per frame and must be a pure
+ * function of the surface it is handed - which is exactly how the
+ * upstream UI is written, and the reason its screens can be rendered
+ * on a PC by deepsdr-ui.
+ */
+static uint32_t s_gfx_frame;
+
+static void gfx_demo(gfx2_surf_t *s, void *ctx)
+{
+    (void)ctx;
+    char nbuf[16];
+
+    gfx2_fill(s, 0, 0, GFX2_W, GFX2_H, gfx2_rgb(0x0A1020));
+
+    /* A header strip with a gradient, the way the real UI draws one. */
+    gfx2_vgrad(s, 0, 0, GFX2_W, 34, gfx2_rgb(0x1E3A5F), gfx2_rgb(0x0C1A2E));
+    gfx2_hline(s, 0, 34, GFX2_W, gfx2_rgb(0x3C6FA0));
+
+    gfx2_text(s, 10, 8, "Malahit DSP-1", &font_ui_14b, gfx2_rgb(0xE8F0FF));
+    gfx2_text(s, 330, 11, "gfx2 upstream", &font_ui_11, gfx2_rgb(0x8FB6E0));
+
+    /* Rounded panels, to exercise the span/coverage code rather than
+     * just flat fills - those are where a band-boundary bug would show. */
+    gfx2_rrect(s, 10, 48, 220, 96, 10, gfx2_rgb(0x16233A));
+    gfx2_rrect_outline(s, 10, 48, 220, 96, 10, 1, gfx2_rgb(0x3C6FA0));
+    gfx2_text(s, 24, 58, "10.000 000", &font_num_20, gfx2_rgb(0x7CFF9E));
+    gfx2_text(s, 24, 92, "MHz   AM   BPF 0-12", &font_ui_11,
+              gfx2_rgb(0x9FC4E8));
+    gfx2_text(s, 24, 112, "iqbal on, mirror 34 dB", &font_ui_11,
+              gfx2_rgb(0x9FC4E8));
+
+    gfx2_rrect(s, 246, 48, 224, 96, 10, gfx2_rgb(0x16233A));
+    gfx2_rrect_outline(s, 246, 48, 224, 96, 10, 1, gfx2_rgb(0x3C6FA0));
+    gfx2_text(s, 260, 58, "upstream, unmodified:", &font_ui_11,
+              gfx2_rgb(0xE8F0FF));
+    gfx2_text(s, 260, 78, "gfx2 fft iqbal iqancho", &font_ui_11,
+              gfx2_rgb(0x9FC4E8));
+    gfx2_text(s, 260, 96, "agc audiofil + CMSIS-DSP", &font_ui_11,
+              gfx2_rgb(0x9FC4E8));
+    gfx2_text(s, 260, 118, "3 functions are ours", &font_ui_11,
+              gfx2_rgb(0xFFC87C));
+
+    /* Frame counter, so a frozen screen is obvious. */
+    {
+        uint32_t v = s_gfx_frame;
+        int      k = 0;
+        nbuf[k++] = 'f'; nbuf[k++] = ' ';
+        if (v >= 10U) { nbuf[k++] = (char)('0' + (v / 10U) % 10U); }
+        nbuf[k++] = (char)('0' + v % 10U);
+        nbuf[k]   = 0;
+        gfx2_text(s, 420, 11, nbuf, &font_ui_11, gfx2_rgb(0xFFC87C));
+    }
+
+    /* A ruler along the bottom, so a band seam would be obvious as a
+     * step in a line that should be straight. */
+    for (int16_t x = 0; x < GFX2_W; x += 20) {
+        int16_t t = ((x % 100) == 0) ? 12 : 6;
+        gfx2_vline(s, x, (int16_t)(GFX2_H - t), t, gfx2_rgb(0x4E7FB0));
+    }
+    gfx2_hline(s, 0, (int16_t)(GFX2_H - 13), GFX2_W, gfx2_rgb(0x2A4668));
+    gfx2_line(s, 0, 160, GFX2_W - 1, GFX2_H - 20, gfx2_rgb(0xFF6060));
+}
+
+/* ================================================================== */
 /* STEP 5: THE TUNER                                                  */
 /* ================================================================== */
 
@@ -797,19 +887,31 @@ static int measure(iq_result_t *r)
  * So: peak_dbfs10() for anything absolute. It costs an FFT, which is
  * 1.7 ms against a 43 ms capture.
  */
-static int32_t peak_dbfs10(int32_t *offset_hz)
+/* Split the interleaved capture into the two arrays upstream wants. */
+static void deinterleave(uint32_t n)
 {
-    spectrum_peak_t pk;
+    for (uint32_t k = 0; k < n; k++) {
+        s_i[k] = s_rx[k * 2U];          /* slot 0 is I - ADCPHS is set */
+        s_q[k] = s_rx[k * 2U + 1U];     /* slot 1 is Q */
+    }
+}
+
+static int32_t peak_db10(int32_t *offset_hz)
+{
+    pan_peak_t pk;
 
     if (capture() == 0U) { return -1800; }
 
-    fft_load(s_rx, s_fft_re, s_fft_im);
-    fft_run(s_fft_re, s_fft_im);
-    fft_spectrum_db10(s_fft_re, s_fft_im, s_db10);
-    spectrum_peak(s_db10, 192000U, &pk);
+    deinterleave(PAN_BINS);
+    fft_compute_db_iq(s_i, s_q, s_db);
+    pan_peak(s_db, PAN_BINS, 192000U, &pk);
 
     if (offset_hz != NULL) { *offset_hz = pk.offset_hz; }
-    return pk.db10;
+
+    /* Upstream's dB is uncalibrated - see panbringup.h - so this is a
+     * relative figure in tenths, good for comparing rows of a table
+     * against each other and for nothing else. */
+    return (int32_t)(pk.db * 10.0f);
 }
 
 static void print_tune_plan(uint32_t f, msi_band_t band);
@@ -1020,7 +1122,8 @@ static void test_front_end(void)
 
     console_printf("Test 5c - the front end, one control at a time\n");
     console_printf("  Levels from the FFT peak, not a fixed bin - see\n");
-    console_printf("  peak_dbfs10() for why that distinction is 16 dB.\n");
+    console_printf("  peak_db10() for why that distinction is 16 dB.\n");
+    console_printf("  Relative dB (upstream fft.c is uncalibrated).\n");
     console_printf("---------------------------------------------\n");
 
     struct { const char *what; int port2; int preamp; uint8_t bb_gr; } cases[] = {
@@ -1041,10 +1144,10 @@ static void test_front_end(void)
 
         int32_t off = 0;
 
-        lvl = peak_dbfs10(&off);
+        lvl = peak_db10(&off);
         if (!measure(&r)) { continue; }
 
-        console_printf("  %s : %4d.%u dBFS at %+6d Hz\n",
+        console_printf("  %s : %4d.%u dB at %+6d Hz\n",
                        cases[i].what,
                        IQ_DB_INT(lvl), IQ_DB_FRAC(lvl), off);
     }
@@ -1316,15 +1419,74 @@ int main(void)
 
     console_printf("Panel     : SPI3 at %u Hz, 18 bpp, 480x320\n", spi3_hz());
 
+    /*
+     * UPSTREAM'S GRAPHICS, ON THIS PANEL. Held for a few seconds so it
+     * can be looked at, then the spectrum takes the screen back.
+     */
+    console_printf("\ngfx2     : ../../User/gfx2.c at %ux%u, band %u rows\n",
+                   (uint32_t)GFX2_W, (uint32_t)GFX2_H,
+                   (uint32_t)GFX2_BAND_H);
+    {
+        uint64_t g0 = board_cycles();
+        gfx2_render_screen(gfx_demo, 0);
+        uint32_t g_us = (uint32_t)(((board_cycles() - g0) * 1000000U)
+                                   / clock_sysclk_hz);
+        console_printf("           full screen in %u us, bus %u cycles\n",
+                       g_us, (uint32_t)g_lcd_ciclos);
+    }
+
+    /*
+     * Redraw it for a while, with a frame counter in it, so the screen
+     * can be looked at and so that a STILL picture cannot be mistaken
+     * for a live one. A band compositor that worked once and then
+     * corrupted its own state on the second pass would look identical
+     * in a single shot.
+     */
+    for (uint32_t n = 0; n < 60U; n++) {
+        board_watchdog_feed();
+        s_gfx_frame = n;
+        gfx2_render_screen(gfx_demo, 0);
+    }
+
     PHASE(19);
-    spectrum_init();
+    fft_init();                 /* ../../User/fft.c */
+    fft_tam_iq(PAN_BINS);
+    pan_init();
+
+    /*
+     * THE IMAGE CORRECTOR, UPSTREAM'S OWN - ../../User/iqbal.c.
+     *
+     * 1694 lines grafted without a single change. It is the right tool
+     * for what step 5 measured on this board: 23 to 32 dB of raw image
+     * rejection, which is ordinary for an uncorrected quadrature mixer
+     * and not good enough to listen through.
+     *
+     * Two things are hooked up, and they do different jobs:
+     *
+     *   iqbal_bloque() runs on the raw interleaved block, measuring one
+     *   block in eight and correcting all of them. Upstream calls it
+     *   from the DMA interrupt, before the block reaches anyone, so the
+     *   demodulator and the display see the same numbers. Here it goes
+     *   in the same place relative to the data - immediately after the
+     *   capture and before the FFT - for the same reason.
+     *
+     *   fft_set_bins_hook(iqbal_calibra) gives it the COMPLEX spectrum.
+     *   fft.c computes it and throws the phase away two lines later, so
+     *   the hook exists to let the calibrator see the phase without a
+     *   second transform. That is upstream's own design, and it is why
+     *   fft.c takes a function pointer instead of calling iqbal by
+     *   name: a transform has no business knowing an I/Q corrector
+     *   exists.
+     */
+    iqbal_init();
+    fft_set_bins_hook(iqbal_calibra);
 
     /*
      * Retune so the carrier sits off centre. Everything up to here put
      * it at +3000 Hz, which is the right place for a single-bin
      * measurement and the wrong place for a picture: three kilohertz is
-     * sixteen bins, which on a 480-column display is seven pixels from
-     * the middle and indistinguishable from the LO leakage.
+     * eight bins at 375 Hz, which on a 480-column display is seven
+     * pixels from the middle and indistinguishable from the LO leakage.
      */
     (void)msi001_retune(GEN_HZ - SPEC_OFFSET_HZ);
 
@@ -1334,22 +1496,33 @@ int main(void)
     console_printf("            appear %+d Hz from centre.\n\n",
                    SPEC_OFFSET_HZ);
 
-    console_printf("Spectrum\n");
-    console_printf("--------\n");
-    console_printf("  %u-point complex FFT of the I/Q pair, Hann windowed,\n",
-                   FFT_N);
-    console_printf("  %u Hz a bin over a %u Hz span. Centre column is the\n",
-                   192000U / FFT_N, 192000U);
-    console_printf("  tuned frequency; left is below it, right is above.\n");
-    console_printf("  Grid: 20 dB horizontally, 19.2 kHz vertically.\n\n");
-    console_printf("  The console reports the peak so the picture can be\n");
-    console_printf("  checked without looking at it - the offset below\n");
-    console_printf("  must match the %+d Hz asked for above.\n\n",
+    console_printf("Spectrum and I/Q correction - UPSTREAM's own\n");
+    console_printf("------------------------------------------\n");
+    console_printf("  ../../User/fft.c and ../../User/iqbal.c, compiled in\n");
+    console_printf("  place out of the DEEPSDR tree - no copy, no fork.\n");
+    console_printf("  2154 lines of it, unmodified.\n\n");
+    console_printf("  fft_compute_db_iq(), %u-point complex, Hann, output\n",
+                   fft_tam_iq_actual());
+    console_printf("  already in fftshift order with the VFO in the middle,\n");
+    console_printf("  %u Hz a bin over %u Hz. It blanks the DC bin and its\n",
+                   192000U / PAN_BINS, 192000U);
+    console_printf("  neighbours, which is upstream's answer to the LO\n");
+    console_printf("  spike this board measures above the carrier.\n\n");
+    console_printf("  iqbal measures one block in eight and corrects all,\n");
+    console_printf("  so its figures settle over seconds, not frames.\n");
+    console_printf("  phase/gain are what it thinks the imbalance is;\n");
+    console_printf("  mirror is what it reads off the spectrum at the\n");
+    console_printf("  actual peak, which is the honest one.\n\n");
+    console_printf("  Peak offset must match the %+d Hz asked for above.\n\n",
                    SPEC_OFFSET_HZ);
 
     PHASE(20);
+
+    uint32_t ab_at = board_millis() + 15000U;
+    int      ab_done = 0;
+
     for (;;) {
-        spectrum_peak_t pk;
+        pan_peak_t pk;
 
         board_watchdog_feed();
 
@@ -1359,24 +1532,69 @@ int main(void)
         }
 
         uint64_t t0 = board_cycles();
-        fft_load(s_rx, s_fft_re, s_fft_im);
-        fft_run(s_fft_re, s_fft_im);
-        fft_spectrum_db10(s_fft_re, s_fft_im, s_db10);
-        uint32_t fft_us = (uint32_t)(((board_cycles() - t0) * 1000000U)
+
+        /*
+         * CORRECT BEFORE ANYTHING LOOKS AT THE BLOCK. In place, on the
+         * interleaved buffer, exactly as upstream does it - so the
+         * spectrum below and anything grafted later see one corrected
+         * copy and nobody corrects twice.
+         */
+        iqbal_bloque(s_rx, PAN_BINS);
+
+        deinterleave(PAN_BINS);
+        fft_compute_db_iq(s_i, s_q, s_db);
+        uint32_t dsp_us = (uint32_t)(((board_cycles() - t0) * 1000000U)
                                      / clock_sysclk_hz);
 
-        spectrum_peak(s_db10, 192000U, &pk);
-        spectrum_draw(s_db10);
+        /* Let it read its own mirror off the finished spectrum. */
+        iqbal_mira_espectro(s_db, (uint16_t)PAN_BINS);
 
-        console_printf("  peak %+7d Hz  %4d.%u dBFS   centre %4d.%u dBFS"
-                       "   fft %u us  draw %u us\n",
-                       pk.offset_hz,
-                       pk.db10 / 10, (uint32_t)((pk.db10 < 0 ? -pk.db10
-                                                             : pk.db10) % 10),
-                       s_db10[FFT_N / 2U] / 10,
-                       (uint32_t)((s_db10[FFT_N / 2U] < 0
-                                   ? -s_db10[FFT_N / 2U]
-                                   : s_db10[FFT_N / 2U]) % 10),
-                       fft_us, spectrum_last_us());
+        pan_peak(s_db, PAN_BINS, 192000U, &pk);
+        pan_draw(s_db, PAN_BINS);
+
+        /*
+         * THE A/B TEST, which is upstream's and is the only honest way
+         * to report what the corrector is worth: it measures the mirror
+         * with the corrector off, then with it on, and hands back both.
+         * A single "rejection" figure from a corrector grading its own
+         * homework is worth very little.
+         *
+         * iqbal_ab_paso() has to be called or the run never advances -
+         * a bug upstream found and wrote down, see iqbal.h.
+         */
+        if (!ab_done && (int32_t)(board_millis() - ab_at) >= 0) {
+            iqbal_ab_lanza();
+            ab_done = 1;
+            console_printf("\n  A/B launched: mirror with the corrector"
+                           " off, then on.\n\n");
+        }
+        if (iqbal_ab_corriendo()) { iqbal_ab_paso(); }
+
+        console_printf("  peak %+7d Hz %3d dB | phase %+3d.%02u deg "
+                       "gain %+2d.%02u dB | mirror %3d dB @%+4d bin | "
+                       "blk %u | dsp %u us draw %u us\n",
+                       pk.offset_hz, (int32_t)pk.db,
+                       (int32_t)iqbal_fase_grados(),
+                       (uint32_t)((int32_t)(iqbal_fase_grados() * 100.0f)
+                                  % 100 < 0
+                                  ? -((int32_t)(iqbal_fase_grados()
+                                                * 100.0f) % 100)
+                                  : ((int32_t)(iqbal_fase_grados()
+                                               * 100.0f) % 100)),
+                       (int32_t)iqbal_gan_db(),
+                       (uint32_t)(((int32_t)(iqbal_gan_db() * 100.0f) % 100)
+                                  < 0
+                                  ? -((int32_t)(iqbal_gan_db() * 100.0f) % 100)
+                                  : ((int32_t)(iqbal_gan_db() * 100.0f) % 100)),
+                       (int32_t)iqbal_espejo_db(),
+                       (int32_t)iqbal_espejo_bin(),
+                       iqbal_bloques(),
+                       dsp_us, pan_last_us());
+
+        if (iqbal_ab_hay()) {
+            console_printf("\n  *** A/B RESULT: mirror %d dB with the"
+                           " corrector OFF, %d dB with it ON ***\n\n",
+                           (int32_t)iqbal_ab_off(), (int32_t)iqbal_ab_on());
+        }
     }
 }

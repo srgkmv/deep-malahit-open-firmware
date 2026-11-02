@@ -103,9 +103,36 @@ void nau8822_set_adc_digital_mute(int mute);
  */
 void nau8822_set_adc_invert(int invert);
 
-/* Swap which half of the I2S frame each ADC channel occupies (R4
- * ADCPHS). A second, independent check of the same bus, and the one that
- * catches a frame alignment error in the SAI rather than in the codec. */
+/*
+ * Swap which half of the I2S frame each ADC channel occupies (R4
+ * ADCPHS). Two jobs, and the second one is now the important one.
+ *
+ * It is a second independent check of the write-only control bus, and
+ * the one that catches a frame alignment error in the SAI rather than
+ * in the codec.
+ *
+ * AND IT IS WHAT MAKES THIS BOARD'S I/Q ORDER MATCH UPSTREAM'S.
+ *
+ * The schematic wires AUDIO_Q to LMICP/LMICN and AUDIO_I to
+ * RMICP/RMICN, so the codec's LEFT channel carries Q and the
+ * interleaved stream comes out Q first. The DEEPSDR 101 is the other
+ * way round, and the whole upstream tree is written for its order -
+ * iqbal_bloque() reads `crudo[2k]` as I and `crudo[2k+1]` as Q, and so
+ * does everything downstream of it.
+ *
+ * Two ways to reconcile that: swap at every upstream call site, or make
+ * the hardware produce the order upstream expects. The second is one
+ * register bit, costs nothing per sample, and leaves the grafted code
+ * untouched - which is the entire point of porting rather than
+ * rewriting. So ADCPHS is set, permanently, and I arrives in slot 0.
+ *
+ * Getting this wrong does not break anything visibly. It conjugates the
+ * spectrum: signals appear on the wrong side of the dial, mirrored
+ * about the tuned frequency, and every image-rejection measurement
+ * reads its own reciprocal.
+ */
+#define NAU_ADCPHS_DEFAULT  1
+
 void nau8822_set_adc_swap(int swap);
 
 /*

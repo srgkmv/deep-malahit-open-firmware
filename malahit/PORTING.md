@@ -320,8 +320,94 @@ Each step should end with something visible on the radio.
    obvious test passed, and 1.5 bits out elsewhere, which made every
    level uniformly 4.5 dB low. Fitted properly it is 0.0006 dB.
 7. **AM.** Audio out of the speaker.
-8. **Graft the upstream DSP tree** mode by mode.
+
+   **The graft of upstream code starts here, not at step 8** - the plan
+   used to say step 8 and that was wrong, because what step 7 needs is
+   already written. Grafted and running on the radio as of 02/11/2026,
+   compiled in place out of `../../User` with no copy and no edit:
+
+   | File | Lines | What it brought |
+   |---|---|---|
+   | `fft.c` | 460 | the complex I/Q transform, fftshift order, DC blanking |
+   | `iqbal.c` | 1694 | image/gain/phase corrector, with its own A/B harness |
+   | `iqancho.c` | 232 | the frequency-dependent corrector iqbal falls back on |
+   | `agc.c` | 72 | |
+   | `audiofil.c` | 151 | |
+
+   plus the nine CMSIS-DSP sources upstream had already trimmed to.
+   2609 lines of upstream DSP, unmodified, on a different MCU.
+
+   Measured once it was running: image rejection **30 dB with the
+   corrector off, 34 dB with it on**, by `iqbal`'s own A/B test; phase
+   error 0.69°, gain error 0.36 dB. The 4 dB is modest and it is exactly
+   what upstream itself found - `iqancho.h` opens with "Un decibelio",
+   the observation that a flat two-number corrector barely moves the
+   on-screen mirror when the imbalance is frequency-dependent. The same
+   thing is true on this board, which is a useful cross-check on both.
+
+   Two things had to be reconciled, and neither needed an upstream edit:
+
+   - **I/Q order.** `iqbal_bloque()` reads `crudo[2k]` as I; this board
+     wires AUDIO_Q to the codec's left channel, so the stream comes out
+     Q first. Fixed with the codec's `ADCPHS` bit - one register, no
+     per-sample cost - rather than by swapping at every call site. See
+     `bringup/src/nau8822.h`.
+   - **CMSIS-DSP.** Upstream's copy expects the CMSIS-4 era
+     `core_cmInstr.h`/`core_cm4_simd.h`; this port uses a modern CMSIS
+     core where those intrinsics live in `cmsis_gcc.h`. Two forwarding
+     headers in `compat/` resolve the names without touching upstream,
+     and `ARM_MATH_CM7` replaces `ARM_MATH_CM4`.
+
+   `-nostdlib` had to go: the DSP tree is written against libm.
+
+   > ### `demod_am.c` is step 8, not step 7 - measured, 02/11/2026
+   >
+   > The file itself is portable: 6987 lines whose only hardware call is
+   > `gd32_i2s_stream_write_half()`, five times. That made it look like a
+   > one-shim graft, and it is not.
+   >
+   > **Its transitive closure is 106 `.c` files and 72 126 lines**, of
+   > which 12 touch GD32 registers - including `lcd_dma.c`,
+   > `ipa_blit.c` and `spi_flash.c`. It is the hub of the whole mode
+   > tree, and upstream offers no build switch to leave modes out:
+   > `FW_EXCLUIR` excludes exactly one GD32 peripheral driver and
+   > nothing else, and `SIN_IQ` is the only feature guard in the tree.
+   >
+   > So grafting it means grafting essentially all of `User/` at once,
+   > and that cannot happen before the display layer (§3.1, step 9) and
+   > the storage decision (§3.3) are settled, because they are inside
+   > the closure. Which is what step 8 always said.
+8. **Graft the upstream DSP tree** mode by mode - which in practice
+   means `demod_am.c` and the 106 files behind it, so it wants the
+   display layer in place first. See the box under step 7.
 9. **Relayout the UI** at 480 × 320, in the simulator first.
+
+   *Started, 02/11/2026, and it began with the part nobody budgeted
+   for being small.* `User/gfx2.c` — 969 lines, the band compositor and
+   the whole drawing API — now runs on the Malahit's ILI9488 at
+   480 × 320, drawing gradients, rounded rectangles, antialiased text
+   from upstream's own faces, and lines. A full screen takes 160 ms, of
+   which 138 ms is SPI.
+
+   **It needed three functions.** PORTING.md budgeted 1401 lines to
+   replace the display layer; most of that is `rm68120_exmc.c` and
+   `lcd_dma.c`, the panel driver, which this board already has in
+   `ili9488.c`. What `gfx2` is actually coupled to is
+   `rm68120_set_window()`, `rm68120_dato()` and `rm68120_ciclo()` —
+   because `gfx2` was already decoupled. It is the same file
+   `deepsdr-ui` compiles, byte for byte, against `lcd_sim.c` to draw
+   the UI on a PC, and that seam is what the port inherited.
+
+   The two mismatches are in `compat/rm68120_ili9488.h`: RGB565 against
+   18-bit, and a memory-mapped store per pixel against SPI. The second
+   is the one that matters — a transaction per pixel would be 153 600
+   of them — so `rm68120_dato()` converts into a staging buffer and the
+   window goes out in one transfer.
+
+   What remains is the actual relayout: `User/spectrum.c` hard-codes
+   `SPEC_MAX_W = 800` and 240 rows, and `main.c`'s 39 094 lines are
+   hand-fitted to 800 × 480. That is still the largest piece of work in
+   the port. But it is now a layout problem and not a driver problem.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

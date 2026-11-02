@@ -289,8 +289,13 @@ void nau8822_configure(void)
      * 24-bit, so this too has to be written. 16 bits matches the SAI
      * configuration and the int16_t that the whole upstream DSP tree
      * carries.
+     *
+     * ADCPHS is set as well, which puts I in slot 0 and Q in slot 1 -
+     * the order the upstream tree is written for. See the long comment
+     * in nau8822.h; it is one bit against patching every call site.
      */
-    nau8822_write(NAU_IFACE, 0x010U);
+    nau8822_write(NAU_IFACE, 0x010U
+                             | (NAU_ADCPHS_DEFAULT ? 0x002U : 0x000U));
 
     /* No companding, no internal ADC-to-DAC passthrough. */
     nau8822_write(NAU_COMPAND, 0x000U);

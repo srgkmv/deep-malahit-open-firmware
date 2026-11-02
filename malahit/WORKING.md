@@ -302,11 +302,46 @@ product ID, so the two cannot be confused; widening that match would let
 OpenOCD bit-bang SWD into the generator. The OSA103 does not create a
 `ttyUSB` node, so the console on `/dev/ttyUSB0` is unaffected.
 
+**Steps 6 and most of 7 are done, and the port is now a port.** Seven
+upstream files and nine CMSIS-DSP sources compile unmodified for this
+board: `fft.c`, `iqbal.c`, `iqancho.c`, `agc.c`, `audiofil.c`,
+`gfx2.c`, `fonts_data.c`. The image corrector reports 30 dB of mirror
+rejection with itself off and 34 dB on, by its own A/B test, and
+upstream's graphics layer draws on the ILI9488 at 480 x 320.
+
 **Step 6 is done: there is a spectrum on the screen.** A 1024-point
 complex FFT across 480 columns, the generator visible with its peak at
 +19 875 Hz where +20 000 was asked for - bin 106 of 187.5 Hz, the
 nearest bin, so exactly right. 129 ms a frame, 7.7 fps, of which the FFT
 is 1.7 ms: the panel is the entire cost.
+
+### Compiling upstream in place
+
+`bringup/reglas.mk` builds files straight out of `../../User` and
+`../../CMSIS/DSP`, with no copy: objects get an `up_` or `dsp_` prefix
+so they cannot collide with ours — upstream has its own `main.c`, and
+putting `User/` on the vpath once made `build/main.o` ambiguous, which
+make resolved in upstream's favour.
+
+Two tricks keep upstream byte-identical, and both are worth knowing
+before reaching for a copy:
+
+- **An `-I` cannot override a quoted include** from the same directory.
+  `User/gfx2.c` says `#include "rm68120_exmc.h"`, and the compiler
+  searches `User/` first whatever the include path says — wrapping the
+  `.c` in a file of ours does not help either, because the directive is
+  still inside `gfx2.c`. What works is neutralising the header's own
+  include guard from the command line and force-including a
+  replacement: `-DRM68120_EXMC_H -include rm68120_ili9488.h`.
+- **Missing headers can be forwarded.** Upstream's CMSIS-DSP expects
+  the CMSIS-4 era `core_cmInstr.h`; two one-line headers in `compat/`
+  point the names at a modern `cmsis_gcc.h`.
+
+Exactly one upstream file is modified — `User/gfx2.h`, to make
+`GFX2_W`/`GFX2_H` overridable — and it is recorded in
+`PROCEDENCIA.md`.
+
+---
 
 Next: step 7, AM, audio out of the speaker. The first thing to attack
 there is the **mixer DC offset**, not the demodulator: it measures 15 dB

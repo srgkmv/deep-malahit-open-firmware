@@ -106,12 +106,13 @@ void iq_measure(const int16_t *iq, uint32_t frames, iq_result_t *out)
 
     for (uint32_t n = 0; n < frames; n++) {
         /*
-         * Slot 0 is Q, slot 1 is I. See the header: the schematic wires
-         * AUDIO_Q to the left channel, which is not the order anyone
-         * writing I/Q code expects.
+         * Slot 0 is I, slot 1 is Q - since the codec's ADCPHS bit was
+         * set to put them in the order the upstream tree expects. The
+         * schematic wires AUDIO_Q to the LEFT channel, so without that
+         * bit this would be the other way round; see nau8822.h.
          */
-        int32_t q = iq[n * 2U];
-        int32_t i = iq[n * 2U + 1U];
+        int32_t i = iq[n * 2U];
+        int32_t q = iq[n * 2U + 1U];
 
         /* cos and sin of 2*pi*n/64, straight out of the table. cos is
          * the sine a quarter turn along, which is sixteen entries. */

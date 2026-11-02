@@ -32,8 +32,28 @@
  * gfx2_wf_blit().
  */
 
+/*
+ * EL TAMANO DE LA PANTALLA, AHORA SOBREESCRIBIBLE - 02/11/2026.
+ *
+ * 800 x 480 es el panel del DEEPSDR 101 y sigue siendo lo que sale si
+ * nadie dice otra cosa, asi que para esta radio no cambia nada.
+ *
+ * El guardado existe porque gfx2.c se compila tal cual en un port a otra
+ * placa -el Malahit DSP-1, ILI9488 de 480 x 320 por SPI- y era la UNICA
+ * cosa de este fichero que lo impedia: el resto de gfx2 ya estaba suelto
+ * del panel, que es lo que permite que deepsdr-ui compile este mismo
+ * fichero contra lcd_sim.c sin tocarlo.
+ *
+ * Es el mismo patron que GFX2_BAND_H un poco mas abajo, y por la misma
+ * razon: una constante de placa que el banco de pruebas y los ports
+ * necesitan mover, y que no tiene por que obligar a bifurcar el fichero.
+ */
+#ifndef GFX2_W
 #define GFX2_W      800
+#endif
+#ifndef GFX2_H
 #define GFX2_H      480
+#endif
 /*
  * Altura de la banda compositora, en filas. El gasto de RAM es 800 * n * 2
  * bytes, asi que durante el port por etapas conviene empezar pequeno:

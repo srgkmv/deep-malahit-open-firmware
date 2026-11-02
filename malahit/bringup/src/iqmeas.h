@@ -43,12 +43,13 @@ typedef struct {
 } iq_result_t;
 
 /*
- * Measure a capture. `iq` is interleaved as the SAI delivers it, which
- * on this board means SLOT 0 IS Q AND SLOT 1 IS I: the schematic wires
- * AUDIO_Q to LMICP/LMICN and AUDIO_I to RMICP/RMICN, so the left
- * channel carries Q. Getting that pair the wrong way round conjugates
- * the spectrum - it swaps mag_pos and mag_neg - which looks like an
- * image rejection failure rather than like a wiring assumption.
+ * Measure a capture. `iq` is interleaved as the SAI delivers it: SLOT 0 IS I AND
+ * SLOT 1 IS Q, which is upstream's order and is true here only because
+ * the codec's ADCPHS bit is set to make it so - the schematic wires
+ * AUDIO_Q to the left channel. See nau8822.h. Getting that pair the
+ * wrong way round conjugates the spectrum - it swaps mag_pos and
+ * mag_neg - which looks like an image rejection failure rather than
+ * like a wiring assumption.
  *
  * frames should be a multiple of 64 for the measurement to be coherent;
  * anything else still works but leaks.

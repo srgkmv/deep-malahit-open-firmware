@@ -13,6 +13,46 @@ Apache notices have to travel with it. They do — see below.
 
 ---
 
+## Upstream `User/` and `CMSIS/DSP/`, compiled in place
+
+As of 02/11/2026 the port compiles files out of the DEEPSDR 101 tree
+directly — no copy, no fork, objects prefixed `up_` and `dsp_`:
+
+| File | Lines |
+|---|---|
+| `User/fft.c` | 460 |
+| `User/iqbal.c` | 1694 |
+| `User/iqancho.c` | 232 |
+| `User/agc.c` | 72 |
+| `User/audiofil.c` | 151 |
+| `User/gfx2.c` | 969 |
+| `User/fonts_data.c` | glyph tables |
+| `CMSIS/DSP/Source/**` | 9 files |
+
+Those are part of the same AGPL-3.0 work and raise no new licence
+question. ARM's CMSIS-DSP sources carry Apache-2.0 headers, same as the
+CMSIS-Core headers below.
+
+**One upstream file has been modified**, and it is recorded here so the
+divergence is never a surprise:
+
+- `User/gfx2.h` — `GFX2_W` and `GFX2_H` wrapped in `#ifndef`, so the
+  screen size can be set from the build. Generic, follows the pattern
+  `GFX2_BAND_H` already used, and verified not to change the DEEPSDR
+  build or the `deepsdr-ui` host build. It belongs upstream.
+
+Everything else upstream is byte-identical. Two mechanisms keep it that
+way and both are documented where they are used:
+
+- `-DRM68120_EXMC_H -include rm68120_ili9488.h` substitutes the panel
+  header without touching `gfx2.c`, which an `-I` cannot do — see
+  `compat/rm68120_ili9488.h`.
+- `compat/core_cmInstr.h` and `compat/core_cm4_simd.h` forward the
+  CMSIS-4 era intrinsic headers that upstream's CMSIS-DSP expects onto
+  a modern CMSIS core.
+
+---
+
 ## `malahit/CMSIS/Include/`
 
 ARM's CMSIS-Core headers for the Cortex-M7, copied unmodified from
