@@ -275,88 +275,117 @@ PLL. The first line of output now precedes everything that can hang.
 
 ---
 
-## State, 01/11/2026
+## State, 02/11/2026 — read this first
 
-Done and verified on hardware: clock tree at 480 MHz from the 22 MHz
-bypass oscillator, switched rail, console, crash reporting, the ILI9488
-panel at 18 bits per pixel, an FT6236 touch controller calibrated
-against four targets, and **the NAU8822 codec with SAI1 as I²S master**.
+Steps 0 to 6 of `PORTING.md` §4 are done and verified on the radio, and
+step 7 — the graft of upstream code — is well under way. Everything
+below is committed; the working tree is clean.
 
-**The question the port turned on is answered: 192 kHz works.** Measured
-clean from 8 kHz to 320 kHz with zero FIFO errors, breaking up only at
-384 kHz, against a datasheet ceiling of 48 kHz. The upstream DSP tree
-keeps its rates and needs no resampler — `PORTING.md` §3.2 has the table
-and the reasoning that makes it evidence rather than assertion. A 1 kHz
-tone comes out of the speaker.
+### What runs on the radio
 
-**Step 5 is done too: the radio receives.** The MSi001 tunes, the band
-filter bank is understood and switched, and a generator at 10 MHz
-arrives as a clean tone in the expected bin. Tuning error 0 Hz, image
-rejection 32 dB, LO leakage 4 dB above the carrier. `BOARD.md` §6 has
-the measured tables.
+Clock tree at 480 MHz from the 22 MHz bypass oscillator, switched rail,
+UART7 console, crash reporting, ILI9488 at 18 bpp, FT6236 touch,
+NAU8822 codec with SAI1 as I²S master, MSi001 tuner, and a spectrum
+drawn by **upstream's own `spectrum.c`**.
 
-Bench note: the signal generator here is an **OSA103, which is also an
-FTDI device** — `0403:6001`, serial `AH7J76J7`, against the programmer's
-`0403:6010` with no serial at all. `openocd-ft2232d.cfg` pins the
-product ID, so the two cannot be confused; widening that match would let
-OpenOCD bit-bang SWD into the generator. The OSA103 does not create a
-`ttyUSB` node, so the console on `/dev/ttyUSB0` is unaffected.
+With a generator at 10.000 MHz on the bench: tuning error 0 Hz, the
+peak lands in the bin the arithmetic predicts, image rejection 30 dB
+with `iqbal` off and 34 dB on by its own A/B test.
 
-**Steps 6 and most of 7 are done, and the port is now a port.** Seven
-upstream files and nine CMSIS-DSP sources compile unmodified for this
-board: `fft.c`, `iqbal.c`, `iqancho.c`, `agc.c`, `audiofil.c`,
-`gfx2.c`, `fonts_data.c`. The image corrector reports 30 dB of mirror
-rejection with itself off and 34 dB on, by its own A/B test, and
-upstream's graphics layer AND its panadapter draw on the ILI9488 at
-480 x 320. Upstream code in the image now outweighs ours, 10 403 lines
-to 7381.
+**192 kHz works** — the question the whole port turned on. Clean from
+8 kHz to 320 kHz, breaking up only at 384, against a datasheet ceiling
+of 48. So the upstream DSP tree keeps its rates and needs no resampler.
+`PORTING.md` §3.2 has the table.
 
-**Step 6 is done: there is a spectrum on the screen.** A 1024-point
-complex FFT across 480 columns, the generator visible with its peak at
-+19 875 Hz where +20 000 was asked for - bin 106 of 187.5 Hz, the
-nearest bin, so exactly right. 129 ms a frame, 7.7 fps, of which the FFT
-is 1.7 ms: the panel is the entire cost.
+### What is grafted
 
-### Compiling upstream in place
+Eleven files out of `../User` and nine CMSIS-DSP sources, **compiled in
+place — no copy, no fork**: `fft.c`, `iqbal.c`, `iqancho.c`, `agc.c`,
+`audiofil.c`, `gfx2.c`, `gfx.c`, `spectrum.c`, `spec_rotulos.c`,
+`idioma.c`, `fonts_data.c`. Upstream code in the image outweighs ours.
 
-`bringup/reglas.mk` builds files straight out of `../../User` and
-`../../CMSIS/DSP`, with no copy: objects get an `up_` or `dsp_` prefix
-so they cannot collide with ours — upstream has its own `main.c`, and
-putting `User/` on the vpath once made `build/main.o` ambiguous, which
-make resolved in upstream's favour.
+Four upstream files carry deliberate, generic edits — constants made
+configurable and literals made named — all recorded in
+`PROCEDENCIA.md`: `gfx2.h`, `gfx.h`, `spec_chrome.*`, `ui_top.*`,
+`ui_act.*`.
 
-Two tricks keep upstream byte-identical, and both are worth knowing
-before reaching for a copy:
+### THE NEXT THING TO DO
 
-- **An `-I` cannot override a quoted include** from the same directory.
-  `User/gfx2.c` says `#include "rm68120_exmc.h"`, and the compiler
-  searches `User/` first whatever the include path says — wrapping the
-  `.c` in a file of ours does not help either, because the directive is
-  still inside `gfx2.c`. What works is neutralising the header's own
-  include guard from the command line and force-including a
-  replacement: `-DRM68120_EXMC_H -include rm68120_ili9488.h`.
-- **Missing headers can be forwarded.** Upstream's CMSIS-DSP expects
-  the CMSIS-4 era `core_cmInstr.h`; two one-line headers in `compat/`
-  point the names at a modern `cmsis_gcc.h`.
+**Put the 480 × 320 UI on the panel.** The layout is finished and
+verified, but *only on the PC*: `make malahit` in `deepsdr-ui/` renders
+the whole main screen and it is right, while the firmware still draws
+the spectrum directly and never calls `ui_top.c` or `ui_act.c`.
 
-A third thing is worth knowing: **upstream guards silently**.
-`spectrum_draw()` returns without drawing if the height exceeds
-`SPEC_MAX_H`, with no message, and the only evidence was that the call
-took zero microseconds. Time anything grafted before believing it ran.
+So: add `../../User/ui_top.c` and `../../User/ui_act.c` to
+`UPSTREAM_SOURCES` in `bringup/reglas.mk`, force-include
+`malahit_layout.h` and the font remap the way `deepsdr-ui/Makefile`
+already does, and call `ui_top_draw()` / `ui_act_draw()` from `main.c`.
 
-Two upstream files are modified — `gfx2.h` and `gfx.h`, to make the
-screen size overridable — and both are recorded in `PROCEDENCIA.md`.
+Two things that will bite:
 
----
+- **`ui_top.c` needs its own font remap**, different from everything
+  else: `font_ui_14`/`font_ui_14b` → `font_ui_8`/`font_ui_8b` so six
+  status chips fit a 480 px row, while the ruler and the buttons stay
+  at 11. The remap is per translation unit, so `ui_top.c` must be
+  compiled by a rule of its own — `deepsdr-ui/Makefile` has the
+  pattern, including why `fonts_data.c` must *not* get the remap.
+- **`main.c` will have to supply more seams.** `g_pal` was one;
+  `ui_top_state_t` and `ui_act_state_t` have to be filled from real
+  receiver state, and upstream fills them in its own 39 094-line
+  `main.c`, which is not coming.
 
-Next: step 7, AM, audio out of the speaker. The first thing to attack
-there is the **mixer DC offset**, not the demodulator: it measures 15 dB
-above the wanted carrier and within 8 dB of clipping the ADC, so most of
-the converter's range is currently spent on the receiver's own error.
-`BOARD.md` §6 has the numbers and the `DCCAL` options.
+After that: the other screens — menus, band list, keypad, FT8 map —
+live in `ui_digi.c` (1817 lines) and `ui_kbd.c`, already separate
+modules, and the same host harness renders them.
 
-Also outstanding, and now the limiting factor rather than a refinement:
-**SAI DMA with the MPU regions to make it safe.** The transmit FIFO is
-eight words, 83 µs at 48 kHz, so any blocking console write is an
-audible gap — one click per printed line, measured. Polling is fine for
-CPU load and hopeless for continuity.
+### Still open
+
+- **The mixer DC offset is the worst number on the board**: −7.7 dBFS
+  with the preamp on, which is 15 dB *above* the wanted carrier and
+  8 dB from clipping the ADC. Most of the converter's range is spent
+  on the receiver's own error. `BOARD.md` §6 has the `DCCAL` options;
+  this is the first thing to attack before AM audio.
+- **`demod_am.c` is step 8, not step 7.** The file is portable, but its
+  transitive closure is 106 `.c` files and 72 126 lines, and upstream
+  has no switch to leave modes out. It wants the display layer in place
+  first — see the box under step 7 in `PORTING.md`.
+- **SAI runs polled, not DMA.** The transmit FIFO is 83 µs deep, so any
+  blocking console write is an audible gap — one click per printed
+  line, measured. That, and not CPU load, is what makes DMA necessary.
+
+### The bench, as it stands
+
+- Generator at **10.000 MHz**, ≤ −40 dBm, on the antenna input.
+- The generator is an **OSA103, which is also an FTDI device**:
+  `0403:6001`, serial `AH7J76J7`, against the programmer's `0403:6010`
+  with no serial. `openocd-ft2232d.cfg` pins the product ID so the two
+  cannot be confused. The OSA103 creates no `ttyUSB`.
+- Console on `/dev/ttyUSB0` (a Prolific adapter). The capture that
+  works is a plain `cat`, started *before* the load:
+
+      stty -F /dev/ttyUSB0 115200 raw -echo -crtscts
+      ( timeout 50 cat /dev/ttyUSB0 > log & )
+      sleep 1
+      ADAPTER=ft2232d ../tools/swd.sh ram build/bringup.elf
+
+  Holding the port open on a spare fd and reading from that instead
+  produced nothing at all; do not be clever here.
+
+### Regression checks to run before committing anything in `User/`
+
+    cd deepsdr-ui && python3 tools/copias_check.py ..   # copies in step
+    make after                                          # host bank builds
+    cd ../malahit/bringup && make                       # firmware builds
+
+and, for any change to the drawing code, prove it changes nothing
+upstream by rendering the DEEPSDR's own 800 × 480 screen before and
+after and comparing the PPM **byte for byte**:
+
+    cd deepsdr-ui
+    make ref800-guarda        # before touching anything
+    ...                       # the change
+    make ref800-comprueba     # after
+
+It never reported a difference across the whole UI refactor, which is
+the point: it is what makes "this changes nothing upstream" a fact
+rather than a hope.

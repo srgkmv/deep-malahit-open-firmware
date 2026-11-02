@@ -161,6 +161,42 @@ out/malahit: sim/principal.c sim/lcd_sim.c ../User/gfx.c ../User/spectrum.c \
 	$(CC) $(CFLAGS) $(GFX2) $(MALAHIT_LAYOUT) $(MALAHIT_FONTS_COMMON) \
 	      -o $@ $^ $(LDLIBS)
 
+#
+# LA PRUEBA DE QUE UN CAMBIO EN User/ NO TOCA AL DEEPSDR.
+#
+#   make ref800-guarda    antes de tocar nada
+#   ...                   el cambio
+#   make ref800-comprueba despues
+#
+# Renderiza la pantalla principal a 800x480 con los ficheros de User/ y
+# compara el PPM BYTE A BYTE con el guardado. Es lo unico que convierte
+# "esto no cambia nada arriba" en un hecho en vez de una esperanza, y es
+# barato: dos ordenes y un diff binario.
+#
+# No usa vendor/ -que son los ficheros del firmware original y este
+# repositorio no distribuye- sino ../User, que es lo que se esta
+# tocando.
+#
+out/ref800: sim/principal.c sim/lcd_sim.c ../User/gfx.c ../User/spectrum.c \
+            ../User/gfx2.c ../User/spec_chrome.c ../User/ui_top.c \
+            ../User/ui_act.c ../User/fonts_data.c
+	@mkdir -p out
+	$(CC) $(CFLAGS) -I ../User \
+	  -include hostinc/rm68120_exmc.h -include hostinc/lcd_dma.h \
+	  -o $@ $^ $(LDLIBS)
+
+.PHONY: ref800-guarda ref800-comprueba
+ref800-guarda: out/ref800
+	@./out/ref800 >/dev/null && mv -f out/principal.ppm out/ref800.ppm
+	@echo "  referencia guardada en out/ref800.ppm"
+
+ref800-comprueba: out/ref800
+	@test -f out/ref800.ppm || { echo "  no hay referencia: 'make ref800-guarda' primero"; exit 1; }
+	@./out/ref800 >/dev/null && mv -f out/principal.ppm out/ref800_nuevo.ppm
+	@cmp out/ref800.ppm out/ref800_nuevo.ppm \
+	  && echo "  IDENTICO: el DEEPSDR no ha cambiado ni un pixel" \
+	  || { echo "  *** DISTINTO: el cambio SI afecta al DEEPSDR ***"; exit 1; }
+
 .PHONY: malahit
 malahit: out/malahit
 	./out/malahit
