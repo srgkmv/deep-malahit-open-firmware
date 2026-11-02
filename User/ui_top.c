@@ -163,6 +163,120 @@ static const char *knob_name(ui_knob_t k)
 /* ===========================================================================
  * CABECERA
  * =========================================================================== */
+/*
+ * GEOMETRIA VERTICAL DE LA CABECERA Y DE LA FRANJA, DERIVADA - 02/11/2026.
+ *
+ * Estas dos bandas se dibujaban con numeros sueltos -el 2 de la cifra, el
+ * 50 del subrayado, el 14 y el 32 de los chips, los Y+8 e Y+12 de la
+ * franja-, todos ajustados a mano a UI_TOP_H = 64 y UI_STATUS_H = 40.
+ *
+ * Eso bastaba mientras el panel fuera uno. Con UI_TOP_H y UI_STATUS_H ya
+ * sobreescribibles -un port al Malahit DSP-1 los pone a 26 y 16 sobre un
+ * ILI9488 de 480x320- los numeros sueltos no se enteran: el texto encoge
+ * y las cajas no, asi que las chapas y los botones salen recortados. Se
+ * vio en el render del simulador antes que en la radio, que es para lo
+ * que esta el simulador.
+ *
+ * Cada expresion esta escrita para que CON LOS VALORES DE SIEMPRE DE EL
+ * LITERAL QUE SUSTITUYE: con UI_TOP_H = 64, HDR_FREQ_Y es 2 y HDR_UND_Y
+ * es 50, exactamente como antes. Comprobado comparando el PPM del
+ * simulador byte a byte antes y despues.
+ */
+#ifndef HDR_FREQ_Y
+#define HDR_FREQ_Y      (UI_TOP_H *  2 / 64)    /* 2  */
+#endif
+#ifndef HDR_UND_Y
+#define HDR_UND_Y       (UI_TOP_H * 50 / 64)    /* 50 */
+#endif
+#ifndef HDR_UND_H
+#define HDR_UND_H       (UI_TOP_H *  3 / 64)    /* 3  */
+#endif
+#ifndef HDR_UNIT_Y
+#define HDR_UNIT_Y      (UI_TOP_H * 26 / 64)    /* 26 */
+#endif
+#ifndef HDR_CHIP_Y
+#define HDR_CHIP_Y      (UI_TOP_H * 14 / 64)    /* 14 */
+#endif
+#ifndef HDR_CHIP_H
+#define HDR_CHIP_H      (UI_TOP_H * 32 / 64)    /* 32 */
+#endif
+#ifndef HDR_CHIP_TXT_Y
+#define HDR_CHIP_TXT_Y  (UI_TOP_H * 20 / 64)    /* 20 */
+#endif
+#ifndef HDR_CLK_Y
+#define HDR_CLK_Y       (UI_TOP_H *  6 / 64)    /* 6  */
+#endif
+
+/* El reloj iba con un 640 y un 150 crudos: es un bloque anclado a la
+ * DERECHA, asi que lo que se conserva es su distancia al borde. */
+#ifndef HDR_CLK_W
+#define HDR_CLK_W       150
+#endif
+/* Hueco entre el final de la lectura y el chip de modo, y entre el de
+ * modo y el de banda. Eran 62 y 10 sueltos, medidos para una lectura de
+ * 46 px; con otra cara la lectura cambia de ancho y el hueco tiene que
+ * poder cambiar con ella. */
+/* El texto dentro de la chapa MEM. Era un +6 suelto, centrado para una
+ * chapa de 32 filas y una cara de 19 px; con cualquier otra combinacion
+ * el rotulo se queda bajo. */
+/*
+ * EL AIRE HORIZONTAL DENTRO DE UNA CHAPA, en tres sitios que tienen que
+ * decir lo mismo: el 9 con el que se dibuja el rotulo, el 16 que
+ * chip_w() reserva de ancho, y el 6 que separa rotulo de valor.
+ *
+ * Son tres numeros para una idea, y ya se habian desincronizado antes
+ * -ver el comentario de chip(), donde uno ponia 18 y el otro 16-. Con
+ * una cara mas pequena el aire horizontal se queda grande frente al
+ * vertical y la chapa parece estirada, asi que tienen que poder bajar
+ * los tres a la vez.
+ */
+#ifndef STB_CHIP_PADX
+#define STB_CHIP_PADX     9
+#endif
+#ifndef STB_CHIP_W_PAD
+#define STB_CHIP_W_PAD   16
+#endif
+#ifndef STB_CHIP_VGAP
+#define STB_CHIP_VGAP     6
+#endif
+#ifndef HDR_MEM_TXT_PAD
+#define HDR_MEM_TXT_PAD   6
+#endif
+#ifndef HDR_CHIP_GAP
+#define HDR_CHIP_GAP     62
+#endif
+#ifndef HDR_BAND_GAP
+#define HDR_BAND_GAP     10
+#endif
+#ifndef HDR_CLK_X
+#define HDR_CLK_X       (GFX2_W - 160)          /* 640 a 800 de ancho */
+#endif
+
+#ifndef STB_METER_Y
+#define STB_METER_Y     (UI_STATUS_H * 12 / 40) /* 12 */
+#endif
+#ifndef STB_METER_H
+#define STB_METER_H     (UI_STATUS_H * 14 / 40) /* 14 */
+#endif
+#ifndef STB_CHIP_Y
+#define STB_CHIP_Y      (UI_STATUS_H *  8 / 40) /* 8  */
+#endif
+#ifndef STB_CHIP_H
+#define STB_CHIP_H      (UI_STATUS_H * 24 / 40) /* 24 */
+#endif
+#ifndef STB_TXT_Y
+#define STB_TXT_Y       (UI_STATUS_H * 12 / 40) /* 12 */
+#endif
+#ifndef STB_DOT_Y
+#define STB_DOT_Y       (UI_STATUS_H * 14 / 40) /* 14 */
+#endif
+#ifndef STB_DOT_D
+#define STB_DOT_D       (UI_STATUS_H * 12 / 40) /* 12 */
+#endif
+#ifndef STB_CHIP_PAD
+#define STB_CHIP_PAD    (UI_STATUS_H *  4 / 40) /* 4  */
+#endif
+
 static void draw_header(gfx2_surf_t *s, void *ctx)
 {
     const ui_top_state_t *st = (const ui_top_state_t *)ctx;
@@ -188,13 +302,13 @@ static void draw_header(gfx2_surf_t *s, void *ctx)
         int hi = (i == st->freq_digit);
         b[0] = *p; b[1] = 0;
         aw = gfx2_text_w(b, &font_num_44);
-        gfx2_text(s, x, 2, b, &font_num_44, hi ? acc : ink);
+        gfx2_text(s, x, HDR_FREQ_Y, b, &font_num_44, hi ? acc : ink);
         if (hi) {
-            gfx2_fill(s, x, 50, (int16_t)(aw - 2), 3, acc);
+            gfx2_fill(s, x, HDR_UND_Y, (int16_t)(aw - 2), HDR_UND_H, acc);
         }
         x = (int16_t)(x + aw);
     }
-    gfx2_text(s, (int16_t)(x + 6), 26, "kHz", &font_ui_18b, dim); /* ETAPA 4: era "MHz" y el numero eran Hz - ver tune_freq_format_khz() en main.c */
+    gfx2_text(s, (int16_t)(x + 6), HDR_UNIT_Y, "kHz", &font_ui_18b, dim); /* ETAPA 4: era "MHz" y el numero eran Hz - ver tune_freq_format_khz() en main.c */
 
     /* Fin de la lectura de frecuencia, para ui_top_freq_hit(): el final del
      * "kHz" mas un margen, y siempre por delante del chip de modo (que
@@ -203,11 +317,13 @@ static void draw_header(gfx2_surf_t *s, void *ctx)
 
     /* --- modo, como chip con acento --- */
     {
-        int16_t cx = (int16_t)(x + 62);
+        int16_t cx = (int16_t)(x + HDR_CHIP_GAP);
         int16_t w  = (int16_t)(gfx2_text_w(st->mode, &font_ui_18b) + 26);
-        gfx2_rrect(s, cx, 14, w, 32, 6, gfx2_rgba(PAL_ACCENT, 42));
-        gfx2_rrect_outline(s, cx, 14, w, 32, 6, 1, gfx2_rgba(PAL_ACCENT, 170));
-        gfx2_text_in(s, cx, 20, w, st->mode, &font_ui_18b, acc, GFX2_ALIGN_C);
+        gfx2_rrect(s, cx, HDR_CHIP_Y, w, HDR_CHIP_H, 6, gfx2_rgba(PAL_ACCENT, 42));
+        gfx2_rrect_outline(s, cx, HDR_CHIP_Y, w, HDR_CHIP_H, 6, 1,
+                           gfx2_rgba(PAL_ACCENT, 170));
+        gfx2_text_in(s, cx, HDR_CHIP_TXT_Y, w, st->mode, &font_ui_18b, acc,
+                     GFX2_ALIGN_C);
 
         /*
          * --- banda, detras del modo ---
@@ -218,9 +334,9 @@ static void draw_header(gfx2_surf_t *s, void *ctx)
          */
         s_band_x1 = s_band_x2 = 0;
         if (st->band) {
-            int16_t bx = (int16_t)(cx + w + 10);
+            int16_t bx = (int16_t)(cx + w + HDR_BAND_GAP);
             int16_t bw = (int16_t)(gfx2_text_w(st->band, &font_ui_18b) + 22);
-            gfx2_rrect(s, bx, 14, bw, 32, 6, gfx2_rgb(PAL_SURF_2));
+            gfx2_rrect(s, bx, HDR_CHIP_Y, bw, HDR_CHIP_H, 6, gfx2_rgb(PAL_SURF_2));
             /*
              * El borde dice EN QUE CLASE de banda estas, con el mismo codigo
              * de color que la raya de entre el espectro y la cascada: verde
@@ -240,9 +356,10 @@ static void draw_header(gfx2_surf_t *s, void *ctx)
                     default:  cb = PAL_OK;       break;
                     }
                 }
-                gfx2_rrect_outline(s, bx, 14, bw, 32, 6, 1, gfx2_rgb(cb));
+                gfx2_rrect_outline(s, bx, HDR_CHIP_Y, bw, HDR_CHIP_H, 6, 1, gfx2_rgb(cb));
             }
-            gfx2_text_in(s, bx, 20, bw, st->band, &font_ui_18b, dim, GFX2_ALIGN_C);
+            gfx2_text_in(s, bx, HDR_CHIP_TXT_Y, bw, st->band, &font_ui_18b, dim,
+                         GFX2_ALIGN_C);
             s_band_x1 = bx;
             s_band_x2 = (int16_t)(bx + bw);
         }
@@ -309,14 +426,16 @@ static void draw_header(gfx2_surf_t *s, void *ctx)
          * debajo del borde-, que es lo que hace que los tres se lean como
          * una fila y no como tres cosas sueltas. Estaba en font_ui_14b y
          * se notaba: 46 px contra 35 para el mismo "MEM". */
-        gfx2_text_in(s, UI_TOP_MEM_X, (int16_t)(UI_TOP_MEM_Y + 6),
+        gfx2_text_in(s, UI_TOP_MEM_X,
+                     (int16_t)(UI_TOP_MEM_Y + HDR_MEM_TXT_PAD),
                      UI_TOP_MEM_W, barre ? barre : "MEM", &font_ui_18b,
                      barre ? gfx2_rgb(PAL_SURF_0) : gfx2_rgb(PAL_ACCENT),
                      GFX2_ALIGN_C);
     }
 
     /* --- reloj arriba a la derecha --- */
-    gfx2_text_in(s, 640, 6, 150, st->clock, &font_num_20, ink, GFX2_ALIGN_R);
+    gfx2_text_in(s, HDR_CLK_X, HDR_CLK_Y, HDR_CLK_W, st->clock, &font_num_20,
+                 ink, GFX2_ALIGN_R);
     /* Donde ha caido de verdad, para ui_top_clock_hit(): alineado a la
      * derecha dentro de la caja, o sea que el borde izquierdo se calcula, no
      * se supone. Ver s_clock_x1/x2. */
@@ -434,18 +553,21 @@ static void chip(gfx2_surf_t *s, int16_t x, int16_t y,
      * booleano y obliga a leer dos palabras para enterarte de una.
      */
     if (active) {
-        gfx2_rrect(s, x, y, w, 24, 6, gfx2_rgb(PAL_SURF_3));
-        gfx2_rrect_outline(s, x, y, w, 24, 6, 1, gfx2_rgba(PAL_ACCENT, 150));
+        gfx2_rrect(s, x, y, w, STB_CHIP_H, 6, gfx2_rgb(PAL_SURF_3));
+        gfx2_rrect_outline(s, x, y, w, STB_CHIP_H, 6, 1,
+                           gfx2_rgba(PAL_ACCENT, 150));
     } else {
-        gfx2_rrect_outline(s, x, y, w, 24, 6, 1, gfx2_rgb(PAL_LINE));
+        gfx2_rrect_outline(s, x, y, w, STB_CHIP_H, 6, 1, gfx2_rgb(PAL_LINE));
     }
 
-    gfx2_text(s, (int16_t)(x + 9), (int16_t)(y + 4), label,
+    gfx2_text(s, (int16_t)(x + STB_CHIP_PADX), (int16_t)(y + STB_CHIP_PAD),
+              label,
               active ? &font_ui_14b : &font_ui_14,
               gfx2_rgb(active ? (value ? PAL_INK_DIM : PAL_ACCENT)
                               : PAL_INK_MUTE));
     if (value) {
-        gfx2_text(s, (int16_t)(x + 9 + lw + 6), (int16_t)(y + 4), value,
+        gfx2_text(s, (int16_t)(x + STB_CHIP_PADX + lw + STB_CHIP_VGAP),
+                  (int16_t)(y + STB_CHIP_PAD), value,
                   &font_ui_14b,
                   gfx2_rgb(active ? PAL_ACCENT : PAL_INK_MUTE));
     }
@@ -459,7 +581,8 @@ static int16_t chip_w_crudo(const char *label, const char *value, int active)
                       * hay 246 en el peor caso de la pastilla del mando, asi
                       * que el NCO se caia siempre. Cuatro pixeles por chip
                       * son los que faltaban. Lo comprueba sim/chipstest.c. */
-                     + (value ? gfx2_text_w(value, &font_ui_14b) + 6 : 0) + 16);
+                     + (value ? gfx2_text_w(value, &font_ui_14b) + STB_CHIP_VGAP : 0)
+                     + STB_CHIP_W_PAD);
 }
 
 /*
@@ -524,7 +647,9 @@ static int16_t chip_w(const char *label, const char *value, int active)
  * nueve nombres de mando y el valor mas largo, y avisa si se sale. La primera
  * version daba 194 px contra 180 disponibles.
  */
+#ifndef ST_BAR_X
 #define ST_BAR_X    10
+#endif
 /*
  * 120 y no 150, y la lectura 30 px a la izquierda - 23/09/2026, pedido por el
  * usuario: los indicadores de NR, NCO y AGC iban muy juntos y habia que
@@ -569,11 +694,21 @@ static int16_t chip_w(const char *label, const char *value, int active)
  * Y el ancho se MIDE con la fuente, no se escribe: una constante a mano
  * deja de ser verdad el dia que cambie la fuente o un rotulo.
  */
+#ifndef ST_BAR_W
 #define ST_BAR_W   120
+#endif
+#ifndef ST_READ_X
 #define ST_READ_X  138
+#endif
+#ifndef ST_READ_W
 #define ST_READ_W  150
+#endif
+#ifndef ST_KNOB_W
 #define ST_KNOB_W  204
+#endif
+#ifndef ST_CHIP_R
 #define ST_CHIP_R  794
+#endif
 
 /* Donde empieza la pastilla: detras de las unidades S, que es lo unico que
  * queda en ese hueco. Ocho pixeles de aire, los mismos que separan la barra
@@ -604,7 +739,9 @@ static int16_t knob_w_fijo(void)
  * mando- y ya se desincronizaron una vez: la cuenta seguia con 4 mientras el
  * dibujo usaba 8, y el chip del NCO se caia otra vez sin que se entendiera
  * por que. */
+#ifndef ST_CHIP_GAP
 #define ST_CHIP_GAP  8
+#endif
 
 static int16_t s_knob_right = 0;   /* donde acaba la pastilla del mando */
 
@@ -622,7 +759,8 @@ static void draw_status(gfx2_surf_t *s, void *ctx)
      * que el numero de al lado hacia todo el trabajo. Una barra continua con
      * la escala marcada se lee de un vistazo Y conserva la precision. */
     {
-        int16_t mx = ST_BAR_X, my = (int16_t)(Y + 12), mw = ST_BAR_W, mh = 14;
+        int16_t mx = ST_BAR_X, my = (int16_t)(Y + STB_METER_Y);
+        int16_t mw = ST_BAR_W, mh = STB_METER_H;
         int16_t fw, i;
         uint32_t t1000;   /* posicion 0..1000, en enteros: sin float */
 
@@ -681,7 +819,7 @@ static void draw_status(gfx2_surf_t *s, void *ctx)
             buf[0] = 'S';
             u2s(&buf[1], st->s_units);
         }
-        (void)gfx2_text(s, x, (int16_t)(Y + 8), buf, &font_ui_18b,
+        (void)gfx2_text(s, x, (int16_t)(Y + STB_CHIP_Y), buf, &font_ui_18b,
                         gfx2_rgb(PAL_INK));
     }
 
@@ -820,8 +958,9 @@ static void draw_status(gfx2_surf_t *s, void *ctx)
         if (st->ovr) {
             /* En rojo y con la palabra entera, nunca solo el color: es la
              * misma regla que seguia el aviso cuando vivia en la lectura. */
-            gfx2_rrect(s, kx, (int16_t)(Y + 8), kw, 24, 12, gfx2_rgba(PAL_CRIT, 48));
-            gfx2_rrect_outline(s, kx, (int16_t)(Y + 8), kw, 24, 12, 1,
+            gfx2_rrect(s, kx, (int16_t)(Y + STB_CHIP_Y), kw, STB_CHIP_H, 12,
+                       gfx2_rgba(PAL_CRIT, 48));
+            gfx2_rrect_outline(s, kx, (int16_t)(Y + STB_CHIP_Y), kw, STB_CHIP_H, 12, 1,
                                gfx2_rgba(PAL_CRIT, 200));
             /*
              * Y CENTRADO EN LA PASTILLA - 24/10/2026, avisado por el
@@ -846,24 +985,26 @@ static void draw_status(gfx2_surf_t *s, void *ctx)
                 int16_t ax = (int16_t)(kx + ((kw - aw) / 2));
 
                 if (ax < (int16_t)(kx + 4)) { ax = (int16_t)(kx + 4); }
-                gfx2_text(s, ax, (int16_t)(Y + 12), av, &font_ui_14b,
+                gfx2_text(s, ax, (int16_t)(Y + STB_TXT_Y), av, &font_ui_14b,
                           gfx2_rgb(PAL_CRIT));
             }
         } else {
-            gfx2_rrect(s, kx, (int16_t)(Y + 8), kw, 24, 12, gfx2_rgba(PAL_ACCENT, 38));
-            gfx2_rrect_outline(s, kx, (int16_t)(Y + 8), kw, 24, 12, 1,
-                               gfx2_rgba(PAL_ACCENT, 150));
+            gfx2_rrect(s, kx, (int16_t)(Y + STB_CHIP_Y), kw, STB_CHIP_H, 12,
+                       gfx2_rgba(PAL_ACCENT, 38));
+            gfx2_rrect_outline(s, kx, (int16_t)(Y + STB_CHIP_Y), kw, STB_CHIP_H,
+                               12, 1, gfx2_rgba(PAL_ACCENT, 150));
             /* iconito de mando: circulo con muesca */
-            gfx2_rrect(s, (int16_t)(kx + 8), (int16_t)(Y + 14), 12, 12, 6,
+            gfx2_rrect(s, (int16_t)(kx + 8), (int16_t)(Y + STB_DOT_Y),
+                       STB_DOT_D, STB_DOT_D, 6,
                        gfx2_rgb(PAL_ACCENT));
-            gfx2_fill(s, (int16_t)(kx + 13), (int16_t)(Y + 14), 2, 4,
+            gfx2_fill(s, (int16_t)(kx + 13), (int16_t)(Y + STB_DOT_Y), 2, 4,
                       gfx2_rgb(PAL_SURF_0));
             {
                 int16_t tx = (int16_t)(kx + 28);
-                tx = (int16_t)(tx + gfx2_text(s, tx, (int16_t)(Y + 12), nm,
+                tx = (int16_t)(tx + gfx2_text(s, tx, (int16_t)(Y + STB_TXT_Y), nm,
                                               &font_ui_14b, gfx2_rgb(PAL_ACCENT)));
                 if (vl) {
-                    gfx2_text(s, (int16_t)(tx + 8), (int16_t)(Y + 12),
+                    gfx2_text(s, (int16_t)(tx + 8), (int16_t)(Y + STB_TXT_Y),
                               vl, &font_ui_14b, gfx2_rgb(PAL_INK));
                 }
             }
@@ -961,7 +1102,7 @@ static void draw_status(gfx2_surf_t *s, void *ctx)
             }
             /* El 2 -el chip rojo de sobrecarga- ya no existe aqui: la
              * sobrecarga se avisa en la zona de la lectura, ver mas arriba. */
-            chip(s, x, (int16_t)(Y + 8), lbl[i], val[i], act[i]);
+            chip(s, x, (int16_t)(Y + STB_CHIP_Y), lbl[i], val[i], act[i]);
             x = (int16_t)(x - ST_CHIP_GAP);
         }
     }
@@ -1262,8 +1403,12 @@ void ui_top_draw_status(const ui_top_state_t *st)
  * la pastilla: asi mover la pastilla mueve el borde de esta ventana sola,
  * y no se puede quedar apuntando a donde ya no esta.
  */
+#ifndef ST_MOVIL_Y1
 #define ST_MOVIL_Y1  6     /* la primera fila que se mueve con la señal */
+#endif
+#ifndef ST_MOVIL_Y2
 #define ST_MOVIL_Y2  32    /* la primera que ya no */
+#endif
 
 void ui_top_draw_smeter(const ui_top_state_t *st)
 {

@@ -30,7 +30,9 @@
  * rompio que cosa.
  */
 
+#ifndef UI_TOP_H
 #define UI_TOP_H        64
+#endif
 
 /*
  * LO OPACO QUE ES EL RELLENO DE LA BATERIA - 13/10/2026.
@@ -44,8 +46,12 @@
  * ocho paletas.
  */
 #define UI_TOP_BAT_ALFA 110U
+#ifndef UI_STATUS_Y
 #define UI_STATUS_Y     64
+#endif
+#ifndef UI_STATUS_H
 #define UI_STATUS_H     40
+#endif
 
 /* Que esta ajustando el mando ahora mismo. El firmware actual deja el mando
  * apuntando a "lo ultimo que abriste en un DETAIL view" sin nada en pantalla
@@ -235,8 +241,12 @@ typedef struct {
 /* --- la franja de la marquesina, para poder repintar SOLO eso --- */
 /* La franja lleva DOS renglones desde el 24/09/2026: el nombre fijo arriba y
  * la marquesina debajo. Antes era uno solo y la marquesina iba en el medio. */
+#ifndef UI_TOP_RDS_Y
 #define UI_TOP_RDS_Y      10
+#endif
+#ifndef UI_TOP_RDS_H
 #define UI_TOP_RDS_H      44
+#endif
 #define UI_TOP_RDS_NOM_Y  (UI_TOP_RDS_Y + 2)    /* el renglon fijo */
 #define UI_TOP_RDS_MAR_Y  (UI_TOP_RDS_Y + 24)   /* la marquesina */
 /*
@@ -244,7 +254,9 @@ typedef struct {
  * SAM, que se ha mudado aqui al lado, no empiece dentro de la franja. Ver
  * UI_TOP_SAM_X justo debajo.
  */
+#ifndef UI_TOP_RDS_X2
 #define UI_TOP_RDS_X2  620   /* hasta aqui: despues el boton MEM y el reloj */
+#endif
 
 /*
  * EL HUECO DE LA LECTURA DE PPM DE SAM - 05/10/2026.
@@ -291,15 +303,29 @@ typedef struct {
  * abajo, sin pasarse de la cabecera (que acaba en 63) y sin tocar el boton
  * (que acaba en 45).
  */
+#ifndef UI_TOP_SAM_X
 #define UI_TOP_SAM_X   622
+#endif
+#ifndef UI_TOP_SAM_Y
 #define UI_TOP_SAM_Y   46
+#endif
+#ifndef UI_TOP_SAM_W
 #define UI_TOP_SAM_W   90
+#endif
 /* Lo que hay que repintar para refrescar solo este numero. Un poco mas
  * ancho y alto que el texto, para coger el degradado de alrededor. */
+#ifndef UI_TOP_SAM_RX
 #define UI_TOP_SAM_RX  620
+#endif
+#ifndef UI_TOP_SAM_RY
 #define UI_TOP_SAM_RY  46
+#endif
+#ifndef UI_TOP_SAM_RW
 #define UI_TOP_SAM_RW  94
+#endif
+#ifndef UI_TOP_SAM_RH
 #define UI_TOP_SAM_RH  18
+#endif
 
 /*
  * LA ESQUINA DEL RELOJ Y LA BATERIA - 20/10/2026.
@@ -371,10 +397,18 @@ typedef struct {
  * pixel con la marquesina, el PPM, el reloj ni la bateria, y que esta a la
  * misma altura que la pastilla del modo.
  */
+#ifndef UI_TOP_MEM_X
 #define UI_TOP_MEM_X   640
+#endif
+#ifndef UI_TOP_MEM_Y
 #define UI_TOP_MEM_Y    14
+#endif
+#ifndef UI_TOP_MEM_W
 #define UI_TOP_MEM_W    72
+#endif
+#ifndef UI_TOP_MEM_H
 #define UI_TOP_MEM_H    32
+#endif
 
 /* Si un toque cae en el boton del banco. */
 uint8_t ui_top_mem_hit(uint16_t x, uint16_t y);
@@ -384,8 +418,12 @@ uint8_t ui_top_mem_hit(uint16_t x, uint16_t y);
  * patron y lleva el por que. */
 void ui_top_draw_mem(const ui_top_state_t *st);
 
+#ifndef UI_TOP_HORA_RX
 #define UI_TOP_HORA_RX 716
+#endif
+#ifndef UI_TOP_HORA_RY
 #define UI_TOP_HORA_RY 0
+#endif
 #define UI_TOP_HORA_RW (800 - UI_TOP_HORA_RX)
 #define UI_TOP_HORA_RH UI_TOP_H
 

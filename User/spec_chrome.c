@@ -186,6 +186,24 @@ static void draw_db_gutter(gfx2_surf_t *s, void *ctx)
  * No siempre cae en el centro: con low-IF activo esta a +Fs/4 del centro
  * del panel, que es justo el cuarto de la derecha.
  */
+/*
+ * Las marcas de la regla y la altura a la que va su texto - 02/11/2026.
+ *
+ * Eran numeros sueltos dentro de draw_ruler(). Con SPC_RULER_H
+ * sobreescribible hay reglas mas bajas que la de 26 filas de esta radio,
+ * y una marca de 7 px dentro de una regla de 16 no deja sitio al numero.
+ * Los valores de siempre son los de antes.
+ */
+#ifndef SPC_TICK_H
+#define SPC_TICK_H          4
+#endif
+#ifndef SPC_TICK_DEMOD_H
+#define SPC_TICK_DEMOD_H    7
+#endif
+#ifndef SPC_RULER_TXT_Y
+#define SPC_RULER_TXT_Y     8
+#endif
+
 static void draw_ruler(gfx2_surf_t *s, void *ctx)
 {
     const spec_chrome_t *st = (const spec_chrome_t *)ctx;
@@ -267,7 +285,8 @@ static void draw_ruler(gfx2_surf_t *s, void *ctx)
          * Las marcas no pierden nada bajando una fila: siguen saliendo de la
          * raya hacia abajo, que es lo que indican.
          */
-        gfx2_vline(s, cx, (int16_t)(SPC_RULER_Y + 1), is_demod ? 7 : 4, col);
+        gfx2_vline(s, cx, (int16_t)(SPC_RULER_Y + 1),
+                   is_demod ? SPC_TICK_DEMOD_H : SPC_TICK_H, col);
 
         tw = gfx2_text_w(buf, &font_ui_14);
         tx = (int16_t)(cx - tw / 2);
@@ -275,7 +294,8 @@ static void draw_ruler(gfx2_surf_t *s, void *ctx)
          * a la izquierda el "kHz" de la canaleta ocupa hasta SPC_GUT_W. */
         if (tx < SPC_TRACE_X + 2) { tx = (int16_t)(SPC_TRACE_X + 2); }
         if (tx > (int16_t)(GFX2_W - tw - 2)) { tx = (int16_t)(GFX2_W - tw - 2); }
-        gfx2_text(s, tx, (int16_t)(SPC_RULER_Y + 8), buf, &font_ui_14, col);
+        gfx2_text(s, tx, (int16_t)(SPC_RULER_Y + SPC_RULER_TXT_Y), buf,
+                  &font_ui_14, col);
     }
 
     /* La unidad, una vez, en la canaleta. Aqui SI cabe: en esta fila la
@@ -285,7 +305,8 @@ static void draw_ruler(gfx2_surf_t *s, void *ctx)
      * rectangulo sombreado: ya esta en el chip "BW" de la barra de estado,
      * y puesto ademas al final de la regla se comia la etiqueta del borde
      * derecho. Un dato, un sitio. */
-    gfx2_text_in(s, 0, (int16_t)(SPC_RULER_Y + 8), (int16_t)(SPC_GUT_W - 6),
+    gfx2_text_in(s, 0, (int16_t)(SPC_RULER_Y + SPC_RULER_TXT_Y),
+                 (int16_t)(SPC_GUT_W - 6),
                  st->eje_en_hz ? "Hz" : "kHz",
                  &font_ui_14, gfx2_rgb(PAL_INK_MUTE), GFX2_ALIGN_R);
 }

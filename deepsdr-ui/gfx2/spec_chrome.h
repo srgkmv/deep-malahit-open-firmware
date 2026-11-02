@@ -36,18 +36,34 @@
  */
 
 /* --- geometria, la misma que usa main.c ------------------------------- */
+#ifndef SPC_Y
 #define SPC_Y           104
+#endif
+#ifndef SPC_H
 #define SPC_H           240
+#endif
+#ifndef SPC_RULER_H
 #define SPC_RULER_H      26                       /* regla de frecuencia */
+#endif
+#ifndef SPC_GUT_W
 #define SPC_GUT_W        40                       /* canaleta izquierda   */
+#endif
 #define SPC_TRACE_X      SPC_GUT_W                /* = 40                 */
 #define SPC_TRACE_Y      (SPC_Y + 4)              /* = 108                */
+#ifndef SPC_TRACE_W
 #define SPC_TRACE_W      756
+#endif
 #define SPC_TRACE_H      (SPC_H - 4 - SPC_RULER_H - 2)  /* = 208 */
 #define SPC_RULER_Y      (SPC_Y + SPC_H - SPC_RULER_H)  /* = 318 */
+#ifndef SPC_WF_PANEL_Y
 #define SPC_WF_PANEL_Y   346
+#endif
+#ifndef SPC_WF_Y
 #define SPC_WF_Y         348
+#endif
+#ifndef SPC_WF_ROWS
 #define SPC_WF_ROWS      72
+#endif
 
 /* Que sideband ocupa la banda de paso. */
 typedef enum {

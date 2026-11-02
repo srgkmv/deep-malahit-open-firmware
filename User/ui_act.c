@@ -41,6 +41,23 @@ int8_t ui_act_hit(uint16_t x, uint16_t y)
     return -1;
 }
 
+/*
+ * Los tres desplazamientos del texto dentro del boton, derivados de
+ * UI_ACT_H en vez de sueltos - 02/11/2026, misma razon que en ui_top.c.
+ *
+ * Con UI_ACT_H = 50 valen 7, 26 y 17, que es exactamente lo que ponia
+ * antes. Comprobado comparando el PPM del simulador byte a byte.
+ */
+#ifndef ACT_NAME_Y
+#define ACT_NAME_Y      (UI_ACT_H *  7 / 50)    /* 7  - con valor debajo */
+#endif
+#ifndef ACT_VALUE_Y
+#define ACT_VALUE_Y     (UI_ACT_H * 26 / 50)    /* 26 */
+#endif
+#ifndef ACT_SOLO_Y
+#define ACT_SOLO_Y      (UI_ACT_H * 17 / 50)    /* 17 - nombre centrado */
+#endif
+
 static void draw_btn(gfx2_surf_t *s, const ui_act_state_t *st, uint8_t i)
 {
     int16_t x = btn_x(i);
@@ -80,12 +97,12 @@ static void draw_btn(gfx2_surf_t *s, const ui_act_state_t *st, uint8_t i)
         /* Dos lineas: nombre arriba, valor abajo. El nombre en negrita y el
          * valor en normal - el nombre es lo que se busca con la vista, el
          * valor lo que se lee una vez encontrado. */
-        gfx2_text_in(s, x, (int16_t)(y + 7), UI_ACT_BTN_W, st->name[i],
+        gfx2_text_in(s, x, (int16_t)(y + ACT_NAME_Y), UI_ACT_BTN_W, st->name[i],
                      &font_ui_14b, tinta, GFX2_ALIGN_C);
-        gfx2_text_in(s, x, (int16_t)(y + 26), UI_ACT_BTN_W, st->value[i],
+        gfx2_text_in(s, x, (int16_t)(y + ACT_VALUE_Y), UI_ACT_BTN_W, st->value[i],
                      &font_ui_14, tinta2, GFX2_ALIGN_C);
     } else {
-        gfx2_text_in(s, x, (int16_t)(y + 17), UI_ACT_BTN_W, st->name[i],
+        gfx2_text_in(s, x, (int16_t)(y + ACT_SOLO_Y), UI_ACT_BTN_W, st->name[i],
                      &font_ui_14b, tinta, GFX2_ALIGN_C);
     }
 }

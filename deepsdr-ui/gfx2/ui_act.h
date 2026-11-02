@@ -35,8 +35,12 @@
  * rectangulos que haya que mantener en sintonia a mano.
  */
 
+#ifndef UI_ACT_Y
 #define UI_ACT_Y      427      /* el waterfall acaba en 419: 7 px de aire */
+#endif
+#ifndef UI_ACT_H
 #define UI_ACT_H       50      /* 427..476, y 3 px de margen hasta 480       */
+#endif
 /*
  * SEIS casillas, y siguen siendo seis - 23/09/2026.
  *
@@ -50,10 +54,18 @@
  * vez de perder sitio. Se queda escrito aqui porque la cuenta de las siete
  * casillas ya estaba hecha, por si algun dia hace falta.
  */
+#ifndef UI_ACT_N
 #define UI_ACT_N        6
+#endif
+#ifndef UI_ACT_MARGIN
 #define UI_ACT_MARGIN   2      /* a cada lado de la pantalla                 */
+#endif
+#ifndef UI_ACT_GAP
 #define UI_ACT_GAP      8      /* entre botones                              */
+#endif
+#ifndef UI_ACT_BTN_W
 #define UI_ACT_BTN_W  126      /* 2 + 6*126 + 5*8 + 2 = 800 exacto           */
+#endif
 
 typedef struct {
     /* Nombre fijo y valor actual de cada boton. value puede ser 0. */
