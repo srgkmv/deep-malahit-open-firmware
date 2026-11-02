@@ -107,8 +107,10 @@ DEFS += -DARM_MATH_DSP=1 -DARM_MATH_CM7 -DARM_MATH_LOOPUNROLL
 # reasoning is in compat/rm68120_ili9488.h.
 #
 DEFS += -DGFX2_W=480 -DGFX2_H=320
-DEFS += -DRM68120_EXMC_H
-CFLAGS_EXTRA_UPSTREAM = -include rm68120_ili9488.h
+DEFS += -DGFX_SCREEN_WIDTH=480 -DGFX_SCREEN_HEIGHT=320
+DEFS += -DRM68120_EXMC_H -DLCD_DMA_H
+CFLAGS_EXTRA_UPSTREAM  = -include rm68120_ili9488.h
+CFLAGS_EXTRA_UPSTREAM += -include lcd_dma_ili9488.h
 
 DSP_SOURCES  = $(wildcard $(DSP_DIR)/Source/FilteringFunctions/*.c)
 DSP_SOURCES += $(wildcard $(DSP_DIR)/Source/ComplexMathFunctions/*.c)
@@ -144,6 +146,15 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/audiofil.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/gfx2.c
 # fonts_data.c - upstream's glyph data, seven faces. Pure const tables.
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/fonts_data.c
+# gfx.c, spectrum.c, idioma.c, spec_rotulos.c - the panadapter itself.
+# spectrum.c is 2078 lines of heat-map palettes, partial redraw,
+# per-column ceilings and band labels; gfx.c is the older drawing layer
+# it still uses for blits. Both reach the panel through the two
+# substituted headers above.
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/gfx.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/idioma.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/spec_rotulos.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/spectrum.c
 
 #
 # NOT added to C_SOURCES, and that is deliberate. Objects here are named

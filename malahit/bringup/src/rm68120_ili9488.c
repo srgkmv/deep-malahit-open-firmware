@@ -93,6 +93,47 @@ void rm68120_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
     g_rm_end = s_stage + (w * cap_rows * 3U);
 }
 
+void rm68120_write_data(uint16_t rgb565)
+{
+    rm68120_dato(rgb565);
+    rm68120_flush();
+}
+
+void rm68120_fill_screen(uint16_t rgb565)
+{
+    ili9488_fill_rect(0, 0, ILI9488_W, ILI9488_H,
+                      (uint8_t)((rgb565 >> 8) & 0xF8U),
+                      (uint8_t)((rgb565 >> 3) & 0xFCU),
+                      (uint8_t)((rgb565 << 3) & 0xF8U));
+}
+
+/* ------------------------------------------------------------------ */
+/* lcd_dma, synchronous - see compat/lcd_dma_ili9488.h                */
+/* ------------------------------------------------------------------ */
+
+void lcd_dma_init(void) { }
+void lcd_dma_pon(uint8_t on) { (void)on; }
+
+uint8_t lcd_dma_hay(void) { return 0U; }        /* never in flight */
+uint8_t lcd_dma_espera(void) { return 1U; }     /* always finished */
+uint16_t lcd_dma_fallos(void) { return 0U; }
+
+uint8_t lcd_dma_manda(const uint16_t *px, uint32_t n)
+{
+    if (px == 0 || n == 0U) { return 0U; }
+
+    /*
+     * Through rm68120_dato() rather than straight to SPI, so the
+     * window that set_window() armed is respected and there is exactly
+     * one path from a pixel to the panel. The staging buffer flushes
+     * itself whenever it fills.
+     */
+    for (uint32_t i = 0; i < n; i++) { rm68120_dato(px[i]); }
+    rm68120_flush();
+
+    return 1U;
+}
+
 uint32_t rm68120_ciclo(void)
 {
     /*

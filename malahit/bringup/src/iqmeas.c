@@ -145,3 +145,36 @@ void iq_measure(const int16_t *iq, uint32_t frames, iq_result_t *out)
     out->image_db10 = iq_db10(out->mag_pos, out->mag_neg);
     out->dc_db10    = iq_db10(out->mag_pos, out->mag_dc);
 }
+
+void iq_peak(const float *db, uint32_t bins, uint32_t fs_hz,
+             iq_peak_t *out)
+{
+    uint32_t best  = 0;
+    int      found = 0;
+
+    /*
+     * SKIP THE MIDDLE. Upstream's fft.c blanks the DC bin and its four
+     * neighbours - FFT_IQ_DC_BLANK - by filling them with the average
+     * of the bins four places either side. That hides the LO spike,
+     * which on this board sits above the wanted carrier, but it fills
+     * them with a PLAUSIBLE value rather than a small one, so a peak
+     * search that trusted them could still land in the middle.
+     *
+     * Six either side covers the blanked five and a margin.
+     */
+    const uint32_t mid  = bins / 2U;
+    const uint32_t skip = 6U;
+
+    for (uint32_t k = 0; k < bins; k++) {
+        if (k + skip > mid && k < mid + skip) { continue; }
+        if (!found || db[k] > db[best]) { best = k; found = 1; }
+    }
+
+    out->index = best;
+    out->db    = found ? db[best] : -200.0f;
+
+    int32_t off = (int32_t)best - (int32_t)mid;
+
+    out->offset_hz = (int32_t)(((int64_t)off * (int64_t)fs_hz)
+                               / (int64_t)bins);
+}

@@ -54,8 +54,16 @@ static inline uint16_t gfx_rgb565(uint8_t r, uint8_t g, uint8_t b)
  * ancho. O sea: CASET (x, columnas) llega hasta 799, RASET (y, filas)
  * hasta 479 - lo contrario de lo que decia el README original (480x800
  * "vertical"). Si mas adelante cambia el MADCTL, revisar esto tambien. */
+/* Sobreescribibles desde la compilacion, igual que GFX2_W/GFX2_H en
+ * gfx2.h y por la misma razon: el port al Malahit DSP-1 compila este
+ * fichero tal cual contra un panel de 480 x 320. Sin -D no cambia
+ * nada. */
+#ifndef GFX_SCREEN_WIDTH
 #define GFX_SCREEN_WIDTH   800
+#endif
+#ifndef GFX_SCREEN_HEIGHT
 #define GFX_SCREEN_HEIGHT  480
+#endif
 
 /* --- Primitivas de relleno / lineas rectas (rapidas, ventana unica) --- */
 /*

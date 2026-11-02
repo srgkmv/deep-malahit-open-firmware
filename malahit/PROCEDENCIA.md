@@ -26,6 +26,10 @@ directly — no copy, no fork, objects prefixed `up_` and `dsp_`:
 | `User/agc.c` | 72 |
 | `User/audiofil.c` | 151 |
 | `User/gfx2.c` | 969 |
+| `User/gfx.c` | 385 |
+| `User/spectrum.c` | 2078 |
+| `User/spec_rotulos.c` | 846 |
+| `User/idioma.c` | 60 |
 | `User/fonts_data.c` | glyph tables |
 | `CMSIS/DSP/Source/**` | 9 files |
 
@@ -40,6 +44,10 @@ divergence is never a surprise:
   screen size can be set from the build. Generic, follows the pattern
   `GFX2_BAND_H` already used, and verified not to change the DEEPSDR
   build or the `deepsdr-ui` host build. It belongs upstream.
+- `User/gfx.h` — `GFX_SCREEN_WIDTH` and `GFX_SCREEN_HEIGHT` likewise.
+
+Both are the same one-line change for the same reason, and neither
+alters anything when no `-D` is given.
 
 Everything else upstream is byte-identical. Two mechanisms keep it that
 way and both are documented where they are used:

@@ -84,4 +84,26 @@ int32_t iq_dbfs10(uint64_t mag, uint32_t frames);
 #define IQ_DB_INT(d10)   ((d10) / 10)
 #define IQ_DB_FRAC(d10)  (((d10) < 0 ? -(d10) : (d10)) % 10)
 
+/*
+ * The strongest bin of a finished spectrum, which is what makes a
+ * picture verifiable without looking at it.
+ *
+ * `db` is as fft_compute_db_iq() leaves it: FFTSHIFT ORDER, index 0 the
+ * lowest frequency and index bins/2 the tuned one.
+ *
+ * This is the last thing left of the stand-in panadapter this port
+ * carried until User/spectrum.c was grafted. It stays because nothing
+ * upstream exposes a peak finder - the real UI reads its own cursor -
+ * and because a console line saying where the peak is has caught more
+ * mistakes in this port than the screen has.
+ */
+typedef struct {
+    uint32_t index;
+    float    db;
+    int32_t  offset_hz;     /* signed, relative to the tuned frequency */
+} iq_peak_t;
+
+void iq_peak(const float *db, uint32_t bins, uint32_t fs_hz,
+             iq_peak_t *out);
+
 #endif /* MALAHIT_IQMEAS_H */

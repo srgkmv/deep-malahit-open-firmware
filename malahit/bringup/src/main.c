@@ -45,13 +45,32 @@
 #include "msi001.h"
 #include "iqmeas.h"
 #include "fft.h"          /* ../../User/fft.c - upstream */
-#include "panbringup.h"
 #include "iqbal.h"        /* ../../User/iqbal.c - upstream */
 #include "gfx2.h"         /* ../../User/gfx2.c  - upstream */
 #include "gfx2_font.h"
+#include "spectrum.h"    /* ../../User/spectrum.c - upstream */
 #include "rm68120_ili9488.h"   /* g_lcd_ciclos, and our panel backend */
 
 extern const gfx2_font_t font_ui_14b, font_ui_11, font_num_20;
+
+/*
+ * THE UI THEME, WHICH UPSTREAM DEFINES IN ITS main.c.
+ *
+ * palette.h declares `extern const palette_t *g_pal` and the whole
+ * drawing tree reads the chrome colours through it. The definition
+ * lives in User/main.c - 39 094 lines of hand-fitted 800x480 layout
+ * that cannot come along yet - so it has to be supplied here.
+ *
+ * k_pal_oscura is the same default upstream picks on line 7484. The
+ * theme switcher reassigns this pointer at run time; there is nothing
+ * to switch to yet, so it is simply the default and nothing else.
+ *
+ * This is one of the few places where grafting a file means supplying
+ * a definition rather than a driver, and it is worth naming as such:
+ * it is a seam left by main.c, not by the hardware.
+ */
+#include "palette.h"
+const palette_t *g_pal = &k_pal_oscura;
 #include "spi3.h"
 #include "ili9488.h"
 
@@ -898,13 +917,13 @@ static void deinterleave(uint32_t n)
 
 static int32_t peak_db10(int32_t *offset_hz)
 {
-    pan_peak_t pk;
+    iq_peak_t pk;
 
     if (capture() == 0U) { return -1800; }
 
     deinterleave(PAN_BINS);
     fft_compute_db_iq(s_i, s_q, s_db);
-    pan_peak(s_db, PAN_BINS, 192000U, &pk);
+    iq_peak(s_db, PAN_BINS, 192000U, &pk);
 
     if (offset_hz != NULL) { *offset_hz = pk.offset_hz; }
 
@@ -1442,7 +1461,7 @@ int main(void)
      * corrupted its own state on the second pass would look identical
      * in a single shot.
      */
-    for (uint32_t n = 0; n < 60U; n++) {
+    for (uint32_t n = 0; n < 12U; n++) {
         board_watchdog_feed();
         s_gfx_frame = n;
         gfx2_render_screen(gfx_demo, 0);
@@ -1451,7 +1470,17 @@ int main(void)
     PHASE(19);
     fft_init();                 /* ../../User/fft.c */
     fft_tam_iq(PAN_BINS);
-    pan_init();
+    /*
+     * UPSTREAM'S PANADAPTER. 2078 lines of spectrum.c drawing through
+     * gfx.c and gfx2.c, all three compiled in place for this board.
+     * panbringup.c - the stand-in that used to draw here - is now only
+     * used for its peak search, and goes when something upstream
+     * provides that too.
+     */
+    spectrum_init();
+    console_printf("spectrum : ../../User/spectrum.c, %u palettes, "
+                   "style/heatmap from upstream\n",
+                   (uint32_t)spectrum_palette_count());
 
     /*
      * THE IMAGE CORRECTOR, UPSTREAM'S OWN - ../../User/iqbal.c.
@@ -1522,7 +1551,7 @@ int main(void)
     int      ab_done = 0;
 
     for (;;) {
-        pan_peak_t pk;
+        iq_peak_t pk;
 
         board_watchdog_feed();
 
@@ -1549,8 +1578,39 @@ int main(void)
         /* Let it read its own mirror off the finished spectrum. */
         iqbal_mira_espectro(s_db, (uint16_t)PAN_BINS);
 
-        pan_peak(s_db, PAN_BINS, 192000U, &pk);
-        pan_draw(s_db, PAN_BINS);
+        iq_peak(s_db, PAN_BINS, 192000U, &pk);
+
+        /*
+         * db_min/db_max are in upstream's uncalibrated dB - see
+         * panbringup.h for where 40 and 130 come from. The three zeros
+         * at the end are the centre marker and the band edges, which
+         * belong to a tuned receiver with a filter set and are not
+         * meaningful yet.
+         */
+        /*
+         * HEIGHT 240, NOT 320, AND THE REASON IS UPSTREAM'S OWN LIMIT.
+         *
+         * spectrum_draw() opens with a guard - `h > SPEC_MAX_H` and it
+         * returns - and SPEC_MAX_H is 280. Asking for the full 320
+         * rows of this panel made it return instantly, drawing
+         * nothing, with no complaint of any kind.
+         *
+         * What caught it was timing the call: a draw that reports 0 us
+         * has not drawn. Without that instrument this would have
+         * looked like a panel fault, and the search would have been in
+         * the SPI layer, which was working perfectly.
+         *
+         * 240 rows is also the right answer rather than a workaround:
+         * a real layout wants a header and a waterfall, and upstream's
+         * own panel is not full height either. Raising SPEC_MAX_H
+         * upstream would be easy - the comment beside it says the
+         * arrays are per-row and cheap - and there is no need.
+         */
+        uint64_t d0 = board_cycles();
+        spectrum_draw(s_db, PAN_BINS, 0, 40, 480, 240,
+                      40.0f, 130.0f, 0, 0U, 0, 0);
+        uint32_t draw_us = (uint32_t)(((board_cycles() - d0) * 1000000U)
+                                      / clock_sysclk_hz);
 
         /*
          * THE A/B TEST, which is upstream's and is the only honest way
@@ -1589,7 +1649,7 @@ int main(void)
                        (int32_t)iqbal_espejo_db(),
                        (int32_t)iqbal_espejo_bin(),
                        iqbal_bloques(),
-                       dsp_us, pan_last_us());
+                       dsp_us, draw_us);
 
         if (iqbal_ab_hay()) {
             console_printf("\n  *** A/B RESULT: mirror %d dB with the"

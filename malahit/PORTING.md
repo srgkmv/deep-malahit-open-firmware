@@ -404,10 +404,36 @@ Each step should end with something visible on the radio.
    of them — so `rm68120_dato()` converts into a staging buffer and the
    window goes out in one transfer.
 
-   What remains is the actual relayout: `User/spectrum.c` hard-codes
-   `SPEC_MAX_W = 800` and 240 rows, and `main.c`'s 39 094 lines are
+   **`User/spectrum.c` followed, and draws the panadapter.** 2078 lines
+   of heat-map palettes, partial redraw, per-column ceilings and band
+   labels, with `gfx.c`, `idioma.c` and `spec_rotulos.c` behind it — all
+   compiled in place. 68 ms for a 480 × 240 panel, about 14 frames a
+   second, against 129 ms for the stand-in it replaced, because upstream
+   redraws only what changed.
+
+   `SPEC_MAX_W = 800` needed no change: it sizes arrays and 480 fits
+   inside it. What did bite was `SPEC_MAX_H = 280` — `spectrum_draw()`
+   opens with `if (h > SPEC_MAX_H) return;`, so asking for all 320 rows
+   drew nothing and said nothing. **Timing the call is what found it:**
+   a draw that reports 0 µs has not drawn, and without that instrument
+   the search would have gone into the SPI layer, which was working.
+   240 rows is the right answer anyway; a real layout wants a header and
+   a waterfall.
+
+   Two seams were left by `main.c` rather than by hardware, and both had
+   to be filled here: `g_pal`, the theme pointer the whole drawing tree
+   reads, which upstream defines on line 7484 of its `main.c`; and a
+   peak search, which the real UI does from its own cursor.
+
+   **The stand-in is gone.** `panbringup.c` has been deleted; the only
+   thing kept from it is the peak search, now in `iqmeas.c`. With that,
+   upstream code in the image passes ours: **10 403 lines against 7381**,
+   plus nine CMSIS-DSP sources.
+
+   What remains is the actual relayout: `main.c`'s 39 094 lines are
    hand-fitted to 800 × 480. That is still the largest piece of work in
-   the port. But it is now a layout problem and not a driver problem.
+   the port — but it is now a layout problem and not a driver problem,
+   and `deepsdr-ui` can do it on a PC, which is what §3.1 proposed.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

@@ -54,6 +54,9 @@
 #define MALAHIT_RM68120_ILI9488_H
 
 #include <stdint.h>
+/* The header this replaces pulled in NULL for its users; gfx.c relies
+ * on that. A substitute has to provide what it stood in for. */
+#include <stddef.h>
 
 /* Set the destination rectangle and arm the staging buffer. Flushes
  * anything still pending from a previous window. */
@@ -87,6 +90,17 @@ extern uint8_t *g_rm_put;           /* next byte in the staging buffer */
 extern uint8_t *g_rm_end;           /* one past the last of this window */
 
 void rm68120_flush(void);           /* send what is staged */
+
+/*
+ * gfx.c wants two more. Both are small and both go through the same
+ * staging path, so there is one way pixels reach the panel and not two.
+ *
+ * write_data() is only ever called by gfx.c straight after a 1x1
+ * set_window, to put a single pixel - so that is what it does, rather
+ * than anything to do with command parameters.
+ */
+void rm68120_write_data(uint16_t rgb565);
+void rm68120_fill_screen(uint16_t rgb565);
 
 static inline void rm68120_dato(uint16_t v)
 {

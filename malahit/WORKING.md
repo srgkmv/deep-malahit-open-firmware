@@ -307,7 +307,9 @@ upstream files and nine CMSIS-DSP sources compile unmodified for this
 board: `fft.c`, `iqbal.c`, `iqancho.c`, `agc.c`, `audiofil.c`,
 `gfx2.c`, `fonts_data.c`. The image corrector reports 30 dB of mirror
 rejection with itself off and 34 dB on, by its own A/B test, and
-upstream's graphics layer draws on the ILI9488 at 480 x 320.
+upstream's graphics layer AND its panadapter draw on the ILI9488 at
+480 x 320. Upstream code in the image now outweighs ours, 10 403 lines
+to 7381.
 
 **Step 6 is done: there is a spectrum on the screen.** A 1024-point
 complex FFT across 480 columns, the generator visible with its peak at
@@ -337,9 +339,13 @@ before reaching for a copy:
   the CMSIS-4 era `core_cmInstr.h`; two one-line headers in `compat/`
   point the names at a modern `cmsis_gcc.h`.
 
-Exactly one upstream file is modified — `User/gfx2.h`, to make
-`GFX2_W`/`GFX2_H` overridable — and it is recorded in
-`PROCEDENCIA.md`.
+A third thing is worth knowing: **upstream guards silently**.
+`spectrum_draw()` returns without drawing if the height exceeds
+`SPEC_MAX_H`, with no message, and the only evidence was that the call
+took zero microseconds. Time anything grafted before believing it ran.
+
+Two upstream files are modified — `gfx2.h` and `gfx.h`, to make the
+screen size overridable — and both are recorded in `PROCEDENCIA.md`.
 
 ---
 
