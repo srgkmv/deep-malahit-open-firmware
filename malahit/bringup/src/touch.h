@@ -79,4 +79,22 @@ uint32_t touch_poll(touch_point_t *pts);
 uint8_t touch_chip_id(void);
 uint8_t touch_vendor_id(void);
 
+/*
+ * What a failed touch_init() saw while it was failing. See the block
+ * above ft_identify() in touch.c: the point is to tell "the bus
+ * arrived hung" apart from "our own transfer hung it", which look
+ * identical afterwards and need opposite fixes.
+ *
+ *   after_reset   SCL/SDA right after the reset pulse, as
+ *                 i2c3_line_levels() encodes them
+ *   sda_low_at    the attempt at which SDA was first found low,
+ *                 or -1 if it never was
+ *   rc_at         whether the read on that attempt reported success
+ *   tries         how many attempts were made in total
+ */
+uint8_t  touch_dbg_after_reset(void);
+int16_t  touch_dbg_sda_low_at(void);
+uint8_t  touch_dbg_rc_at(void);
+uint16_t touch_dbg_tries(void);
+
 #endif /* MALAHIT_TOUCH_H */

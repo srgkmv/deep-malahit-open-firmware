@@ -30,6 +30,36 @@
 
 void i2c3_init(void);
 
+/*
+ * Clock a half-finished slave off the bus and issue a STOP by hand.
+ * i2c3_init() calls this before the peripheral gets the pins; it is
+ * exposed because a bus can hang again at run time.
+ *
+ * Returns the number of clock pulses SDA needed to come free (0 on a
+ * clean bus), or -1 if it never did - which is a stuck device or a
+ * missing pull-up, not something more clocking will fix.
+ */
+int i2c3_bus_recover(void);
+
+/* What the recovery inside the last i2c3_init() found. */
+int i2c3_recover_clocks(void);
+
+/*
+ * SCL/SDA sampled at each step of i2c3_init(), same encoding as
+ * i2c3_line_levels(): bit 1 is SCL, bit 0 is SDA.
+ *
+ *   0  on entry, before anything is touched - so this one shows what
+ *      the PREVIOUS image left behind
+ *   1  after the peripheral has been disabled and proven disabled
+ *   2  after the recovery has finished: pins on the alternate
+ *      function, peripheral enabled, ready to use
+ *
+ * Exists because "the bus is clean" and "SDA is low" were both
+ * measured, moments apart, and the step in between was not.
+ */
+#define I2C3_LV_N  3U
+uint8_t i2c3_level_at(uint32_t i);
+
 /* The two bus lines read as plain inputs: bit 1 is SCL, bit 0 is SDA.
  * Both should be 1 when the bus is idle. Anything else is a wiring or
  * pull-up problem wearing the costume of a protocol problem. */

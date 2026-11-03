@@ -21,12 +21,112 @@ static int read_reg(uint8_t reg, uint8_t *buf, uint32_t n)
     return i2c3_write_read(FT_ADDR, &reg, 1U, buf, n);
 }
 
+/*
+ * WAIT FOR THE IDENTITY, DO NOT ASSUME THE DELAY WAS ENOUGH.
+ *
+ * i2c3_touch_reset() releases the reset line and waits 120 ms, which
+ * is not enough: measured on this radio, the controller ACKs its
+ * address almost at once but answers 0x00 to CIPHER and VENDOR for
+ * about another 200 ms. An address probe therefore finds it and every
+ * register read is a zero - a device that is present and says nothing
+ * about itself.
+ *
+ * THIS WAS HIDDEN FOR A WHOLE STEP BY A CONSOLE LINE. The image that
+ * first brought the touch panel up printed four lines and scanned all
+ * 112 addresses between the reset and the ID read, which at 115 200
+ * baud is a few hundred milliseconds of accidental delay. The driver
+ * was written against that and looked solid. The first caller to ask
+ * for the ID straight after the reset got zeros, and the symptom -
+ * "no answer at 0x38" from a device that the scan on the next line
+ * finds - points at the bus, which was never the problem.
+ *
+ * So the wait is a poll with a deadline, not a longer constant. A
+ * constant long enough for this unit is a constant that is wrong for
+ * the next one, in whichever direction costs more.
+ */
+#define FT_ID_TRIES    60U      /* x 10 ms = 600 ms, well past the 200 */
+
+/*
+ * BOTH IDs, AND BOTH NON-ZERO.
+ *
+ * It accepted on VENDOR alone and reported `cipher 0x00 vendor 0x11`
+ * on a run that otherwise worked: CIPHER is read about a millisecond
+ * before VENDOR, and during the wake-up window the part can answer
+ * one and not yet the other. Reporting a part number of zero as a
+ * successful identification is a small lie that would be read as a
+ * big one the first time a different controller is fitted.
+ */
+/*
+ * WHAT THE IDENTIFY LOOP SAW, for when it does not succeed.
+ *
+ * The failure is intermittent and the two obvious stories - the bus
+ * arrived hung, or our own transfer hung it - predict different
+ * things here, so the loop records enough to tell them apart: the
+ * lines immediately after the reset pulse, the first iteration at
+ * which SDA was found low, and whether the read at that iteration
+ * reported success. A read that SUCCEEDS and leaves SDA low is a very
+ * different fault from one that fails.
+ */
+static uint8_t s_dbg_after_reset;
+static int16_t s_dbg_sda_low_at = -1;
+static uint8_t s_dbg_rc_at;
+static uint16_t s_dbg_tries;
+
+uint8_t  touch_dbg_after_reset(void) { return s_dbg_after_reset; }
+int16_t  touch_dbg_sda_low_at(void)  { return s_dbg_sda_low_at; }
+uint8_t  touch_dbg_rc_at(void)       { return s_dbg_rc_at; }
+uint16_t touch_dbg_tries(void)       { return s_dbg_tries; }
+
+static int ft_identify(void)
+{
+    uint32_t t;
+
+    for (t = 0U; t < FT_ID_TRIES; t++) {
+        int rc = read_reg(FT_CIPHER, &s_chip_id, 1U);
+
+        s_dbg_tries++;
+
+        if ((i2c3_line_levels() & 1U) == 0U && s_dbg_sda_low_at < 0) {
+            s_dbg_sda_low_at = (int16_t)s_dbg_tries;
+            s_dbg_rc_at      = (uint8_t)rc;
+        }
+
+        if (rc
+            && read_reg(FT_VENDOR, &s_vendor_id, 1U)
+            && s_vendor_id == 0x11U
+            && s_chip_id != 0x00U) {
+            return 1;
+        }
+        board_delay_ms(10);
+    }
+    return 0;
+}
+
 int touch_init(void)
 {
     i2c3_touch_reset();
+    s_dbg_after_reset = (uint8_t)i2c3_line_levels();
 
-    if (!read_reg(FT_CIPHER, &s_chip_id, 1U))  { return 0; }
-    if (!read_reg(FT_VENDOR, &s_vendor_id, 1U)) { return 0; }
+    if (!ft_identify()) {
+        /*
+         * ONE MORE TRY, WITH THE BUS CLOCKED FREE IN BETWEEN.
+         *
+         * i2c3_init() already recovered the bus, but it did so BEFORE
+         * the controller was reset, and a part that is reset in the
+         * middle of shifting a byte out can take the line down again
+         * on the next start. The observed failure is exactly that: a
+         * recovery that truthfully reports zero clocks needed,
+         * followed by SDA low and a scan that finds nothing.
+         *
+         * So the second attempt recovers the bus AFTER the reset
+         * rather than before it. If that does not do it, the caller
+         * gets a plain failure and the diagnostics in main.c say what
+         * the lines were doing.
+         */
+        (void)i2c3_bus_recover();
+        i2c3_touch_reset();
+        if (!ft_identify()) { return 0; }
+    }
 
     /*
      * G_MODE = 0x00, interrupt POLLING mode.
