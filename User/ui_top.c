@@ -252,6 +252,43 @@ static const char *knob_name(ui_knob_t k)
 #define HDR_CLK_X       (GFX2_W - 160)          /* 640 a 800 de ancho */
 #endif
 
+/*
+ * LA PASTILLA DE LA BATERIA - 02/11/2026.
+ *
+ * Eran cuatro numeros sueltos dentro del dibujo: 48 de ancho, 20 de alto,
+ * y=34 y x=790-48-2. Los tres primeros son el tamano de la caja, que
+ * depende de la cara que lleva dentro, y el cuarto la anclaba a la
+ * derecha de un panel de 800.
+ *
+ * En un panel de 480 eso la ponia en x=740, o sea fuera, y gfx2 recorta
+ * sin decir nada: la bateria no salia y no habia error de ningun tipo.
+ * Un elemento que desaparece entero se confunde con una decision de
+ * diseno, que es exactamente lo que habia pasado.
+ *
+ * Los valores de por defecto son los mismos cuatro numeros de antes, asi
+ * que a 800 de ancho no cambia ni un pixel.
+ */
+#ifndef HDR_BAT_W
+#define HDR_BAT_W        48
+#endif
+#ifndef HDR_BAT_H
+#define HDR_BAT_H        20
+#endif
+#ifndef HDR_BAT_Y
+#define HDR_BAT_Y        34
+#endif
+#ifndef HDR_BAT_X
+#define HDR_BAT_X       (GFX2_W - 10 - HDR_BAT_W - 2)
+#endif
+/* El pezon - el borne de la pila. Dos quintos del alto de la caja, que
+ * a 20 son los 8 de siempre, y centrado contra ella. */
+#ifndef HDR_BAT_NIB_W
+#define HDR_BAT_NIB_W    3
+#endif
+#ifndef HDR_BAT_NIB_H
+#define HDR_BAT_NIB_H   (HDR_BAT_H * 2 / 5)
+#endif
+
 #ifndef STB_METER_Y
 #define STB_METER_Y     (UI_STATUS_H * 12 / 40) /* 12 */
 #endif
@@ -272,6 +309,26 @@ static const char *knob_name(ui_knob_t k)
 #endif
 #ifndef STB_DOT_D
 #define STB_DOT_D       (UI_STATUS_H * 12 / 40) /* 12 */
+#endif
+/*
+ * LAS UNIDADES DE S, APARTE DE LA PASTILLA - 03/11/2026.
+ *
+ * Iba con STB_CHIP_Y, que es la Y de la PASTILLA del mando, y los dos
+ * son cosas distintas que daba la casualidad de que empezaban igual:
+ * uno coloca un TEXTO y el otro un RECUADRO. En el DEEPSDR no se nota
+ * porque la franja es de 40 filas y la pastilla de 24, asi que sobra
+ * sitio para mover cualquiera de los dos.
+ *
+ * En una franja de 16 filas con una pastilla de 16 no sobra nada: la
+ * pastilla NO puede bajar -se saldria- y el texto si tiene que poder,
+ * porque con una cara de 13 de caja en 16 filas queda una arriba y dos
+ * abajo y se ve alto. Con un solo numero para las dos cosas, bajar el
+ * texto recortaba la pastilla.
+ *
+ * Por defecto vale lo que valia, asi que arriba no cambia nada.
+ */
+#ifndef STB_SU_Y
+#define STB_SU_Y        STB_CHIP_Y
 #endif
 #ifndef STB_CHIP_PAD
 #define STB_CHIP_PAD    (UI_STATUS_H *  4 / 40) /* 4  */
@@ -441,7 +498,13 @@ static void draw_header(gfx2_surf_t *s, void *ctx)
      * se supone. Ver s_clock_x1/x2. */
     {
         int16_t w = gfx2_text_w(st->clock, &font_num_20);
-        s_clock_x2 = (int16_t)(640 + 150);
+        /* HDR_CLK_X + HDR_CLK_W, no "640 + 150" - 02/11/2026. Son los dos
+         * numeros crudos que el comentario de HDR_CLK_W dice haber
+         * quitado: se parametrizo la definicion y se quedo sin tocar su
+         * uso, asi que en un panel que no midiera 800 la ZONA DE TOQUE del
+         * reloj se quedaba donde estaba el reloj de otro panel. A 800 de
+         * ancho da el mismo 790 de siempre. */
+        s_clock_x2 = (int16_t)(HDR_CLK_X + HDR_CLK_W);
         s_clock_x1 = (int16_t)(s_clock_x2 - w);
     }
 
@@ -469,9 +532,8 @@ static void draw_header(gfx2_surf_t *s, void *ctx)
      *      El banco lo comprueba en las ocho paletas.
      */
     {
-        int16_t bw = 48, bh = 20;
-        int16_t bx = (int16_t)(790 - bw - 2);
-        int16_t by = 34;
+        int16_t bw = HDR_BAT_W, bh = HDR_BAT_H;
+        int16_t bx = HDR_BAT_X, by = HDR_BAT_Y;
         uint8_t pct = (st->batt_pct > 100u) ? 100u : st->batt_pct;
         int16_t fill = (int16_t)((uint32_t)(bw - 4) * pct / 100u);
         uint32_t col = (pct > 25u) ? PAL_OK : PAL_CRIT;
@@ -487,9 +549,25 @@ static void draw_header(gfx2_surf_t *s, void *ctx)
         t[i] = '\0';
 
         gfx2_rrect_outline(s, bx, by, bw, bh, 4, 2, gfx2_rgb(PAL_INK_MUTE));
-        /* El pezon, a la altura del nuevo alto. */
-        gfx2_rrect(s, (int16_t)(bx + bw), (int16_t)(by + 6), 3, 8, 1,
-                   gfx2_rgb(PAL_INK_MUTE));
+        /*
+         * EL PEZON, CENTRADO DE VERDAD - 03/11/2026.
+         *
+         * Iba en `by + 6` con 8 de alto, que en una pastilla de 20 cae
+         * centrado por casualidad: (20 - 8) / 2 son exactamente esos 6.
+         * En una de 14 -la del Malahit- los mismos numeros lo dejan de
+         * 6 a 14, o sea pegado al borde de abajo y asomando por fuera.
+         * Se veia en la radio y en ningun banco, porque los bancos
+         * dibujan la de 20.
+         *
+         * Centrado contra el alto de la caja, y el alto del pezon sale
+         * del mismo sitio. A 20 de alto da el mismo 6 de siempre.
+         */
+        {
+            int16_t nh = HDR_BAT_NIB_H;
+            gfx2_rrect(s, (int16_t)(bx + bw),
+                       (int16_t)(by + (bh - nh) / 2),
+                       HDR_BAT_NIB_W, nh, 1, gfx2_rgb(PAL_INK_MUTE));
+        }
         if (fill > 0) {
             gfx2_fill(s, (int16_t)(bx + 2), (int16_t)(by + 2), fill,
                       (int16_t)(bh - 4), gfx2_rgba(col, UI_TOP_BAT_ALFA));
@@ -819,7 +897,7 @@ static void draw_status(gfx2_surf_t *s, void *ctx)
             buf[0] = 'S';
             u2s(&buf[1], st->s_units);
         }
-        (void)gfx2_text(s, x, (int16_t)(Y + STB_CHIP_Y), buf, &font_ui_18b,
+        (void)gfx2_text(s, x, (int16_t)(Y + STB_SU_Y), buf, &font_ui_18b,
                         gfx2_rgb(PAL_INK));
     }
 

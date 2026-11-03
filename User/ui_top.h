@@ -424,7 +424,21 @@ void ui_top_draw_mem(const ui_top_state_t *st);
 #ifndef UI_TOP_HORA_RY
 #define UI_TOP_HORA_RY 0
 #endif
-#define UI_TOP_HORA_RW (800 - UI_TOP_HORA_RX)
+/*
+ * GFX2_W y no 800 - 02/11/2026.
+ *
+ * Es la ventana recortada de la esquina, o sea DONDE SE ESCRIBE: con el
+ * 800 crudo, en un panel de 480 esta esquina pedia una ventana de
+ * 396..799, fuera de la pantalla. No se habia notado porque ningun banco
+ * llama a ui_top_draw_hora() -sim/principal.c pinta la cabecera entera- y
+ * porque UI_TOP_HORA_RX si era configurable, asi que parecia que el bloque
+ * entero lo era.
+ *
+ * Es el mismo arreglo que HDR_CLK_X ya tenia: un bloque anclado a la
+ * DERECHA conserva su distancia al borde. A 800 de ancho da exactamente el
+ * mismo numero que antes.
+ */
+#define UI_TOP_HORA_RW (GFX2_W - UI_TOP_HORA_RX)
 #define UI_TOP_HORA_RH UI_TOP_H
 
 /* Solo la esquina del reloj y la bateria. Ver UI_TOP_HORA_RX. */
