@@ -1237,6 +1237,431 @@ static void test_front_end(void)
     console_printf("\n");
 }
 
+/* ================================================================== */
+/* STEP 7: THE SCREEN                                                 */
+/* ================================================================== */
+
+/*
+ * The whole 480 x 320 main screen, drawn by upstream's own UI modules:
+ * ui_top.c for the header and the status band, spec_chrome.c for the
+ * gutter and the ruler, spectrum.c for the trace and the waterfall
+ * colours, ui_act.c for the six buttons. Every coordinate comes from
+ * compat/malahit_layout.h, which is the same file deepsdr-ui's host
+ * render uses - so what follows should put on the panel exactly what
+ * `make malahit` puts in the PNG.
+ *
+ * WHAT IS REAL ON THIS SCREEN AND WHAT IS NOT.
+ *
+ * This is the first thing to say about it, because a receiver's screen
+ * is an instrument and an instrument that invents a reading is worse
+ * than one that shows nothing. Of the fields ui_top_state_t carries:
+ *
+ *   REAL   the frequency (straight off msi001_last_plan()), the
+ *          spectrum, the waterfall, the ruler, the dB gutter, and the
+ *          S-meter's MOVEMENT - it follows the measured peak.
+ *
+ *   STUB   the S-meter's SCALE. There is no calibration yet, so S9 is
+ *          simply the top of the display range; see ui_s_units().
+ *          dbm_valid is 0 for the same reason, so no dBm number is
+ *          claimed.
+ *
+ *   STUB   the clock, which counts UPTIME because this port has no RTC
+ *          driver, and the battery, which reads 0 because nothing has
+ *          been written for the ADC on PA0 yet. Both are drawn rather
+ *          than hidden so that the layout gets tested at full width,
+ *          and both are listed on the console at startup.
+ *
+ *   HONEST ZEROS   mode is AM because the RF path is set up for AM and
+ *          there is no demodulator to contradict it; AGC is OFF and
+ *          ATT is OFF because they are; bw, band, RDS, NCO and JMP are
+ *          left empty because nothing drives them.
+ *
+ * ui_top.c treats a null pointer as "do not draw this", which is what
+ * makes an honest empty field cheap.
+ */
+#include "spec_chrome.h"  /* ../../User/spec_chrome.c - upstream */
+#include "ui_top.h"       /* ../../User/ui_top.c      - upstream */
+#include "ui_act.h"       /* ../../User/ui_act.c      - upstream */
+#include "i2c3.h"
+#include "touch.h"
+
+/*
+ * THE DISPLAY RANGE, in upstream's uncalibrated dB - the same 40..130
+ * the spectrum has been drawn with since step 6, named now that three
+ * different pieces of the screen have to agree about it. The gutter
+ * labels, the colour legend, the trace and the S-meter all read these
+ * two numbers, and a spectrum whose axis disagrees with its trace is
+ * the worst failure available to something built to measure with.
+ */
+#define UI_DB_MIN   40.0f
+#define UI_DB_MAX  130.0f
+
+/*
+ * THE WATERFALL HISTORY, 8 bits a pixel.
+ *
+ * Indices into the colormap, not colour: 92 x 440 is 40 kB this way and
+ * 79 kB as RGB565, and gfx2_wf_blit() converts through the LUT as it
+ * pushes. That indirection is not only about memory - it means a change
+ * of palette repaints the whole history and not just the new rows.
+ *
+ * It is a ring. `head` is the OLDEST row, which is the one that goes at
+ * the top; a new row is written there and the head then advances, which
+ * leaves the newest at the bottom and costs no copying.
+ */
+static uint8_t s_wf[(uint32_t)SPC_WF_ROWS * (uint32_t)SPC_TRACE_W];
+static int16_t s_wf_head;
+
+static ui_top_state_t s_top;
+static ui_act_state_t s_act;
+static spec_chrome_t  s_chrome;
+
+static char s_freq_txt[16];
+static char s_clock_txt[8];
+
+/*
+ * The frequency, formatted the way upstream's tune_freq_format_khz()
+ * does it: kilohertz, two decimals, a dot every three digits and a
+ * comma before the decimals. 10 000 000 Hz becomes "10.000,00", and
+ * ui_top.c draws "kHz" after it.
+ *
+ * Written here rather than borrowed because the upstream function is
+ * inside the 39 094-line main.c that is not coming. It is eleven lines
+ * and it is a seam left by main.c, not by the hardware - the same kind
+ * of seam as g_pal.
+ */
+static void ui_fmt_khz(uint32_t hz, char *out, uint32_t n)
+{
+    uint32_t khz  = hz / 1000U;
+    uint32_t cent = (hz % 1000U) / 10U;
+    char     dig[12];
+    uint32_t nd = 0U;
+    uint32_t w  = 0U;
+
+    do { dig[nd++] = (char)('0' + (khz % 10U)); khz /= 10U; } while (khz);
+
+    while (nd > 0U && w + 4U < n) {
+        nd--;
+        out[w++] = dig[nd];
+        if (nd > 0U && (nd % 3U) == 0U) { out[w++] = '.'; }
+    }
+    out[w++] = ',';
+    out[w++] = (char)('0' + (cent / 10U));
+    out[w++] = (char)('0' + (cent % 10U));
+    out[w]   = '\0';
+}
+
+/*
+ * S-UNITS FROM THE PEAK, AND WHAT THAT IS WORTH.
+ *
+ * The bar moves with a real measurement - the strongest bin of the
+ * finished spectrum - but the SCALE is arbitrary: S1 is the bottom of
+ * the display range and S9 the top, linearly, in upstream's
+ * uncalibrated dB. It is not a calibrated S-meter and must not be read
+ * as one.
+ *
+ * It is here anyway because a bar that tracks the signal proves the
+ * status band is being repainted from live data, which is one of the
+ * things this step exists to find out. The calibration waits on the
+ * mixer DC offset, which is the worst number on the board and is step
+ * 8's first job.
+ */
+static void ui_s_units(float db, uint8_t *units, uint8_t *over)
+{
+    float f = (db - UI_DB_MIN) * 9.0f / (UI_DB_MAX - UI_DB_MIN);
+
+    *over = 0U;
+    if (f < 0.0f) { *units = 0U; return; }
+    if (f > 9.0f) {
+        /* Above the top of the range: S9 + however many dB are left,
+         * in the same uncalibrated dB as everything else here. */
+        *units = 10U;
+        f = db - UI_DB_MAX;
+        *over = (uint8_t)(f > 60.0f ? 60.0f : f);
+        return;
+    }
+    *units = (uint8_t)f;
+}
+
+/* Uptime as mm:ss, in the slot where a clock will go. See the note at
+ * the top of this section: it counts up, and it is labelled as such on
+ * the console, because a wrong time of day is a lie and an uptime is
+ * not. */
+static void ui_fmt_uptime(uint32_t ms, char *out)
+{
+    uint32_t s = (ms / 1000U) % 3600U;
+
+    out[0] = (char)('0' + ((s / 60U) / 10U));
+    out[1] = (char)('0' + ((s / 60U) % 10U));
+    out[2] = ':';
+    out[3] = (char)('0' + ((s % 60U) / 10U));
+    out[4] = (char)('0' + ((s % 60U) % 10U));
+    out[5] = '\0';
+}
+
+/* The six buttons, in upstream's own order - the same k_act_slots[]
+ * that sim/principal.c lists. Nothing behind them yet: they are drawn
+ * and they are hit-tested, which is what tells us the geometry at 480
+ * px is reachable with a finger. */
+static const char *const k_act_names[UI_ACT_N] = {
+    "Bandas", "Modo", "Paso", "Volumen", "Ruido", "Ajustes"
+};
+
+static void ui_init_state(uint32_t tuned_hz)
+{
+    uint32_t i;
+
+    ui_fmt_khz(tuned_hz, s_freq_txt, sizeof s_freq_txt);
+    ui_fmt_uptime(board_millis(), s_clock_txt);
+
+    s_top.freq       = s_freq_txt;
+    s_top.freq_digit = -1;          /* nothing is tuning: no cursor */
+    s_top.mode       = "AM";
+    s_top.band       = "Bandas";    /* no band table in this image */
+    s_top.en_banda   = 0U;
+    s_top.clock      = s_clock_txt;
+    s_top.batt_pct   = 0U;          /* no ADC driver - see above */
+    s_top.agc        = "OFF";
+    s_top.att        = "OFF";
+    s_top.dbm_valid  = 0U;          /* the dB figure is not calibrated */
+    s_top.knob       = UI_KNOB_TUNE;
+    /* No encoder driver either, so the pill says so rather than naming
+     * an adjustment the knob does not make. */
+    s_top.knob_name  = "sin mando";
+    s_top.knob_value = 0;
+
+    for (i = 0U; i < (uint32_t)UI_ACT_N; i++) {
+        s_act.name[i]   = k_act_names[i];
+        s_act.value[i]  = 0;
+        s_act.active[i] = 0U;
+    }
+    s_act.pressed = -1;
+
+    s_chrome.db_min    = UI_DB_MIN;
+    s_chrome.db_max    = UI_DB_MAX;
+    s_chrome.center_hz = tuned_hz;
+    s_chrome.span_hz   = 192000U;
+    /*
+     * ZERO, AND UPSTREAM'S Fs/4 IS WHY THAT NEEDS SAYING.
+     *
+     * demod_px is the distance from the centre of the panel to the
+     * demodulation point. The DEEPSDR runs low-IF and demodulates at
+     * +Fs/4, so there it is SPC_TRACE_W/4. This receiver is zero-IF -
+     * fft_compute_db_iq() hands back fftshift order with the tuned
+     * frequency in the middle - so the two coincide and the offset is
+     * nothing. The marker then sits on the centre line, which is where
+     * the LO leakage is, and that is correct: it is where this radio
+     * would demodulate.
+     */
+    s_chrome.demod_px  = 0;
+    s_chrome.band      = SPC_BAND_NONE;   /* no audio filter yet */
+    s_chrome.band_hz   = 0U;
+    s_chrome.en_banda  = 0U;
+    s_chrome.cmap      = spectrum_colormap_lut();
+}
+
+/*
+ * THE BACKGROUND, AND WHY IT IS NOT OPTIONAL.
+ *
+ * ili9488_init() resets the panel and sends the init sequence; it
+ * never clears GRAM, so after a reset every pixel holds whatever the
+ * RAM powered up with. Nothing in the UI covers the whole screen -
+ * each module paints its own band and leaves the gaps alone - so
+ * without this the gaps show uninitialised panel memory.
+ *
+ * THERE ARE FOUR GAPS AND THEY ARE ALL VISIBLE, which is how this was
+ * found: a photograph of the radio next to the host render.
+ *
+ *     rows  50..53    between SPC_Y and the top of the trace
+ *     rows 174..175   between the bottom of the trace and the ruler
+ *     rows 192..193   between the ruler and the waterfall
+ *     cols 474..479   the right margin, the full height of both
+ *
+ * They came out as dotted grey-black lines along the top and bottom
+ * of the spectrum and a bright stripe down the right of the spectrum
+ * AND the waterfall - which is the giveaway, because one stripe
+ * crossing two modules that share no drawing code is not a bug in
+ * either of them.
+ *
+ * The host render could not show this: sim/principal.c opens with
+ * lcd_sim_reset() and its own fondo(), so on the PC the gaps are
+ * always the surface colour. This is the first thing in the port that
+ * the PNG was structurally unable to predict.
+ */
+static void ui_fondo(gfx2_surf_t *s, void *ctx)
+{
+    (void)ctx;
+    gfx2_fill(s, 0, 0, GFX2_W, GFX2_H, gfx2_rgb(PAL_SURF_0));
+}
+
+/* The static half of the screen: everything that does not change from
+ * one capture to the next. */
+static void ui_paint_all(void)
+{
+    gfx2_render_screen(ui_fondo, 0);
+    spec_chrome_draw(&s_chrome);
+    ui_top_draw(&s_top);
+    ui_act_draw(&s_act);
+}
+
+/*
+ * One new waterfall row out of a finished spectrum.
+ *
+ * The trace is 440 px and the transform is 512 bins, so a column takes
+ * the bin it lands on. Upstream's own waterfall does the same thing;
+ * picking the maximum of the bins a column covers would be better and
+ * is a change to make once there is something to compare against.
+ */
+static void ui_wf_push(const float *db, uint32_t bins)
+{
+    uint8_t *row = &s_wf[(uint32_t)s_wf_head * (uint32_t)SPC_TRACE_W];
+    int16_t  i;
+
+    for (i = 0; i < SPC_TRACE_W; i++) {
+        uint32_t src = (uint32_t)((int32_t)i * (int32_t)bins) / SPC_TRACE_W;
+        row[i] = spectrum_colormap_index(db[src], UI_DB_MIN, UI_DB_MAX);
+    }
+
+    s_wf_head = (int16_t)((s_wf_head + 1) % SPC_WF_ROWS);
+}
+
+/*
+ * WHAT THE FINGER LANDED ON, reported to the console.
+ *
+ * Nothing is wired to an action - there is no band list, no menu and
+ * no mode to change - so the only thing this can usefully do is say
+ * what was hit. That is not a placeholder: the hit boxes come out of
+ * the drawing itself (ui_top.c records each chip's rectangle as it
+ * paints it), so this is the test that the geometry which LOOKS right
+ * in the PNG is also reachable with a finger on a 480 px panel, which
+ * is a question the host render cannot answer.
+ *
+ * The pressed button is drawn, and only that button, through
+ * ui_act_draw_one() - which is also the cheapest possible check that
+ * partial repaint lands where it should.
+ */
+static void ui_touch(void)
+{
+    static int8_t  s_down = -1;
+    /*
+     * THE PRESS IS A TRANSITION HERE, NOT THE CONTROLLER'S EVENT CODE.
+     *
+     * It was `if (pt[0].event != 0U) return;` - report only on the
+     * FT6236's own event 0, "contact down" - and the result was that
+     * the action bar answered every tap and nothing above it answered
+     * any. The six buttons worked because their branch never looked
+     * at the event.
+     *
+     * The reason is the frame rate. A frame is about 140 ms here, most
+     * of it the waterfall going out over SPI, and the controller
+     * reports event 0 exactly once per finger: a tap that begins and
+     * ends between two polls is only ever seen as event 2, "contact",
+     * or missed outright. Sampling a one-shot flag at 7 Hz does not
+     * work, and no amount of pressing harder makes it work.
+     *
+     * So the edge is detected here, from "was anything down last time"
+     * - which is true whichever report the poll happens to land on.
+     */
+    static uint8_t s_was_down;
+    touch_point_t  pt[TOUCH_MAX_POINTS];
+    uint32_t       n = touch_poll(pt);
+
+    if (n == 0U) {
+        s_was_down = 0U;
+        if (s_down >= 0) {
+            int8_t was = s_down;
+            s_down = -1;
+            s_act.pressed = -1;
+            ui_act_draw_one(&s_act, (uint8_t)was);
+        }
+        return;
+    }
+
+    {
+        uint16_t x = pt[0].x, y = pt[0].y;
+        int8_t   b = ui_act_hit(x, y);
+        uint8_t  nuevo = (uint8_t)!s_was_down;
+
+        s_was_down = 1U;
+
+        if (b >= 0) {
+            if (b != s_down) {
+                int8_t was = s_down;
+                s_down = b;
+                s_act.pressed = b;
+                if (was >= 0) {
+                    /* Redrawing the one it left as well, or the old
+                     * highlight stays on a button nobody is touching. */
+                    s_act.pressed = -1;
+                    ui_act_draw_one(&s_act, (uint8_t)was);
+                    s_act.pressed = b;
+                }
+                ui_act_draw_one(&s_act, (uint8_t)b);
+                console_printf("  touch (%3u,%3u) -> boton %d \"%s\"\n",
+                               (uint32_t)x, (uint32_t)y, (int32_t)b,
+                               k_act_names[b]);
+            }
+            return;
+        }
+
+        if (s_down >= 0) {
+            int8_t was = s_down;
+            s_down = -1;
+            s_act.pressed = -1;
+            ui_act_draw_one(&s_act, (uint8_t)was);
+        }
+
+        /* Everything above the action bar, once per press. */
+        if (!nuevo) { return; }
+
+        {
+            ui_top_hit_t h = ui_top_hit(x, y);
+            static const char *const k_chip[] = {
+                "-", "AGC", "BW", "ATT", "NCO", "JMP", "SPK", "OVR"
+            };
+            const char *que;
+
+            if      (h != UI_TOP_HIT_NONE) { que = k_chip[h]; }
+            else if (ui_top_freq_hit(x, y))  { que = "frecuencia"; }
+            else if (ui_top_clock_hit(x, y)) { que = "reloj"; }
+            else if (ui_top_band_hit(x, y))  { que = "banda"; }
+            else if (ui_top_mem_hit(x, y))   { que = "MEM"; }
+            else                             { que = 0; }
+
+            console_printf("  touch (%3u,%3u)%s%s\n",
+                           (uint32_t)x, (uint32_t)y,
+                           que ? " -> " : "", que ? que : "");
+
+            /*
+             * AND SAY IT ON THE PANEL, NOT ONLY DOWN THE CABLE.
+             *
+             * Everything above the action bar hit correctly from the
+             * first run and looked completely dead to whoever was
+             * doing the pressing: the six buttons draw a pressed state
+             * and no other element has one, because upstream gives
+             * them one by CHANGING SOMETHING - the AGC chip cycles the
+             * AGC, the band pill opens the band list - and there is
+             * nothing behind any of them here yet.
+             *
+             * So the knob pill, which is otherwise sitting there
+             * saying "sin mando", reports the last thing touched. It
+             * is the honest amount of feedback available: it claims no
+             * setting changed, and it turns a finger into an
+             * instrument that can check the hit boxes without reading
+             * a serial log at the same time as looking at the glass.
+             *
+             * It goes through ui_top_draw_status(), which is the band
+             * redraw upstream already has - 480 x 16 px, about 6 ms -
+             * and not a new drawing path. ui_top_draw_smeter(), which
+             * runs every frame, stops short of the pill and so cannot
+             * rub this out.
+             */
+            s_top.knob_name  = que ? "Tocado" : "Sin asignar";
+            s_top.knob_value = que;
+            ui_top_draw_status(&s_top);
+        }
+    }
+}
+
 int main(void)
 {
     /*
@@ -1438,33 +1863,98 @@ int main(void)
 
     console_printf("Panel     : SPI3 at %u Hz, 18 bpp, 480x320\n", spi3_hz());
 
-    /*
-     * UPSTREAM'S GRAPHICS, ON THIS PANEL. Held for a few seconds so it
-     * can be looked at, then the spectrum takes the screen back.
-     */
     console_printf("\ngfx2     : ../../User/gfx2.c at %ux%u, band %u rows\n",
                    (uint32_t)GFX2_W, (uint32_t)GFX2_H,
                    (uint32_t)GFX2_BAND_H);
-    {
-        uint64_t g0 = board_cycles();
-        gfx2_render_screen(gfx_demo, 0);
-        uint32_t g_us = (uint32_t)(((board_cycles() - g0) * 1000000U)
-                                   / clock_sysclk_hz);
-        console_printf("           full screen in %u us, bus %u cycles\n",
-                       g_us, (uint32_t)g_lcd_ciclos);
-    }
 
     /*
-     * Redraw it for a while, with a frame counter in it, so the screen
-     * can be looked at and so that a STILL picture cannot be mistaken
-     * for a live one. A band compositor that worked once and then
-     * corrupted its own state on the second pass would look identical
-     * in a single shot.
+     * gfx_demo() WAS WHAT DREW HERE, and it has been retired rather
+     * than deleted: it was step 6's proof that upstream's drawing API
+     * reaches this panel at all, and the real UI below is a better
+     * proof of the same thing in every respect. It still builds, for
+     * the day something in the band compositor needs isolating from
+     * everything the UI puts on top of it. Same treatment as
+     * test_bpf_sweep() and the rate sweep.
      */
-    for (uint32_t n = 0; n < 12U; n++) {
-        board_watchdog_feed();
-        s_gfx_frame = n;
-        gfx2_render_screen(gfx_demo, 0);
+    (void)gfx_demo;
+    (void)s_gfx_frame;
+
+    /*
+     * THE TOUCH PANEL, which this image has not needed until now.
+     * FT6236 at 0x38 on I2C3, calibrated in step 3 - see touch.h. It
+     * is here so that the UI's own hit boxes can be checked against a
+     * finger, which is the one thing the host render cannot do.
+     */
+    i2c3_init();
+    if (i2c3_recover_clocks() != 0) {
+        /* Worth a line every time it is not zero: it says the previous
+         * image was halted mid-transfer, which is normal after a load
+         * and would be alarming at a power-on. */
+        console_printf("I2C3      : bus recovered, %d clocks\n",
+                       i2c3_recover_clocks());
+    }
+    if (touch_init()) {
+        console_printf("Touch     : FT6236 at 0x38, cipher 0x%02x "
+                       "vendor 0x%02x\n",
+                       (uint32_t)touch_chip_id(),
+                       (uint32_t)touch_vendor_id());
+    } else {
+        /*
+         * SAY WHAT THE BUS LOOKS LIKE, not just that it failed.
+         *
+         * "No answer" has at least three causes that need different
+         * work - no pull-ups or the wrong pins (a line stuck low), a
+         * controller that has not come out of reset (lines idle, no
+         * ACK), and a device that answers at some other address. One
+         * console line separates them, and the first run of this image
+         * reported the failure without any of it.
+         */
+        uint32_t lines = i2c3_line_levels();
+
+        console_printf("Touch     : *** no answer at 0x38 ***\n");
+        console_printf("            SCL=%u SDA=%u  IRQ(PC8)=%s\n",
+                       (lines >> 1) & 1U, lines & 1U,
+                       i2c3_touch_irq_asserted() ? "low" : "high");
+        {
+            static const char *const k_paso[I2C3_LV_N] = {
+                "al entrar", "PE apagado", "tras rescate"
+            };
+            uint32_t k;
+
+            /* %s, not %-13s: console_printf() has no width modifier
+             * for strings, and an unsupported conversion prints
+             * itself AND DOES NOT CONSUME ITS ARGUMENT, so every
+             * value after it on the line shifts by one. The first
+             * version of this printed a string pointer labelled
+             * "SCL=" and the real SCL labelled "SDA=". It is trap 8
+             * in WORKING.md, and it still caught me. */
+            console_printf("            lineas durante init "
+                           "(rescate %d clocks):\n", i2c3_recover_clocks());
+            for (k = 0U; k < I2C3_LV_N; k++) {
+                uint8_t v = i2c3_level_at(k);
+                console_printf("              SCL=%u SDA=%u  %s\n",
+                               (uint32_t)((v >> 1) & 1U),
+                               (uint32_t)(v & 1U), k_paso[k]);
+            }
+        }
+        console_printf("            cipher 0x%02x vendor 0x%02x "
+                       "(want 0x36 / 0x11)\n",
+                       (uint32_t)touch_chip_id(),
+                       (uint32_t)touch_vendor_id());
+        console_printf("            tras el reset: SCL=%u SDA=%u | "
+                       "%u intentos, SDA baja en el %d (lectura %s)\n",
+                       (uint32_t)((touch_dbg_after_reset() >> 1) & 1U),
+                       (uint32_t)(touch_dbg_after_reset() & 1U),
+                       (uint32_t)touch_dbg_tries(),
+                       (int32_t)touch_dbg_sda_low_at(),
+                       touch_dbg_rc_at() ? "OK" : "fallida");
+        console_printf("            scanning: ");
+        for (uint8_t a = 0x08U; a <= 0x77U; a++) {
+            board_watchdog_feed();
+            if (i2c3_probe(a)) { console_printf("0x%02x ", (uint32_t)a); }
+        }
+        console_printf("\n            the screen will draw but not "
+                       "respond\n");
     }
 
     PHASE(19);
@@ -1545,10 +2035,55 @@ int main(void)
     console_printf("  Peak offset must match the %+d Hz asked for above.\n\n",
                    SPEC_OFFSET_HZ);
 
+    /* ============================================================== */
+    /* STEP 7: THE SCREEN                                             */
+    /* ============================================================== */
+
+    /*
+     * THE WHOLE SCREEN, ONCE, and then only the parts that move.
+     *
+     * 480 x 320 at three bytes a pixel is 460 800 bytes over SPI, so a
+     * full repaint costs about an eighth of a second and there is no
+     * version of this that can afford one per frame. The division is
+     * upstream's own and it is the reason ui_top.c and spec_chrome.c
+     * are split into the pieces they are: the header, the chips, the
+     * gutter and the ruler change when the tuning or the scale change,
+     * and the trace, the waterfall and the S-meter change every
+     * capture.
+     */
     PHASE(20);
+    ui_init_state(sp->f_actual);
+
+    {
+        uint64_t p0 = board_cycles();
+        ui_paint_all();
+        console_printf("Screen    : 480x320 from upstream's own UI - "
+                       "ui_top.c, spec_chrome.c, ui_act.c\n");
+        console_printf("            geometry from compat/malahit_layout.h,"
+                       " the same file the\n");
+        console_printf("            host render uses, so the panel and "
+                       "deepsdr-ui's PNG agree.\n");
+        console_printf("            first full paint %u us\n",
+                       (uint32_t)(((board_cycles() - p0) * 1000000U)
+                                  / clock_sysclk_hz));
+    }
+
+    console_printf("\n  WHAT ON THAT SCREEN IS A REAL MEASUREMENT:\n");
+    console_printf("    frequency, spectrum, waterfall, ruler, dB axis.\n");
+    console_printf("  WHAT MOVES BUT IS NOT CALIBRATED:\n");
+    console_printf("    the S bar - S1..S9 spans %d..%d in upstream's\n",
+                   (int32_t)UI_DB_MIN, (int32_t)UI_DB_MAX);
+    console_printf("    uncalibrated dB. No dBm figure is shown.\n");
+    console_printf("  WHAT IS A STUB, AND WHY:\n");
+    console_printf("    the clock counts UPTIME (no RTC driver), the\n");
+    console_printf("    battery reads 0 (nothing written for the ADC on\n");
+    console_printf("    PA0), the knob pill says so (no encoder driver).\n");
+    console_printf("    Mode, AGC, ATT and the six buttons are drawn at\n");
+    console_printf("    their real values, which are 'nothing yet'.\n\n");
 
     uint32_t ab_at = board_millis() + 15000U;
     int      ab_done = 0;
+    uint32_t clock_at = 0U;
 
     for (;;) {
         iq_peak_t pk;
@@ -1581,36 +2116,73 @@ int main(void)
         iq_peak(s_db, PAN_BINS, 192000U, &pk);
 
         /*
-         * db_min/db_max are in upstream's uncalibrated dB - see
-         * panbringup.h for where 40 and 130 come from. The three zeros
-         * at the end are the centre marker and the band edges, which
-         * belong to a tuned receiver with a filter set and are not
-         * meaningful yet.
-         */
-        /*
-         * HEIGHT 240, NOT 320, AND THE REASON IS UPSTREAM'S OWN LIMIT.
+         * THE TRACE, now inside the layout instead of over the whole
+         * panel. SPC_TRACE_* comes from compat/malahit_layout.h, so
+         * these four numbers are the same four the gutter and the
+         * ruler were drawn with and the three cannot drift apart.
          *
-         * spectrum_draw() opens with a guard - `h > SPEC_MAX_H` and it
-         * returns - and SPEC_MAX_H is 280. Asking for the full 320
-         * rows of this panel made it return instantly, drawing
-         * nothing, with no complaint of any kind.
+         * It used to be (0, 40, 480, 240), full width and no chrome.
+         * The height mattered then for a reason worth keeping written
+         * down: spectrum_draw() opens with `h > SPEC_MAX_H` and simply
+         * RETURNS, and SPEC_MAX_H is 280, so asking for all 320 rows
+         * drew nothing and complained about nothing. What caught it
+         * was timing the call - a draw that reports 0 us has not
+         * drawn. The trace is 120 rows now and nowhere near that
+         * limit, and draw_us is still printed for the same reason.
          *
-         * What caught it was timing the call: a draw that reports 0 us
-         * has not drawn. Without that instrument this would have
-         * looked like a panel fault, and the search would have been in
-         * the SPI layer, which was working perfectly.
-         *
-         * 240 rows is also the right answer rather than a workaround:
-         * a real layout wants a header and a waterfall, and upstream's
-         * own panel is not full height either. Raising SPEC_MAX_H
-         * upstream would be easy - the comment beside it says the
-         * arrays are per-row and cheap - and there is no need.
+         * The centre-mark offset is 0 - it is measured FROM the middle
+         * of the trace, and this receiver is zero-IF, so the mark and
+         * the middle are the same column. Upstream passes
+         * SPC_TRACE_W/4 there because the DEEPSDR demodulates at
+         * +Fs/4. The three trailing arguments are the band edges,
+         * which belong to a receiver with an audio filter and are
+         * still not meaningful.
          */
         uint64_t d0 = board_cycles();
-        spectrum_draw(s_db, PAN_BINS, 0, 40, 480, 240,
-                      40.0f, 130.0f, 0, 0U, 0, 0);
+        spectrum_draw(s_db, PAN_BINS,
+                      SPC_TRACE_X, SPC_TRACE_Y, SPC_TRACE_W, SPC_TRACE_H,
+                      UI_DB_MIN, UI_DB_MAX, 0, 0U, 0, 0);
         uint32_t draw_us = (uint32_t)(((board_cycles() - d0) * 1000000U)
                                       / clock_sysclk_hz);
+
+        /*
+         * THE WATERFALL. One new row per capture, then the whole
+         * history out through the colormap.
+         *
+         * The blit is the expensive half of the frame - 92 x 440
+         * pixels is 121 kB over SPI - and it is done whole rather than
+         * scrolled because this panel has no hardware scroll that gfx2
+         * can reach and the ring already avoids the memory copy. If
+         * the frame rate needs more than that, it is the SPI DMA that
+         * buys it, which is the same conclusion the SAI reached.
+         */
+        uint64_t w0 = board_cycles();
+        ui_wf_push(s_db, PAN_BINS);
+        gfx2_wf_blit(SPC_TRACE_X, SPC_WF_Y, SPC_TRACE_W, SPC_WF_ROWS,
+                     s_wf, SPC_TRACE_W, s_wf_head,
+                     spectrum_colormap_lut());
+        uint32_t wf_us = (uint32_t)(((board_cycles() - w0) * 1000000U)
+                                    / clock_sysclk_hz);
+
+        /*
+         * THE S-METER, and only the S-meter. ui_top_draw_smeter() is
+         * upstream's own narrow repaint of the part of the status band
+         * that moves with the signal; the whole band is ten times the
+         * bus traffic for the same information.
+         */
+        ui_s_units(pk.db, &s_top.s_units, &s_top.over_db);
+        s_top.dbm = (int16_t)pk.db;     /* with dbm_valid 0: not shown */
+        ui_top_draw_smeter(&s_top);
+
+        /* The clock corner, once a second, which is as often as a
+         * display of whole seconds can change. */
+        if ((int32_t)(board_millis() - clock_at) >= 0) {
+            clock_at = board_millis() + 1000U;
+            ui_fmt_uptime(board_millis(), s_clock_txt);
+            ui_top_draw_hora(&s_top);
+        }
+
+        ui_touch();
 
         /*
          * THE A/B TEST, which is upstream's and is the only honest way
@@ -1632,7 +2204,7 @@ int main(void)
 
         console_printf("  peak %+7d Hz %3d dB | phase %+3d.%02u deg "
                        "gain %+2d.%02u dB | mirror %3d dB @%+4d bin | "
-                       "blk %u | dsp %u us draw %u us\n",
+                       "blk %u | dsp %u us trace %u us wf %u us\n",
                        pk.offset_hz, (int32_t)pk.db,
                        (int32_t)iqbal_fase_grados(),
                        (uint32_t)((int32_t)(iqbal_fase_grados() * 100.0f)
@@ -1649,7 +2221,7 @@ int main(void)
                        (int32_t)iqbal_espejo_db(),
                        (int32_t)iqbal_espejo_bin(),
                        iqbal_bloques(),
-                       dsp_us, draw_us);
+                       dsp_us, draw_us, wf_us);
 
         if (iqbal_ab_hay()) {
             console_printf("\n  *** A/B RESULT: mirror %d dB with the"

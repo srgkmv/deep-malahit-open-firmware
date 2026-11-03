@@ -106,11 +106,79 @@ DEFS += -DARM_MATH_DSP=1 -DARM_MATH_CM7 -DARM_MATH_LOOPUNROLL
 # the file holding the directive first, and that is User/. The full
 # reasoning is in compat/rm68120_ili9488.h.
 #
-DEFS += -DGFX2_W=480 -DGFX2_H=320
-DEFS += -DGFX_SCREEN_WIDTH=480 -DGFX_SCREEN_HEIGHT=320
 DEFS += -DRM68120_EXMC_H -DLCD_DMA_H
 CFLAGS_EXTRA_UPSTREAM  = -include rm68120_ili9488.h
 CFLAGS_EXTRA_UPSTREAM += -include lcd_dma_ili9488.h
+
+#
+# THE LAYOUT, AND WHY IT IS A HEADER AND NOT FOUR -D FLAGS.
+#
+# GFX2_W, GFX2_H and GFX_SCREEN_* used to be -D here. They are now in
+# compat/malahit_layout.h, force-included ahead of everything, along
+# with the other sixty-odd constants that place the header, the status
+# band, the spectrum, the ruler, the waterfall and the action bar on a
+# 480 x 320 panel. Upstream's UI headers guard every one of them with
+# #ifndef for exactly this.
+#
+# THE POINT IS THAT IT IS THE SAME FILE the host render uses -
+# deepsdr-ui's `make malahit` target force-includes this very header -
+# so the PNG on the PC and the pixels on the panel cannot drift apart.
+# A layout constant that exists twice is a layout constant that will
+# eventually disagree with itself, and the disagreement shows up as a
+# clipped chip on the radio and nowhere else.
+#
+# It goes in CFLAGS rather than CFLAGS_EXTRA_UPSTREAM because main.c
+# needs the same geometry to place what it draws: it is the caller of
+# ui_top_draw(), spec_chrome_draw() and spectrum_draw(), and the
+# coordinates it passes have to be the ones the UI modules were
+# compiled with.
+#
+CFLAGS_LAYOUT = -include malahit_layout.h
+
+#
+# THE TYPE, HALVED, WITHOUT TOUCHING A SINGLE UPSTREAM FILE.
+#
+# ui_top.c and friends name their faces as bare identifiers -
+# &font_ui_14b - so a -D redirects all of them at once. No edit, no
+# copy, no indirection layer. These are the same two sets deepsdr-ui's
+# Makefile uses, and they have to stay the same two sets or the host
+# render stops predicting the panel.
+#
+# WHY IT WORKS AT ALL, which is not obvious: font_ui_14.h only
+# DECLARES `extern const gfx2_font_t font_ui_14`, the data being in
+# fonts_data.c. Rewritten to font_ui_8, that declaration lands after
+# compat/font_ui_8.h has already defined a static one of that name, and
+# C says an extern declaration following a visible internal-linkage
+# declaration keeps the internal linkage. So the header resolves to the
+# small face and nothing is defined twice.
+#
+# TWO SETS, AND THEREFORE A RULE OF ITS OWN FOR ui_top.c. The remap is
+# per translation unit. ui_top.c is the only file that needs the 8 px
+# face - six status chips in a 480 px row - while the ruler and the
+# action bar read fine at 11 and shrinking them would only make them
+# worse. ui_top.c also carries the frequency readout, which is the one
+# thing on this screen read from across a room: font_num_44 at 46 px
+# does not fit a 320-row panel, so it goes to font_num_31.
+#
+# AND fonts_data.c MUST NOT GET EITHER SET. It is what DEFINES these
+# symbols; remapped, the definition of font_ui_14b would be renamed to
+# font_ui_11 and the link would fail on a duplicate.
+#
+MALAHIT_FONTS = -Dfont_ui_18b=font_ui_11 \
+                -Dfont_ui_14b=font_ui_11 \
+                -Dfont_ui_14=font_ui_11 \
+                -Dfont_num_20=font_ui_11
+
+# 10 px and not 8 since 03/11/2026: the panel decided it, not the
+# render. See the same block in deepsdr-ui/Makefile - these two have to
+# say the same thing or the PNG stops predicting the glass.
+MALAHIT_FONTS_TOP = -include font_num_31.h -include font_ui_10.h \
+                    -include font_ui_10b.h \
+                    -Dfont_num_44=font_num_31 \
+                    -Dfont_ui_18b=font_ui_11 \
+                    -Dfont_ui_14b=font_ui_10b \
+                    -Dfont_ui_14=font_ui_10 \
+                    -Dfont_num_20=font_ui_11
 
 DSP_SOURCES  = $(wildcard $(DSP_DIR)/Source/FilteringFunctions/*.c)
 DSP_SOURCES += $(wildcard $(DSP_DIR)/Source/ComplexMathFunctions/*.c)
@@ -155,6 +223,28 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/gfx.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/idioma.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/spec_rotulos.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/spectrum.c
+#
+# THE SCREEN AROUND THE SPECTRUM - step 7's last three files.
+#
+# spec_chrome.c  the dB gutter, the frequency ruler and the colour
+#                legend: everything around the trace that changes a few
+#                times a minute instead of thirty times a second, which
+#                is the reason it is its own module and its own repaint.
+# ui_top.c       the header - frequency, mode, band, clock, battery -
+#                and the status band with the S-meter and the chips.
+# ui_act.c       the six buttons along the bottom, and the hit test for
+#                them, which comes out of the same geometry that drew
+#                them rather than a second table.
+#
+# All three are pure gfx2 and were already parameterised on GFX2_W;
+# what they were NOT parameterised on is the vertical budget, and that
+# is what compat/malahit_layout.h supplies. The edits that made the
+# remaining literals overridable are generic, are upstream's own
+# #ifndef pattern, and are recorded in PROCEDENCIA.md.
+#
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/spec_chrome.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_top.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_act.c
 
 #
 # NOT added to C_SOURCES, and that is deliberate. Objects here are named
@@ -172,6 +262,7 @@ ASM_SOURCES = startup_stm32h743.S
 OPT = -O2 -g3
 
 CFLAGS  = $(MCUFLAGS) $(DEFS) $(INCLUDES) $(OPT)
+CFLAGS += $(CFLAGS_LAYOUT)
 CFLAGS += -Wall -Wextra -Wshadow -Wundef
 CFLAGS += -ffunction-sections -fdata-sections
 CFLAGS += -fno-common
@@ -226,8 +317,20 @@ all: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET).bin $(BUILD_DIR)/$(TARGET
 $(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
 
+#
+# THE FONT REMAP IS PER FILE, so it is a target-specific variable and
+# not a flag on the rule. Two files are the exceptions, and both would
+# fail loudly rather than quietly, which is the only reason this is
+# comfortable: fonts_data.c would fail at link time on a duplicate
+# symbol, and ui_top.c would simply be drawn at the wrong size, which
+# the host render shows side by side.
+#
+CFLAGS_FONTS = $(MALAHIT_FONTS)
+$(BUILD_DIR)/up_fonts_data.o: CFLAGS_FONTS =
+$(BUILD_DIR)/up_ui_top.o:     CFLAGS_FONTS = $(MALAHIT_FONTS_TOP)
+
 $(BUILD_DIR)/up_%.o: $(UPSTREAM_DIR)/%.c | $(BUILD_DIR)
-	$(CC) -c $(CFLAGS) $(CFLAGS_EXTRA_UPSTREAM) $< -o $@
+	$(CC) -c $(CFLAGS) $(CFLAGS_EXTRA_UPSTREAM) $(CFLAGS_FONTS) $< -o $@
 
 vpath %.c $(sort $(dir $(DSP_SOURCES)))
 $(BUILD_DIR)/dsp_%.o: %.c | $(BUILD_DIR)

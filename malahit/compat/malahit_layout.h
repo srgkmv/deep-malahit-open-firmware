@@ -20,15 +20,22 @@
  * has to come out of somewhere, and the fonts do not shrink with it.
  *
  *            upstream 800x480        here 480x320
- *   header         0..63  (64)          0..25  (26)
- *   status        64..103 (40)          26..41  (16)
- *   spectrum     104..343 (240)        42..191 (150)
- *     trace      108..315 (208)        46..173 (128)
+ *   header         0..63  (64)          0..33  (34)
+ *   status        64..103 (40)          34..52  (19)
+ *   spectrum     104..343 (240)        53..191 (139)
+ *     trace      108..315 (208)        57..173 (117)
  *     ruler      318..343  (26)       176..191  (16)
- *   waterfall    348..419  (72)       194..289  (96)
- *   actions      427..476  (50)       294..319  (26)
+ *   waterfall    348..419  (72)       194..285  (92)
+ *   actions      427..476  (50)       290..319  (30)
  *
- *   26 + 16 + 150 + 2 + 96 + 4 + 26 = 320 exactly
+ *   34 + 19 + 139 + 2 + 92 + 4 + 30 = 320 exactly
+ *
+ * THE STATUS BAND IS 19 AND NOT 16, and the three rows came off the
+ * trace, one at a time, with someone looking at the panel between
+ * each. At 16 the chips filled the band exactly - top border hard
+ * against the divider, bottom against the spectrum - and there is no
+ * amount of moving the TEXT inside a box that fixes a box with no
+ * slack in it. Two rows of air above the chips and one below.
  *
  * EVERYTHING HALVED, AND THE TRACE AND WATERFALL GOT THE PROCEEDS.
  *
@@ -61,14 +68,14 @@
 #define UI_STATUS_Y          34
 #endif
 #ifndef UI_STATUS_H
-#define UI_STATUS_H          16
+#define UI_STATUS_H          19
 #endif
 
 #ifndef SPC_Y
-#define SPC_Y                50
+#define SPC_Y                53
 #endif
 #ifndef SPC_H
-#define SPC_H               142
+#define SPC_H               139
 #endif
 #ifndef SPC_RULER_H
 #define SPC_RULER_H          16
@@ -172,7 +179,7 @@
 #define ST_CHIP_R           474     /* 794 -> same 6 px from the right */
 #define ST_CHIP_GAP           5
 #define ST_MOVIL_Y1           0
-#define ST_MOVIL_Y2          16
+#define ST_MOVIL_Y2          19
 
 /*
  * SIZED FOR THE TYPE, NOT SCALED FROM UPSTREAM.
@@ -195,23 +202,25 @@
  */
 
 /*
- * THE FREQUENCY READOUT, AND WHY THE HEADER IS 40 ROWS.
+ * THE FREQUENCY READOUT, AND WHY THE HEADER IS 34 ROWS.
  *
  * font_num_20 at 21 px made the primary readout of a receiver look
  * like a label. font_num_44 at 46 px does not fit a 320-row panel
  * alongside anything else. There was nothing in between, so
- * font_num_38 was generated with upstream's own tools/gen_assets.py -
+ * font_num_31 was generated with upstream's own tools/gen_assets.py -
  * a NEW file in this port's directory, with no upstream font touched.
  *
- * Its line box is 45 rows, which a 26-row header plainly cannot hold.
- * What makes 40 enough is that THE FACE IS DIGITS ONLY: its 9 rows of
- * descent are empty, so the glyphs live in the ascent and sit at rows
- * 8..36 when the line is placed at y = 0.
+ * Its LINE BOX is 37 rows, which a 26-row header plainly cannot hold.
+ * What makes 34 enough is that THE FACE IS DIGITS ONLY: ascent 29,
+ * descent 8, and those 8 rows are empty, so the glyphs live inside the
+ * ascent and the line can be placed at y = 0 without the box below it
+ * mattering. The underline of the tuning digit then sits at row 31,
+ * still inside the header.
  *
- * The 14 rows came out of the trace, which drops from 128 to 114.
- * That is the trade asked for, and it is the right way round: the
- * tuned frequency is the one thing on this screen that gets read at a
- * glance from across a room.
+ * The 8 rows came out of the trace, which drops from 128 to 120. That
+ * is the trade asked for, and it is the right way round: the tuned
+ * frequency is the one thing on this screen that gets read at a glance
+ * from across a room.
  */
 #define HDR_FREQ_Y            0
 #define HDR_UND_Y            31
@@ -231,15 +240,70 @@
                                      * wrong font for this one label. */
 #define HDR_CHIP_GAP         34     /* 6 de aire + el ancho de "kHz" + 8 */
 #define HDR_BAND_GAP          6
-#define HDR_CLK_W            60
-#define HDR_CLK_X    (GFX2_W - 64)
+/*
+ * THE CLOCK AND THE BATTERY SHARE A ROW, and that is new - 02/11/2026.
+ *
+ * Upstream stacks them: the clock at the top right and the battery
+ * directly under it, in a 64-row header. 34 rows cannot stack
+ * anything, so they go side by side instead, which is what the width
+ * is for.
+ *
+ * AND UNTIL TODAY THE BATTERY WAS SIMPLY NOT THERE. Its x was 790
+ * minus its own width, hard-coded for an 800 px panel, so on this one
+ * it was drawn at 740 and clipped away in silence - which is why it is
+ * missing from every render of this layout made before now. The
+ * constants that place it are new upstream and default to the old
+ * numbers; see HDR_BAT_* in ui_top.c.
+ *
+ * The widths are measured, not guessed. "23:41" in the face this port
+ * maps font_num_20 to is 29 px, so a 32 px box holds the worst case
+ * with room; the battery needs its number inside, "100%" in the 8 px
+ * face, which is 22 px plus 4 of border.
+ *
+ *     battery  409..438  + 3 px of nipple = 441
+ *     clock    446..477
+ *
+ * Five pixels between them and two to the edge. The MEM chip ends at
+ * 395, so there are 13 px of air on the other side as well.
+ */
+#define HDR_CLK_W            32
+#define HDR_CLK_X    (GFX2_W - 34)
+#define HDR_BAT_W            30
+#define HDR_BAT_H            14
+#define HDR_BAT_X           409
+#define HDR_BAT_Y            10
+/* 6 and not the derived 5: the box is 14 rows, and only an even nub
+ * can sit exactly in the middle of an even box. At 5 it lands one row
+ * low, which is visible on a pill this small - it is what the 20-row
+ * default gets for free and this one does not. */
+#define HDR_BAT_NIB_H         6
 
 /* --- status chips: NCO, ATT, BW, AGC and the knob pill.
  *     16 tall in a 16-row band, text centred: (16-14)/2 = 1 --- */
-#define STB_CHIP_Y            0
+/*
+ * ONE ROW LOWER THAN THE ARITHMETIC SAYS - 03/11/2026, read off the
+ * panel.
+ *
+ * font_ui_10 has a line box of 13 in a chip of 16, so centring gives
+ * (16 - 13) / 2 = 1.5, and integer division rounds it DOWN to 1: one
+ * row above the line box and two below. Every label in this band is
+ * capitals and digits with no descender, so the bottom row of that
+ * line box is always empty and the text reads high by a whole pixel.
+ *
+ * The half pixel has to go somewhere and it goes down, which is the
+ * side the eye measures from here. Not visible in the render at any
+ * sane zoom; plainly visible on the glass.
+ *
+ * STB_SU_Y moves the S-units text with them. It is a separate
+ * constant precisely so it can: it used to share STB_CHIP_Y with the
+ * knob pill, and the pill is exactly as tall as the band and cannot
+ * move at all.
+ */
+#define STB_CHIP_Y            2
 #define STB_CHIP_H           16
-#define STB_CHIP_PAD          3     /* font_ui_8: (16-10)/2 = 3 */
-#define STB_TXT_Y             3
+#define STB_CHIP_PAD          2     /* font_ui_10: (16-13)/2, rounded up */
+#define STB_TXT_Y             4
+#define STB_SU_Y              3     /* font_ui_11, line box 14 */
 
 /* Horizontal air halved. With the 8 px face the old 9/16/6 left the
  * chips looking stretched: far more space beside the text than above
@@ -248,11 +312,11 @@
 #define STB_CHIP_PADX         4
 #define STB_CHIP_W_PAD        8
 #define STB_CHIP_VGAP         3
-#define STB_DOT_Y             4
+#define STB_DOT_Y             6
 #define STB_DOT_D             8
 
 /* --- S-meter, a third narrower: the row has four chips to fit --- */
-#define STB_METER_Y           4
+#define STB_METER_Y           6
 #define STB_METER_H           8
 #define ST_BAR_X              6
 #define ST_BAR_W             48

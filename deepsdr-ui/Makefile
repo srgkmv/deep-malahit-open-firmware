@@ -138,15 +138,50 @@ MALAHIT_FONTS_COMMON = -Dfont_ui_18b=font_ui_11 \
                        -Dfont_ui_14=font_ui_11 \
                        -Dfont_num_20=font_ui_11
 
-MALAHIT_FONTS_TOP = -include font_num_31.h -include font_ui_8.h \
-                    -include font_ui_8b.h \
+#
+# 10 px Y NO 8, DESDE EL 03/11/2026 - lo decidio el panel, no el PNG.
+#
+# Con la de 8 las seis chapas caben de sobra y se leen bien en la
+# captura, a la distancia a la que se mira un monitor. En el cristal de
+# la radio se leen JUSTAS. Dos pixeles mas, que es lo que pidio quien
+# la estaba mirando.
+#
+# font_ui_8/8b siguen generadas y siguen en compat/: son la referencia
+# de hasta donde se puede apretar esta fila si algun dia hace falta
+# meter una chapa mas.
+#
+MALAHIT_FONTS_TOP = -include font_num_31.h -include font_ui_10.h \
+                    -include font_ui_10b.h \
                     -Dfont_num_44=font_num_31 \
                     -Dfont_ui_18b=font_ui_11 \
-                    -Dfont_ui_14b=font_ui_8b \
-                    -Dfont_ui_14=font_ui_8 \
+                    -Dfont_ui_14b=font_ui_10b \
+                    -Dfont_ui_14=font_ui_10 \
                     -Dfont_num_20=font_ui_11
 
-out/malahit_top.o: ../User/ui_top.c
+#
+# Y DEPENDE DE LAS CABECERAS DEL PUERTO, NO SOLO DE LOS .c - 03/11/2026.
+#
+# Este Makefile no lleva seguimiento de dependencias (-MMD), asi que
+# tocar malahit_layout.h NO rehacia nada: `make malahit` decia que todo
+# estaba al dia y volvia a soltar el PNG ANTERIOR. Costo una vuelta
+# entera creyendo que un cambio de geometria no habia hecho efecto
+# cuando lo que pasaba es que no se habia compilado.
+#
+# Y es el peor sitio posible para ese fallo. Todo el puerto se apoya en
+# que el PNG predice el panel; un PNG viejo que parece nuevo lo dice al
+# reves, y encima mandaria a buscar el problema a la radio.
+#
+# Se listan a mano porque son tres y no cambian. Lo que NO se puede es
+# dejarlas en $^ y pasarselas al compilador, que intentaria compilar un
+# .h: por eso el filter-out de abajo, el mismo truco que ya usa la
+# regla de out/bandas.
+#
+MALAHIT_HDRS = ../malahit/compat/malahit_layout.h \
+               ../malahit/compat/font_ui_10.h \
+               ../malahit/compat/font_ui_10b.h \
+               ../malahit/compat/font_num_31.h
+
+out/malahit_top.o: ../User/ui_top.c ../User/ui_top.h $(MALAHIT_HDRS)
 	@mkdir -p out
 	$(CC) $(CFLAGS) $(GFX2) $(MALAHIT_LAYOUT) $(MALAHIT_FONTS_TOP) -c -o $@ $<
 
@@ -156,10 +191,10 @@ out/malahit_fonts.o: gfx2/fonts_data.c
 
 out/malahit: sim/principal.c sim/lcd_sim.c ../User/gfx.c ../User/spectrum.c \
              gfx2/gfx2.c gfx2/spec_chrome.c gfx2/ui_act.c \
-             out/malahit_top.o out/malahit_fonts.o
+             out/malahit_top.o out/malahit_fonts.o $(MALAHIT_HDRS)
 	@mkdir -p out
 	$(CC) $(CFLAGS) $(GFX2) $(MALAHIT_LAYOUT) $(MALAHIT_FONTS_COMMON) \
-	      -o $@ $^ $(LDLIBS)
+	      -o $@ $(filter-out %.h,$^) $(LDLIBS)
 
 #
 # LA PRUEBA DE QUE UN CAMBIO EN User/ NO TOCA AL DEEPSDR.
