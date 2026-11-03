@@ -466,6 +466,49 @@ Each step should end with something visible on the radio.
      generated with upstream's own tool. It fits a 34-row header only
      because the face is digits-only and its descent is empty.
 
+   **And it is on the radio, 03/11/2026.** `ui_top.c`, `ui_act.c` and
+   `spec_chrome.c` are compiled in place alongside the rest, the
+   layout header is force-included into the firmware build exactly as
+   it is into the host render, and `main.c` fills the three state
+   structs from the receiver and draws. The trace sits inside the
+   layout, the waterfall scrolls in a 92 × 440 ring, and the whole
+   touch map answers: six action buttons, four status chips, the
+   frequency readout, the band pill, MEM and the clock, every one of
+   them confirmed under a finger on the glass.
+
+   Frame cost on the radio: trace 31 ms, waterfall 40 ms, DSP 0.6 ms,
+   about 7 fps. The waterfall is the expensive half — 92 × 440 pixels
+   is 121 kB of SPI per frame — and the answer to it is DMA, which is
+   the same conclusion the SAI reached.
+
+   **Three bugs that only hardware could find**, and all three are
+   worth the space because none of them could have come out of a PNG:
+
+   - **Three right-anchored coordinates in `ui_top` still assumed an
+     800 px panel** - the clock corner's clipped repaint window, the
+     clock's touch box, and the battery pill. The battery was being
+     drawn at x = 740 and clipped away in silence, so it was missing
+     from every render of this layout and looked like a design choice.
+     All three now hold their distance from `GFX2_W`; see
+     `PROCEDENCIA.md`.
+   - **Nothing cleared the panel.** `ili9488_init()` resets the ILI9488
+     and sends its init sequence but never touches GRAM, and no UI
+     module covers the whole screen, so the four gaps between the
+     modules showed uninitialised panel memory: dotted lines above and
+     below the trace and a bright stripe down the right of both the
+     spectrum and the waterfall. **One artefact crossing two modules
+     that share no drawing code is the tell** - it cannot be a bug in
+     either of them. The host render is structurally unable to show
+     this, because `sim/principal.c` clears the simulated panel first.
+     It is the first thing in this port the PNG could not predict.
+   - **A touch report sampled at 7 fps.** Everything above the action
+     bar reported hits to the console and showed nothing on the panel,
+     because that path waited for the FT6236's event code 0, "contact
+     down", which the controller sends exactly once per finger. At one
+     poll per 140 ms frame, a tap is usually only ever seen as event 2.
+     The six buttons worked throughout only because their branch never
+     looked at the event code. It is an edge detected here now.
+
    What remains of §3.1 is `main.c`'s 39 094 lines, which carry the
    screens this render does not: menus, the band list, the keypad, the
    FT8 map. Those are `ui_digi.c` and friends, already separate modules,

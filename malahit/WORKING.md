@@ -102,6 +102,54 @@ five separate bugs that each looked like something else:
 Every "the reset value is fine" is really "whatever the previous
 firmware left is fine". **Write the registers you depend on.**
 
+And it is not only registers. **A bus has state too**, and the one
+outside the chip cannot be written at all — see the next section.
+
+---
+
+## A failed transfer must leave the bus usable
+
+Three days of the touch panel working about half the time, and all
+three causes were the same mistake at different levels: **something
+was left half-finished and nobody ended it.**
+
+- **The I²C error paths ended the transfer for the master only.**
+  Every one of them cleared the sticky flags and returned, with no
+  STOP. `i2c3_write_read()` runs its write phase with `AUTOEND` off
+  on purpose — the bus has to be held for the repeated start — so a
+  failed read left the peripheral mid-transfer.
+- **A STOP was still not enough.** A slave caught mid-byte drives SDA
+  between clocks and lets go only when it has been clocked to the end
+  of that byte. So the abort path now issues the stop and, if SDA is
+  still low, clocks the bus free — nine pulses, one per bit plus the
+  acknowledge — and stops again.
+- **And the peripheral has to be reset before the pins are taken
+  back.** `PE = 0` must be held for at least three APB cycles or the
+  software reset does not take, and two back-to-back posted writes
+  from a 480 MHz core to a 120 MHz bus are not three cycles of
+  anything. Read `PE` back until it really is clear.
+
+The symptom is worth memorising because it points the wrong way:
+`i2c3_init()` reports a clean bus needing **zero** recovery clocks, and
+the diagnostic printed a moment later says `SDA=0` with a scan that
+finds nothing. Both measurements are true. They describe different
+instants, and the step between them — handing the pins to a peripheral
+that was never reset — was the one nobody was looking at.
+
+What made it reproducible was sampling the lines at every step of
+`init` and inside the identify loop, which turned "about half the
+time" into "reads one to four succeed, read five fails 45 ms into the
+part's wake-up, and SDA is low for the other 115". **The fix was
+obvious once the question was `which read`, and invisible while the
+question was `why sometimes`.**
+
+Note which change exposed it. Making `touch_init()` poll for the
+controller's ID instead of waiting a fixed 120 ms was itself a real
+fix — the FT6236 ACKs its address at once and answers `0x00` to CIPHER
+and VENDOR for ~200 ms more — and it turned one risky read into sixty,
+where the first failure poisoned the fifty-nine after it. A latent bug
+that costs nothing until something legitimate retries.
+
 ---
 
 ## The caches, and why the SECOND load used to fail
@@ -275,18 +323,27 @@ PLL. The first line of output now precedes everything that can hang.
 
 ---
 
-## State, 02/11/2026 — read this first
+## State, 03/11/2026 — read this first
 
 Steps 0 to 6 of `PORTING.md` §4 are done and verified on the radio, and
-step 7 — the graft of upstream code — is well under way. Everything
-below is committed; the working tree is clean.
+step 7 — the graft of upstream code — is well under way.
 
 ### What runs on the radio
 
 Clock tree at 480 MHz from the 22 MHz bypass oscillator, switched rail,
 UART7 console, crash reporting, ILI9488 at 18 bpp, FT6236 touch,
-NAU8822 codec with SAI1 as I²S master, MSi001 tuner, and a spectrum
-drawn by **upstream's own `spectrum.c`**.
+NAU8822 codec with SAI1 as I²S master, MSi001 tuner, and **the whole
+480 × 320 main screen drawn by upstream's own UI** — `ui_top.c` for the
+header and status band, `spec_chrome.c` for the gutter and ruler,
+`spectrum.c` for the trace, `ui_act.c` for the buttons, with a
+scrolling waterfall.
+
+Every touch target answers, confirmed under a finger: six action
+buttons, the AGC/ATT/NCO/JMP chips, the frequency readout, the band
+pill, MEM and the clock. Nothing is wired behind them yet, so the knob
+pill reports the last thing touched and says nothing changed.
+
+Frame cost: trace 31 ms, waterfall 40 ms, DSP 0.6 ms, about 7 fps.
 
 With a generator at 10.000 MHz on the bench: tuning error 0 Hz, the
 peak lands in the bin the arithmetic predicts, image rejection 30 dB
@@ -311,28 +368,25 @@ configurable and literals made named — all recorded in
 
 ### THE NEXT THING TO DO
 
-**Put the 480 × 320 UI on the panel.** The layout is finished and
-verified, but *only on the PC*: `make malahit` in `deepsdr-ui/` renders
-the whole main screen and it is right, while the firmware still draws
-the spectrum directly and never calls `ui_top.c` or `ui_act.c`.
+**The mixer DC offset, and then AM.** The screen is done; what is on it
+is still mostly a spectrum with no receiver behind it.
 
-So: add `../../User/ui_top.c` and `../../User/ui_act.c` to
-`UPSTREAM_SOURCES` in `bringup/reglas.mk`, force-include
-`malahit_layout.h` and the font remap the way `deepsdr-ui/Makefile`
-already does, and call `ui_top_draw()` / `ui_act_draw()` from `main.c`.
+The DC offset is the worst number on the board — −7.7 dBFS with the
+preamp on, 15 dB *above* the wanted carrier and 8 dB from clipping the
+ADC — so most of the converter's range is spent on the receiver's own
+error. `BOARD.md` §6 has the `DCCAL` options. It comes before AM audio
+rather than after it, because every measurement taken afterwards would
+have to be retaken.
 
-Two things that will bite:
+Two smaller things are worth doing while the screen is fresh:
 
-- **`ui_top.c` needs its own font remap**, different from everything
-  else: `font_ui_14`/`font_ui_14b` → `font_ui_8`/`font_ui_8b` so six
-  status chips fit a 480 px row, while the ruler and the buttons stay
-  at 11. The remap is per translation unit, so `ui_top.c` must be
-  compiled by a rule of its own — `deepsdr-ui/Makefile` has the
-  pattern, including why `fonts_data.c` must *not* get the remap.
-- **`main.c` will have to supply more seams.** `g_pal` was one;
-  `ui_top_state_t` and `ui_act_state_t` have to be filled from real
-  receiver state, and upstream fills them in its own 39 094-line
-  `main.c`, which is not coming.
+- **SAI on DMA.** It is polled, the transmit FIFO is 83 µs deep, and
+  the waterfall blit alone is 40 ms — so the panel and the audio
+  cannot coexist until the SAI stops needing the CPU on time. This is
+  also what buys a frame rate above 7 fps.
+- **An encoder driver.** Two encoders on PC0/PC1 and PC2/PC3, both
+  unused. The knob pill already has a place to say what the knob is
+  doing, and currently says "sin mando".
 
 After that: the other screens — menus, band list, keypad, FT8 map —
 live in `ui_digi.c` (1817 lines) and `ui_kbd.c`, already separate
@@ -340,11 +394,6 @@ modules, and the same host harness renders them.
 
 ### Still open
 
-- **The mixer DC offset is the worst number on the board**: −7.7 dBFS
-  with the preamp on, which is 15 dB *above* the wanted carrier and
-  8 dB from clipping the ADC. Most of the converter's range is spent
-  on the receiver's own error. `BOARD.md` §6 has the `DCCAL` options;
-  this is the first thing to attack before AM audio.
 - **`demod_am.c` is step 8, not step 7.** The file is portable, but its
   transitive closure is 106 `.c` files and 72 126 lines, and upstream
   has no switch to leave modes out. It wants the display layer in place
@@ -352,6 +401,12 @@ modules, and the same host harness renders them.
 - **SAI runs polled, not DMA.** The transmit FIFO is 83 µs deep, so any
   blocking console write is an audible gap — one click per printed
   line, measured. That, and not CPU load, is what makes DMA necessary.
+- **The battery pill is new and unreviewed.** It had never appeared on
+  this layout — drawn off-screen and clipped away, see `PROCEDENCIA.md`
+  — so it was placed beside the clock without anyone having had the
+  chance to dislike it. Four constants in `compat/malahit_layout.h`
+  (`HDR_BAT_*`) move it, and it reads 0 % until something is written
+  for the ADC on PA0.
 
 ### The bench, as it stands
 
@@ -370,6 +425,17 @@ modules, and the same host harness renders them.
 
   Holding the port open on a spare fd and reading from that instead
   produced nothing at all; do not be clever here.
+
+- **ONE reader. Not two.** Two `cat`s on the same port each get a
+  random share of the bytes, and the log looks exactly like a baud
+  rate error — readable words with characters missing — which sends
+  you to `stty` and the cable. It happens by leaving a long capture
+  running and starting another; `swd.sh` will happily reload
+  underneath it. `pkill -f "cat /dev/ttyUSB0"` is not the answer
+  either: that pattern matches the shell running it, so it kills
+  itself. Anchor it (`-f '^timeout [0-9]+ cat /dev/ttyUSB0$'`,
+  `-x -f 'cat /dev/ttyUSB0'`) or keep the loader in a script that
+  does it once and correctly.
 
 ### Regression checks to run before committing anything in `User/`
 

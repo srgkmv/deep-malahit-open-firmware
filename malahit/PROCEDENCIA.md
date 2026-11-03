@@ -51,6 +51,19 @@ divergence is never a surprise:
   thirty-five numeric offsets inside the drawing functions replaced by
   named constants derived from the band heights, each written so that
   the old value falls out at the old band height.
+- `User/ui_top.h`, `User/ui_top.c` — **three right-anchored coordinates
+  that still assumed an 800 px panel**, found when the screen was first
+  put on the radio rather than only rendered:
+  `UI_TOP_HORA_RW` was `800 - UI_TOP_HORA_RX`, so the clock corner's
+  clipped repaint asked for a window reaching x = 799 on a 480 px
+  panel; the clock's touch box was the literal `640 + 150` although the
+  two constants it is made of had already been parameterised; and the
+  battery pill was placed at `790 - w - 2`, which on this panel put it
+  at x = 740 where `gfx2` clipped it away entirely — present in the
+  code, absent from the screen, and absent from every render of this
+  layout made before now. All three now keep their distance from
+  `GFX2_W`, and the battery's four numbers became `HDR_BAT_*`. At 800
+  px wide every one of them produces the number it produced before.
 
 All of them are generic: a constant becoming configurable, or a literal
 becoming a named expression. None adds anything Malahit-specific, and
