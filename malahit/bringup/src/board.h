@@ -86,6 +86,26 @@ const char *board_reset_cause(void);
 
 /* Milliseconds since board_power_on(). Driven by SysTick. */
 uint32_t board_millis(void);
+
+/*
+ * The main loop stamps itself alive; anyone can ask how long ago.
+ * SysTick feeds the watchdog on this board - see board.c for why that
+ * is the right trade here - so a stalled loop shows up as this number
+ * growing rather than as a radio that has switched itself off.
+ */
+void     board_loop_alive(void);
+uint32_t board_loop_stale_ms(void);
+
+/*
+ * Start or stop sampling the rotary encoder from SysTick, which runs at
+ * 1 kHz and is where upstream's encoder_tick() asks to be called.
+ *
+ * Off until encoder_init() has configured the pins: before that, the
+ * tick samples a pin in its reset state and feeds whatever it reads into
+ * the quadrature accumulator, so the first real turn of the knob arrives
+ * with company. See the comment in board.c.
+ */
+void board_encoder_sampling(int on);
 void     board_delay_ms(uint32_t ms);
 
 /*

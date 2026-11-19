@@ -328,9 +328,27 @@ g_pfnVectors:
     .word PendSV_Handler
     .word SysTick_Handler
 
-    /* External interrupts 0..149. Only the ones this project actually
-     * uses are named; the rest are filled in as they are needed. */
-    .rept 150
+    /*
+     * External interrupts 0..149. Only the ones this project actually
+     * uses are named; the rest are filled in as they are needed.
+     *
+     * THE FIRST ONE EVER NAMED HERE IS NUMBER 11, DMA1_Stream0, and it
+     * is the receive block interrupt that makes audio possible: the
+     * demodulator has to run at block rate, and nothing else in this
+     * firmware runs at block rate. Until this line the project got by
+     * without a single external vector, which is why encoder.c was
+     * grafted onto the existing SysTick rather than given one.
+     *
+     * The counts are written as arithmetic rather than as two magic
+     * numbers, so that naming the next one cannot silently shift
+     * everything after it - a vector table off by one entry is a jump
+     * into whatever follows, with no diagnostic at all.
+     */
+    .rept 11                        /* 0..10 */
+    .word Default_Handler
+    .endr
+    .word DMA1_Stream0_IRQHandler   /* 11 - SAI1_B receive, the block hook */
+    .rept 150 - 11 - 1              /* 12..149 */
     .word Default_Handler
     .endr
 
@@ -355,3 +373,7 @@ g_pfnVectors:
     weak_handler DebugMon_Handler
     weak_handler PendSV_Handler
     weak_handler SysTick_Handler
+
+    /* Weak, like the rest: a build without sai1.c still links, and the
+     * slot points at Default_Handler, which reports rather than hangs. */
+    weak_handler DMA1_Stream0_IRQHandler

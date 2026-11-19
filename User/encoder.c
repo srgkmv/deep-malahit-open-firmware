@@ -2,12 +2,53 @@
 #include "gd32f4xx.h"
 #include "debug_uart.h"
 
+/*
+ * WHICH PINS, AND WHY THEY ARE OVERRIDABLE - 05/11/2026.
+ *
+ * These were six fixed defines, which is right for one board and wrong
+ * for two. The Malahit DSP-1 port (malahit/) wires the same encoder to
+ * PC0/PC1 with its button on PA1, and it compiles THIS FILE rather than
+ * a copy of it, so the three pins arrive from its build instead. With no
+ * -D the DEEPSDR 101 gets exactly what it always got.
+ */
+#ifndef ENC_A_PORT
 #define ENC_A_PORT   GPIOD
+#endif
+#ifndef ENC_A_PIN
 #define ENC_A_PIN    GPIO_PIN_13
+#endif
+#ifndef ENC_B_PORT
 #define ENC_B_PORT   GPIOD
+#endif
+#ifndef ENC_B_PIN
 #define ENC_B_PIN    GPIO_PIN_12
+#endif
+#ifndef ENC_BTN_PORT
 #define ENC_BTN_PORT GPIOC
+#endif
+#ifndef ENC_BTN_PIN
 #define ENC_BTN_PIN  GPIO_PIN_9
+#endif
+
+/*
+ * WHICH WAY THE BUTTON GOES, which is a property of the board and not of
+ * the decoder.
+ *
+ * On the DEEPSDR 101 the button drives Vcc when pressed and rests at 0 V,
+ * so pressed = SET and the line wants an internal pull-DOWN - the
+ * opposite of the A/B channels, and surprising enough that encoder.h
+ * says so twice. A board whose switch goes to ground instead sets
+ * ENC_BTN_PRESSED to 0 and gets a pull-up, and nothing else in this file
+ * changes: the debounce integrator, the hold timer and the short/long
+ * classification are all written in terms of "the debounced state is a
+ * press", not in terms of a voltage.
+ */
+#ifndef ENC_BTN_PRESSED
+#define ENC_BTN_PRESSED  1
+#endif
+
+#define ENC_BTN_PUPD     (ENC_BTN_PRESSED ? GPIO_PUPD_PULLDOWN \
+                                          : GPIO_PUPD_PULLUP)
 
 /* Confirmed inverted on real hardware, 31/07/2026: tuning went
  * backwards with ENCODER_DIRECTION=1 (i.e. A leading B is actually
@@ -62,7 +103,7 @@ static volatile uint8_t s_presses   = 0; /* pending debounced SHORT presses */
 static volatile uint8_t s_long_presses = 0; /* pending debounced LONG presses */
 static uint8_t          s_ab_prev   = 0; /* last sampled (A<<1)|B     */
 static uint8_t          s_btn_integ = 0; /* debounce integrator, ms   */
-static uint8_t          s_btn_state = 0; /* debounced level, 0 = idle (button is active HIGH) */
+static uint8_t          s_btn_state = 0; /* debounced press, 0 = idle, 1 = pressed */
 static uint16_t         s_btn_held_ms = 0; /* ms held since the current debounced press started; only meaningful while s_btn_state==1 */
 /*
  * 1 = la pulsacion que hay en curso YA se ha usado para otra cosa (girar
@@ -86,6 +127,46 @@ static uint8_t ab_read(void)
     return (uint8_t)((a << 1) | b);
 }
 
+/*
+ * WHEN THE BUTTON IS NOT A PIN AT ALL - 05/11/2026.
+ *
+ * ENC_BTN_READ names a function the board provides, and if it is defined
+ * that function is the whole of the reading: no port, no pin, no pull.
+ * The Malahit DSP-1 is why - both of its encoder buttons sit on ONE
+ * analog line through a resistor ladder, so one of the two presses puts
+ * it at 1.95 V, which on a 3.3 V input is neither a low nor a high. No
+ * pull and no polarity can rescue that; it takes the ADC and a
+ * comparison against two thresholds.
+ *
+ * Everything below this line stays exactly as it was, which is the
+ * reason for doing it here rather than in the board's own code: the
+ * debounce integrator, the hold timer, the short/long classification on
+ * release and the "pressed and turned" consumption are all written in
+ * terms of "the debounced state is a press". None of them cares where
+ * the press came from, and a board that reads its button differently
+ * should not need a second copy of any of it.
+ *
+ * With no -D the DEEPSDR 101 compiles the GPIO reader below, unchanged.
+ */
+#ifdef ENC_BTN_READ
+extern uint8_t ENC_BTN_READ(void);
+
+static uint8_t btn_read(void)
+{
+    return ENC_BTN_READ() ? 1U : 0U;
+}
+#else
+/* 1 = pressed, whichever voltage that is on this board. Everything below
+ * is written in terms of this and not of a level - see ENC_BTN_PRESSED. */
+static uint8_t btn_read(void)
+{
+    uint8_t lvl = (gpio_input_bit_get(ENC_BTN_PORT, ENC_BTN_PIN) == SET)
+                      ? 1U : 0U;
+
+    return (lvl == (uint8_t)ENC_BTN_PRESSED) ? 1U : 0U;
+}
+#endif
+
 void encoder_init(void)
 {
     rcu_periph_clock_enable(RCU_GPIOC);
@@ -93,15 +174,25 @@ void encoder_init(void)
 
     gpio_mode_set(ENC_A_PORT, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, ENC_A_PIN);
     gpio_mode_set(ENC_B_PORT, GPIO_MODE_INPUT, GPIO_PUPD_PULLUP, ENC_B_PIN);
-    /* Button drives Vcc when pressed and reads 0V at rest: internal
-     * pull-down keeps the line firmly low while idle. */
-    gpio_mode_set(ENC_BTN_PORT, GPIO_MODE_INPUT, GPIO_PUPD_PULLDOWN, ENC_BTN_PIN);
+#ifndef ENC_BTN_READ
+    /* The button's pull is the one that holds it at its IDLE level, which
+     * depends on which rail the switch goes to - see ENC_BTN_PRESSED.
+     *
+     * NOT TOUCHED when the board reads its button some other way, and
+     * this guard is not tidiness. ENC_BTN_PORT and ENC_BTN_PIN still
+     * have their defaults, so without it this line would configure
+     * whatever pin those happen to name - on the Malahit that is PC9,
+     * which carries the touch controller's I2C data, and a pull-up
+     * written onto a bus by an encoder driver is a fault nobody would
+     * look for here. */
+    gpio_mode_set(ENC_BTN_PORT, GPIO_MODE_INPUT, ENC_BTN_PUPD, ENC_BTN_PIN);
+#endif
 
     s_ab_prev = ab_read();
-    s_btn_state = (gpio_input_bit_get(ENC_BTN_PORT, ENC_BTN_PIN) == SET) ? 1U : 0U;
+    s_btn_state = btn_read();
     s_btn_integ = 0;
 
-    debug_print("encoder: PD13(A)/PD12(B)/PC0(btn) configured\n");
+    debug_print("encoder: A/B and button configured\n");
     debug_print_dec("encoder: initial AB state", s_ab_prev);
     debug_print_dec("encoder: initial button level (0=idle)", s_btn_state);
 }
@@ -130,7 +221,7 @@ void encoder_tick(void)
      * (saturating rather than wrapping on an implausibly long hold);
      * on the debounced release it's compared against
      * BTN_LONG_PRESS_MS to decide which counter to bump. */
-    btn_raw = (gpio_input_bit_get(ENC_BTN_PORT, ENC_BTN_PIN) == SET) ? 1U : 0U;
+    btn_raw = btn_read();
     if (btn_raw == s_btn_state) {
         s_btn_integ = 0;
         if (s_btn_state == 1U && s_btn_held_ms < 0xFFFFU) {
@@ -141,7 +232,7 @@ void encoder_tick(void)
         if (s_btn_integ >= BTN_DEBOUNCE_MS) {
             s_btn_state = btn_raw;
             s_btn_integ = 0;
-            if (s_btn_state == 1U) { /* active high: 0->1 = press started */
+            if (s_btn_state == 1U) { /* 0->1 = a press started */
                 s_btn_held_ms = 0;
                 s_btn_consumed = 0U; /* pulsacion nueva, aun sin usar */
             } else { /* 1->0 = released - classify now that the hold time is known */

@@ -1,3 +1,5 @@
+#include <stddef.h>
+
 #include "stm32h7xx.h"
 #include "msi001.h"
 #include "board.h"
@@ -302,7 +304,7 @@ static uint32_t reg0_build(msi_band_t band, int port2)
 }
 
 static uint32_t reg1_build(uint8_t bb_gr, int lna_gr, int mix_gr,
-                           uint8_t mixbu, uint32_t dccal)
+                           uint8_t mixbu, uint32_t dccal, int speedup)
 {
     uint32_t v = 0;
 
@@ -313,36 +315,113 @@ static uint32_t reg1_build(uint8_t bb_gr, int lna_gr, int mix_gr,
     if (mix_gr) { v |= (1UL << 12); }
     if (lna_gr) { v |= (1UL << 13); }
     v |= (dccal & 0x7U) << 14;
+    if (speedup) { v |= (1UL << 17); }
 
     return v >> 4;
 }
 
 /*
- * DC offset calibration mode.
+ * DC offset calibration mode, held here because every write of register
+ * 1 has to carry it and register 1 is written for several other reasons.
  *
- * 000 is "static": calibrate once, on power-up and on every
- * synthesiser programming, then hold. That is the right default for a
- * receiver and not the obvious one.
+ * PERIODIC1, AND THIS WAS MEASURED RATHER THAN REASONED.
  *
- * The alternatives all keep correcting while the receiver is listening,
- * and each correction digs a spectral hole at DC - which on a
- * zero-IF receiver is the middle of the passband, the tuned frequency
- * itself. Continuous mode keeps that hole open permanently. Static mode
- * puts the correction exactly where it belongs: at the moment of
- * retuning, when the receiver is not being listened to anyway, and
- * never again until the next retune.
+ * This driver used to write STATIC, on the argument that the tracking
+ * modes dig a spectral hole at DC - which on a zero-IF receiver is the
+ * tuned frequency itself - and that static therefore "calibrates once
+ * and holds". The argument was wrong at its first step. The datasheet
+ * defines static as "No DC tracking": it does not calibrate, it holds
+ * whatever the last calibration left, and selecting it is how you
+ * switch the trim off.
  *
- * The cost is drift, since the hold circuit leaks. If that turns out to
- * matter, the periodic modes and register 6's timers are the answer -
- * but they should be a measured response to drift, not a precaution.
+ * The part arrives with DCCAL = 101, continuous, and the measurement in
+ * main.c's test 8 is blunt about what happened next. In millivolts at
+ * the codec's input, at 0 dB of baseband gain reduction - the setting a
+ * receiver uses when it is being sensitive:
+ *
+ *     tuner untouched, still at its reset default   29 and -138 mV
+ *     after this driver wrote STATIC              1122 and  -778 mV
+ *     periodic1, reset timers                        69 and   -13 mV
+ *     continuous                                     73 and   -16 mV
+ *     continuous + SPEEDUP                           33 and   -13 mV
+ *
+ * AND THE STATIC ROW DOES NOT REPEAT, which is the actual diagnosis.
+ * Four runs of identical code gave +2.4, +0.3, -17.6 and -22.6 dBFS -
+ * a 25 dB spread, from a railed converter (1410 mV is the rail) to
+ * something tolerable. Static holds whatever the trim was left holding,
+ * so the result depends on the history of the part and there is no
+ * value to measure. periodic1 gave -25.5, -26.1, -25.8 and -25.1 dBFS
+ * over the same four runs.
+ *
+ * Every level measured through a saturated ADC was a measurement of
+ * nothing, which is why step 5's image rejection came out as -4.8 dB on
+ * the run that found this.
+ *
+ * PERIODIC1 COSTS ALMOST NOTHING AND IS NOT A COMPROMISE. With register
+ * 6's reset timers it tracks for 2.5 us every 5.12 ms - a hole 0.05 %
+ * of the time - and it measured the same offset as continuous to within
+ * a millivolt and the same AC noise to within 0.4 %. The original worry
+ * about a permanent hole at the tuned frequency was the right worry; it
+ * just has a cheaper answer than switching the trim off.
+ *
+ * Static still has one use, and it is a real one: above about 20 dB of
+ * baseband gain reduction the offset is small enough that a calibration
+ * burst followed by a hold measured -4.4 and -6.2 mV, which beats
+ * continuous by a factor of twelve and beats the datasheet's own
+ * speed-up figure. A receiver that knows it is not at full gain can
+ * have that. It is not the default because the default has to be safe
+ * at full gain.
  */
-#define MSI_DCCAL_STATIC    0U
+static uint32_t s_dccal   = MSI_DCCAL_PERIODIC1;
+static int      s_speedup = 0;
+
+/* Register 6's reset values, carried so that a periodic mode can be
+ * reported in microseconds without reading a write-only register. */
+static uint32_t s_dctrk   = 1U;
+static uint32_t s_dcrate  = 2048U;
+
+/*
+ * Whether a gain change drags a calibration burst behind it. On by
+ * default because a gain change invalidates the held calibration and
+ * the caller should not have to know that.
+ *
+ * Off is for two callers. A measurement that wants to see the offset
+ * WITHOUT the recalibration - which is the only way to show what the
+ * recalibration is worth - and an AGC, which steps the gain far too
+ * often to pay two milliseconds and a DC transient each time; that one
+ * wants to recalibrate when the gain has settled, not at every step.
+ */
+static int      s_dc_auto = 1;
+
+/*
+ * A calibration burst, but only when the selected mode would not get
+ * there by itself.
+ *
+ * In a tracking mode the burst is measurably pointless: periodic1
+ * reached 69 mV on its own and 73 mV after a burst, which is the same
+ * number twice, and the next refresh is never more than 5.12 ms away.
+ * It is not free either - two blocking milliseconds, and the speed-up
+ * bit measured six times the AC noise while it is on - so a gain change
+ * should not drag one behind it for nothing.
+ *
+ * In static mode it is the only thing that calibrates at all.
+ */
+static void dc_recal_if_held(void)
+{
+    if (s_dccal == MSI_DCCAL_STATIC) { msi001_dc_recal(2U); }
+}
 
 static uint8_t s_bb_gr   = 0;
 static int     s_lna_gr  = 0;
 static int     s_mix_gr  = 0;
 static uint8_t s_mixbu   = 0;
 static int     s_port2   = 1;
+
+static void write_gain(void)
+{
+    msi001_write(MSI_REG_GAIN, reg1_build(s_bb_gr, s_lna_gr, s_mix_gr,
+                                          s_mixbu, s_dccal, s_speedup));
+}
 
 static void write_synth(const msi_plan_t *p)
 {
@@ -387,8 +466,7 @@ int msi001_tune(uint32_t freq_hz, msi_band_t band)
 
     write_synth(&p);        /* 5, 2, 3 - see below for why 3 is here */
 
-    msi001_write(MSI_REG_GAIN, reg1_build(s_bb_gr, s_lna_gr, s_mix_gr,
-                                          s_mixbu, MSI_DCCAL_STATIC));
+    write_gain();
 
     /* Register 6 keeps its reset timers: with static DC calibration
      * they are never used, and writing invented values would only make
@@ -411,6 +489,20 @@ int msi001_tune(uint32_t freq_hz, msi_band_t band)
      */
     board_delay_ms(2);
 
+    /*
+     * AND NOW CALIBRATE THE DC OFFSET, because the flow above did not.
+     *
+     * Figure 5's order writes register 2 - the calibration trigger -
+     * before register 1, which carries the baseband gain. So following
+     * the datasheet's own power-up flow literally calibrates the offset
+     * for the gain the part had on the previous line, and section 5.4
+     * says in as many words that the offset changes with the gain.
+     *
+     * Two milliseconds here, once, against an offset that measured both
+     * rails before this line existed.
+     */
+    dc_recal_if_held();
+
     return MSI_OK;
 }
 
@@ -424,6 +516,17 @@ int msi001_retune(uint32_t freq_hz)
     write_synth(&p);
     s_plan = p;
     board_delay_ms(2);
+
+    /*
+     * A retune is a calibration trigger in its own right - every
+     * baseband spec in the datasheet is footnoted "after calibration
+     * which takes place on chip power up or synthesizer programming" -
+     * but it triggers whatever mode register 1 currently selects, and
+     * in static mode that is no tracking at all. So the burst is
+     * explicit here too, and it is free: nobody is listening to a
+     * receiver mid-retune.
+     */
+    dc_recal_if_held();
 
     return MSI_OK;
 }
@@ -440,8 +543,103 @@ void msi001_set_gain(uint8_t bb_gr, int lna_gr, int mix_gr, uint8_t mixbu)
     s_mix_gr = mix_gr;
     s_mixbu  = mixbu;
 
-    msi001_write(MSI_REG_GAIN, reg1_build(bb_gr, lna_gr, mix_gr, mixbu,
-                                          MSI_DCCAL_STATIC));
+    write_gain();
+
+    /*
+     * THE CALIBRATION IS ONLY VALID FOR THE GAIN IT WAS TAKEN AT.
+     * Datasheet section 5.4: "as ... the baseband gain settings changes
+     * then the effective DC offset will also change". Before this call
+     * existed the gain moved and the held calibration did not, so the
+     * offset the part had been trimmed for was the one it no longer had.
+     *
+     * It is here and not left to the caller because every caller would
+     * have to remember, and the one that forgot would produce a number
+     * that looks like a measurement of the hardware.
+     */
+    if (s_dc_auto) { dc_recal_if_held(); }
+}
+
+/* ------------------------------------------------------------------ */
+/* DC offset calibration                                              */
+/* ------------------------------------------------------------------ */
+
+void msi001_set_dccal(uint32_t mode, int speedup)
+{
+    s_dccal   = mode & 0x7U;
+    s_speedup = speedup ? 1 : 0;
+    write_gain();
+}
+
+uint32_t msi001_dccal_mode(void)    { return s_dccal; }
+int      msi001_dccal_speedup(void) { return s_speedup; }
+
+void msi001_set_dc_auto(int on)     { s_dc_auto = on ? 1 : 0; }
+int  msi001_dc_auto(void)           { return s_dc_auto; }
+
+void msi001_dc_recal(uint32_t settle_ms)
+{
+    uint32_t mode    = s_dccal;
+    int      speedup = s_speedup;
+
+    /*
+     * Converge, then hold. Continuous because it is the only mode that
+     * tracks without being re-armed, and the speed-up bit because it
+     * widens the high-pass corner so the loop reaches the bottom in the
+     * time available - the same bit the datasheet says must not be left
+     * on while anyone is listening, which is why this is a burst and
+     * not a setting.
+     */
+    msi001_set_dccal(MSI_DCCAL_CONTINUOUS, 1);
+    board_delay_ms(settle_ms ? settle_ms : 1U);
+
+    /* Back to the configured mode, which drops the speed-up bit and,
+     * in static mode, freezes what the burst just found. */
+    msi001_set_dccal(mode, speedup);
+}
+
+void msi001_set_dc_timers(uint32_t track, uint32_t rate)
+{
+    uint32_t r6;
+
+    if (track < 1U)    { track = 1U; }
+    if (track > 63U)   { track = 63U; }
+    if (rate  > 4095U) { rate  = 4095U; }
+    /* "Value must be greater than DCTRK_TIM" - table 20's own note. A
+     * refresh period shorter than the tracking window is a continuous
+     * mode with extra steps, and the part is not specified for it. */
+    if (rate <= track) { rate = track + 1U; }
+
+    s_dctrk  = track;
+    s_dcrate = rate;
+
+    r6 = ((track & 0x3FU)  << 4)
+       | ((rate  & 0xFFFU) << 10);
+
+    msi001_write(MSI_REG_DCCAL, r6 >> 4);
+}
+
+void msi001_dc_timing_ns(uint32_t *period_ns, uint32_t *track_ns)
+{
+    /*
+     * One tick is N/fref, which is 55/22 MHz = 2.5 us exactly on this
+     * board - and that half microsecond is why this returns nanoseconds.
+     * The first version returned microseconds and reported the reset
+     * tracking window as "2 us", which is 20 % short of the truth and
+     * reads like a measurement.
+     *
+     * MODE is 1, 2 or 3 for the three periodic modes and multiplies the
+     * refresh period only - table 20 gives the tracking time with no
+     * MODE factor at all. The longest anything here reaches is
+     * 3 x 4095 x 2.5 us = 30.7 ms, which is 30 712 500 ns and well
+     * inside 32 bits.
+     */
+    uint32_t mode = (s_dccal >= MSI_DCCAL_PERIODIC1
+                     && s_dccal <= MSI_DCCAL_PERIODIC3) ? s_dccal : 0U;
+
+    if (track_ns  != NULL) { *track_ns  = s_dctrk * 2500U; }
+    if (period_ns != NULL) {
+        *period_ns = mode ? (mode * s_dcrate * 2500U) : 0U;
+    }
 }
 
 void msi001_set_am_port(int port2)
@@ -450,6 +648,14 @@ void msi001_set_am_port(int port2)
 
     if (s_plan.ok) {
         msi001_write(MSI_REG_MODE, reg0_build(s_plan.band, port2));
+
+        /* The port select changes which mixer the signal arrives
+         * through, and MIXBU's gain table changes meaning with it (table
+         * 28: the same two bits mean 0/6/12/18 dB on port 1 and 0 or
+         * 24 dB on port 2). A different gain through a different mixer
+         * is a different offset, so the held calibration is stale for
+         * the same reason a gain change makes it stale. */
+        if (s_dc_auto) { dc_recal_if_held(); }
     }
 }
 

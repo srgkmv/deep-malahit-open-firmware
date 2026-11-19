@@ -1,17 +1,107 @@
 #include "stm32h7xx.h"
 #include "board.h"
 #include "clock.h"
+#include "encoder.h"        /* ../../User/encoder.c, compiled in place */
+#include "enc2.h"           /* the same file again, for the second knob */
+#include "adc.h"
 
 static volatile uint32_t s_millis;
+
+/*
+ * WHO ELSE RUNS AT 1 kHz.
+ *
+ * Upstream's encoder driver asks to be sampled at 1 kHz from
+ * SysTick_Handler, in those words, and this board already had exactly
+ * that - so the graft needed no new interrupt, no priority decision and,
+ * most to the point, no named vector: startup_stm32h743.S has a name for
+ * none of the 150 external interrupts, and adding one is a change to the
+ * file that every fault handler lives in. Sampling here instead costs
+ * three GPIO reads and a table lookup a millisecond.
+ *
+ * THE FLAG IS NOT TIMIDITY. SysTick starts in board_power_on(), which is
+ * the second thing main() does; encoder_init() cannot run until the pins
+ * are configured, which is later. Ticking before that samples a pin
+ * still in its reset state - analog, reading zero - and every transition
+ * it then invents lands in the quadrature accumulator, so the first turn
+ * of the knob would be reported as a turn plus whatever the first
+ * milliseconds of the program made up. Three lines to make the start
+ * explicit instead.
+ */
+static volatile uint8_t s_encoder_live;
 
 void SysTick_Handler(void)
 {
     s_millis++;
+
+    /*
+     * THE ADC GOES FIRST, and only because of what reads it second:
+     * encoder_tick() asks this board whether the button is down, and on
+     * this board that answer comes from the converter rather than from a
+     * pin. One millisecond of staleness would not matter against a 20 ms
+     * debounce - this is about keeping the order of the two obvious to
+     * the next reader, not about the delay.
+     *
+     * Neither call is a wait. adc_tick() starts a conversion and
+     * collects the previous one, so the cost here is a handful of
+     * register accesses; see its own comment for why it can never spin.
+     * Its gate lives inside it, which is why there is no flag for it
+     * here.
+     */
+    /*
+     * THE WATCHDOG IS FED FROM HERE, AND THAT IS A JUDGEMENT ABOUT THIS
+     * BOARD RATHER THAN A SHORTCUT.
+     *
+     * A watchdog exists to recover from a hang. On this radio it does
+     * not recover: the reset returns PC6 to an input, R38 pulls the
+     * peripheral rail down, and the radio SWITCHES ITSELF OFF - it has
+     * to be turned back on by hand, and from the bench it looks like a
+     * hardware fault. That is not recovery, it is a second failure on
+     * top of the first.
+     *
+     * So the tick feeds it. A stall in the main loop no longer kills
+     * the radio; instead s_loop_ms below says how long the loop has
+     * been away, which is a number somebody can read. The watchdog
+     * still protects against what it can actually protect against here:
+     * if SysTick itself stops, nothing feeds it and the part resets.
+     */
+    board_watchdog_feed();
+
+    adc_tick();
+
+    if (s_encoder_live) {
+        encoder_tick();
+        encoder2_tick();
+    }
+}
+
+void board_encoder_sampling(int on)
+{
+    s_encoder_live = (uint8_t)(on ? 1 : 0);
 }
 
 uint32_t board_millis(void)
 {
     return s_millis;
+}
+
+/*
+ * HOW LONG SINCE THE MAIN LOOP LAST SAID IT WAS ALIVE.
+ *
+ * Now that the tick feeds the watchdog, a main loop that stops no
+ * longer announces itself by switching the radio off. It has to
+ * announce itself some other way, and this is it: the loop stamps its
+ * own time, and anyone can ask how stale that stamp is.
+ */
+static volatile uint32_t s_loop_ms;
+
+void board_loop_alive(void)
+{
+    s_loop_ms = s_millis;
+}
+
+uint32_t board_loop_stale_ms(void)
+{
+    return s_millis - s_loop_ms;
 }
 
 void board_delay_ms(uint32_t ms)

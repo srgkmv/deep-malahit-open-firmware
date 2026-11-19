@@ -267,9 +267,10 @@ Each step should end with something visible on the radio.
    a step that is about DMA together with the MPU regions that make it
    safe, rather than smuggled into the step that is about the codec. At
    192 kHz a frame is 2500 CPU cycles and four words, so polling is
-   nowhere near the limit — but the transmit FIFO is 83 µs deep, which
-   means any blocking console write is an audible gap. That, and not CPU
-   load, is what makes DMA necessary next.
+   nowhere near the limit — but the transmit FIFO is 21 µs deep at that
+   rate, which means any blocking console write is an audible gap. That,
+   and not CPU load, is what makes DMA necessary. **Done, in step 10 —
+   24 console lines, 24 underruns polled and 0 on DMA.**
 5. **Tuner.** *Done* — `bringup/src/msi001.c`. Register sequence, 24-bit
    write-only control on SPI1, the synthesiser arithmetic for a 22 MHz
    reference, band selection and the filter bank.
@@ -513,6 +514,298 @@ Each step should end with something visible on the radio.
    screens this render does not: menus, the band list, the keypad, the
    FT8 map. Those are `ui_digi.c` and friends, already separate modules,
    and the same harness renders them.
+
+10. **The SAI on DMA.** *Done, 05/11/2026* — `sai1_dma_start()` and the
+   rest of the DMA section of `bringup/src/sai1.c`. DMA1 stream 0 for
+   the receiver and stream 1 for the transmitter, both circular over two
+   halves, 16-bit items in direct mode, the rings in AXI SRAM where DMA1
+   can reach them.
+
+   **It is not a performance step and it was never about CPU load.** The
+   transmit FIFO is eight words — 21 µs at 192 kHz — and a console line
+   at 115200 baud takes 9 ms. 24 console lines produced **24 underruns
+   polled and 0 on DMA**, which is the audible click per printed line
+   that step 4 predicted and could not fix. `dry` then stays at 0 for
+   the whole display loop, through 16 ms of trace and 40 ms of waterfall
+   over SPI a frame.
+
+   Two things came free. The capture went from 43 315 µs of polled
+   waiting to a **386 µs** memcpy out of the finished half, which took
+   the frame period from **127 ms to 91 ms (7.9 to 11.0 fps)**, measured
+   by the same code in the same run. And the receiver stopped having
+   gaps: it now runs continuously, which is what a demodulator needs.
+
+   **No MPU regions, no cache maintenance.** The D-cache is off in this
+   firmware (`clock.c`, and `startup_stm32h743.S` before the `.data`
+   copy), so there is nothing stale either way. That is the whole reason
+   the step was small, and it is the debt the day anything turns the
+   data cache on. §3.4's "works, except sometimes" is still waiting
+   there.
+
+   **No interrupt either**, which is upstream's own mechanism: which
+   half is finished comes out of `NDTR`, exactly as
+   `gd32_i2s_stream_write_half()` does it on the DEEPSDR. An ISR is
+   step 8's business, when there is a demodulator that has to run once
+   per block — and it will need a named vector, which
+   `startup_stm32h743.S` currently has for nothing.
+
+   Three bugs, one per load, and every one of them is a thing a DMA
+   driver on a radio that boots somebody else's firmware first has to
+   survive:
+
+   - **The factory firmware's own transport was still running.** DMAMUX1
+     channels 9 and 13 — DMA2 streams 1 and 5 — enabled, pointed at its
+     buffers in D2 SRAM, on the same two SAI request lines. Halting the
+     core does not stop a DMA controller. Two channels on one request
+     line take alternate words, so the receiver got **exactly half** the
+     stream with no overrun and no error, and consecutive samples of one
+     channel read as an I/Q pair put the spectrum at twice the right
+     offset with an image almost as strong as the carrier.
+   - **`SAIEN` did not hold.** It reads back as set and is clear a
+     hundred microseconds later, on three arms in four, with every error
+     flag at zero — a previous disable that had not finished. The
+     symptom was a receiver delivering digital silence with `rc 0` and
+     the best frame rate the radio had ever reported.
+   - **And the retry for that exchanged I and Q**, because a failed
+     attempt had already moved an odd number of words through a stream
+     that was still running. The unit of retry has to be the whole arm.
+
+   And then a fourth, the morning after, which turned out to be the
+   oldest of them: **the polled `sai1_start()` had the `SAIEN` hazard
+   too**, and had had it since step 4. On the first run after a cold
+   power cycle three polled captures returned zero frames, one of them
+   in test 0 before any DMA stream existed. It had been costing a row of
+   test 0's table and the occasional frame, and — because
+   `test_dma_transport()` did not check what `capture()` returned — it
+   silently turned that test's polled reference into the DMA block
+   averaged twice. The warning had been printed every time.
+
+   `WORKING.md`'s trap list has all four, with the measurements that
+   identified them rather than the theories that did not.
+
+   **And it has been heard**, which is the half of this step that no
+   counter can supply: 1.2 s polled against 1.2 s on DMA, six times, and
+   the owner of the radio reported the alternation between a tone with
+   clicks and a steady one. The same run counted 72 underruns polled and
+   0 on DMA — one per printed line. Getting that confirmation took three
+   attempts, and the first two found a better bug than the third: the
+   codec had been **muted since step 4**, because the tone test that
+   proved the speaker works was retired and took its own unmute with it.
+   `test_audio_listen()` owns the unmute now.
+
+11. **The encoders.** *Done, 05/11/2026* — `User/encoder.c` grafted
+   whole, 241 lines, compiled in place through `compat/gd32f4xx.h`.
+   Turning the knob retunes the receiver: the readout, the ruler and the
+   trace all move, and the peak travelled from +19 875 Hz to −58 875 Hz
+   against a generator that did not move — the 79 detents that were
+   turned, at 1 kHz each.
+
+   **The tuning knob is the big one, `RENC1` on `PC0`/`PC1`**, which is
+   where the user wants it. That also settled the one thing in this step
+   still resting on a single report: which physical knob is which was
+   read off the ORDER the two were turned in, and the move to `RENC1`
+   tested it from the other side — the named knob tuned, the other went
+   inert. The peak ran +19 875 → −37 125 Hz **monotonically, with no
+   reversal**, inside seven blocks, and then held still for 169 console
+   lines while the small knob was turned. Direction confirmed by the
+   hand; upstream's `encoder_invertido_pon()` is there if another unit
+   disagrees, which upstream found that they do.
+
+   **No new interrupt and no new vector**, because upstream asks to be
+   sampled at 1 kHz from `SysTick_Handler` and this board already had
+   one. The graft needed a stand-in for four GPIO calls and `#ifndef`
+   around upstream's six pin defines (`PROCEDENCIA.md`).
+
+   Two things the schematic had to settle and no probe could:
+
+   - **The push-buttons are not GPIOs.** `ENC_BUT` is a resistor ladder
+     shared by both buttons, with one of the two presses inside the
+     input buffer's undefined band, so they need the ADC — step 12,
+     which also brought the tuning step with it. The voltages quoted
+     here at the time, 1.95 V and 1.05 V, were the schematic's
+     arithmetic and turned out not to be this board's; step 12 has the
+     measured ones.
+   - **There are no external pulls on A/B**, so the MCU's internal
+     pull-ups are the circuit rather than a precaution.
+
+   And one thing that was got wrong three times before it was got right:
+   `RENC1` was recorded as a hardware fault after three runs with no
+   movement, and then moved 151 times in twenty seconds on the fourth.
+   An absence is only evidence if somebody was turning the knob while it
+   was being recorded — `WORKING.md`'s trap 18, which this step and the
+   listening test wrote between them.
+
+12. **The buttons, on the ADC.** *Done, 05/11/2026* — `src/adc.c`, ADC1
+   channel 1, and a short press of the big knob now cycles the tuning
+   step. Both encoder buttons share **one** analog line through a
+   resistor ladder, so this is the one control on the board that no GPIO
+   driver could ever have read.
+
+   **Upstream's debounce was kept, and that was the point.** A new
+   `ENC_BTN_READ` hook names a function the board supplies, so
+   `encoder.c`'s integrator, hold timer, short/long classification on
+   release and "pressed and turned" consumption all keep working for a
+   button that is a voltage. See `PROCEDENCIA.md`; with no `-D` the
+   DEEPSDR compiles the GPIO reader it always had, verified by building
+   its firmware.
+
+   **No interrupt and no wait.** One conversion per SysTick, collected
+   by the following tick — the result has been sitting in `DR` for
+   975 µs by then — with the two channels alternating. 32 369
+   conversions and zero timeouts across a run.
+
+   The measurement corrected the schematic: the presses read 2.498,
+   1.656 and 1.423 V against 1.95, 1.05 and 0.86 predicted from the
+   47k/68k/22k on page 3, so those values are not what is fitted. The
+   identification holds regardless, because **"both pressed" predicts
+   itself** from the other two plateaus with no resistor value and no
+   reference voltage in the arithmetic — 1.418 V against 1.423 V
+   measured. `BOARD.md` §6.
+
+13. **The battery.** *Done, 05/11/2026* — the header pill shows a real
+   percentage, from **ADC1 channel 16**: the midpoint of R34/R36, two
+   10 kΩ resistors across the cell, with no diode in the path (the
+   DEEPSDR's sense has one; this board does not).
+
+   **Confirmed against a multimeter, which is what made it a
+   measurement**: the meter read 4.15 V at the cell and the converter
+   4.17 V. The same point fixes `VREF+` at 3 280 mV rather than the
+   nominal 3 300 — one point from one meter, but the error it removes is
+   systematic, which is the kind that hides. That constant is now only
+   the fallback and the outside check; see below for what replaced it.
+
+   It also overturned the previous step's battery figure. 3.05 V had
+   been recorded from channel 0, and that channel is an unconnected pad:
+   `PCSEL` was being OR-ed rather than set, so the pad was being read
+   with the saturated `ENC_BUT` channel preselected beside it and sat at
+   a steady, plausible, entirely fictional 1.53 V. **The stability was
+   the trap** — see `WORKING.md` trap 21, and note that nothing inside
+   the firmware could have caught it. The meter did.
+
+   **The rail no longer rests on that meter reading.** `VREFINT` on
+   **ADC3** — a bandgap that does not follow the supply — is converted
+   every millisecond, so VDDA is measured rather than named. Both facts
+   it needed came from the radio, not from a datasheet this tree does
+   not have: the channel by difference (19 moved by 11 200 counts with
+   the bandgap switched on, nothing else by more than 512), and ST's
+   factory calibration by plausibility (24 327, inside the only window
+   such a conversion can occupy, with the temperature sensor's two
+   points beside it in the right order).
+
+   Three routes to the rail — factory value 3 298 mV, nominal 1 216 mV
+   giving 3 274, the meter 3 280 — agree within 0.7 %. Only the meter
+   did not come out of this chip, which is exactly what makes it worth
+   keeping as the fallback constant.
+
+   Driving two converters cost no second copy of the sequence: it is one
+   function taking an ADC instance.
+
+   **The divider was then checked from outside, and the answer was to
+   change nothing.** With the rail measured, the only error left is the
+   ratio of two 1 % resistors — about 40 mV at a full cell, and
+   invisible from inside the chip. The radio said 4 163 mV and a meter
+   said 4.16 V. Three millivolts apart, and the trim stayed at zero:
+   the meter reads to 10 mV, so its answer covers 4 155–4 165 and ours
+   is inside it. **A disagreement smaller than the resolution of the
+   instrument measuring it is not a disagreement**, and a constant
+   fitted to it would have been the meter's last digit written into the
+   firmware as if it were a measurement.
+
+   **The die thermometer came with it**, on the same converter and
+   found the same way — channel 18 moved 9 369 counts when `TSEN` went
+   on. 40.5 °C, which at 480 MHz is well above the room. ST's two
+   calibration points are believed because they give an offset and a
+   slope independently — 623 mV at 30 °C and 2.537 mV/°C — and both land
+   where a silicon sensor has to be.
+
+   The percentage itself is a straight line from 3.3 to 4.2 V and is
+   labelled as the weak part wherever it appears. Upstream's
+   `battery.c` was opened in the hope of grafting a real discharge curve
+   and contains the same two constants and the same interpolation.
+
+   Left open: `ADC1_INP17` disagrees with what `PA1SO` says the analog
+   switch is doing. It costs nothing, because both channels in use are
+   confirmed by physical evidence.
+
+14. **The panel comes up before the tests that need a hand.** *Done,
+   05/11/2026* — and it is here as a step because it is a lesson rather
+   than a tidy-up. Six tests in this image need somebody to turn a knob,
+   press a button or listen, and all six asked over the **UART**, which
+   the person holding the radio cannot see. They had been following
+   instructions relayed from the other end of a debugger while the panel
+   in their hands stayed dark, and finally asked why the screen was
+   silent.
+
+   **A bench test that needs a human is a user interface, and it was on
+   the wrong device.** The panel's three bring-up calls moved from step 6
+   to just before the first such test, and `ui_prompt()` puts the
+   question on the screen in four lines. The console still gets
+   everything, because that is where the measurements are read
+   afterwards.
+
+15. **The second knob.** *Done, 05/11/2026* — the small one on top now
+   adjusts RF gain and its button toggles the preamp.
+
+   **No second decoder was written.** `User/encoder.c` keeps its state
+   in file-scope statics, so it is a one-knob module; it is compiled a
+   **second time** with its public names renamed on the command line,
+   and a second translation unit of the same source gets its own
+   statics. Both knobs therefore run the one tested decoder. The cost
+   is that `encoder2_tick()` has no definition to grep for, which
+   `src/enc2.h` states plainly.
+
+   **Why RF gain and not volume.** Volume, mode and bandwidth are all
+   downstream of a demodulator and this image has none — the only sound
+   it has ever made is a test tone. A control labelled for something
+   that does not exist looks like it works, which is worse than one
+   that plainly does nothing. RF gain is real, measured, and the one
+   setting that matters while the AGC is a stub.
+
+   Verified by sweeping it: 90 detents over the whole 0–59 dB range took
+   the ADC fill from **10 % to 100 %**, underloaded to clipping. The
+   preamp is worth a measured +15.1 dB (§4) and has **no on-screen
+   indicator yet**, which is recorded rather than hidden behind an
+   invented symbol.
+
+16. **The demodulator, the block interrupt, and low IF.** *05/11/2026* —
+   AM by envelope, from the antenna to the speaker, audible on the
+   bench.
+
+   **The first named external vector in this project.** Audio has to be
+   produced at block rate and nothing else here runs faster than eleven
+   frames a second, so DMA1 Stream 0 got a handler — priority 1, below
+   SysTick, with the vector table's counts written as arithmetic. It
+   also retires `sai1_tx_due()`'s known hazard: a hook driven by the DMA
+   cannot be late. The transmit ring grew to match the receive ring so
+   the hook can be handed both halves, which removed a 32 kB staging
+   buffer.
+
+   **`demod_am.c` was NOT grafted**, and that is a departure from this
+   port's rule worth stating: it is 6 987 lines and pulls in thirty
+   modules — the entire decoder suite. `src/am.c` is ours, but only the
+   arithmetic; the AGC and the audio filter's design stay upstream's,
+   compiled in place.
+
+   **The first audio was distorted, and the user's experiment diagnosed
+   it**: with the modulation switched off a tone remained, its pitch
+   tracking the detuning. An envelope detector cannot do that — `|z|` of
+   an offset carrier is constant — so something else was at 0 Hz,
+   beating against the carrier. It was the oscillator's leakage, which
+   at zero IF shares 0 Hz with a carrier that, in AM, *is* the signal.
+
+   The cure is low IF: the tuner is parked a quarter of the sample rate
+   below the dial and `am.c` mixes back by exactly Fs/4 — 1, -j, -1,
+   +j, so swaps and sign changes, no table, no multiplies, no phase
+   error. The spectrum's centre is now the oscillator and `demod_px`
+   marks the listening point a quarter of the trace to the right, which
+   is upstream's own value in a field that was already there.
+
+   Two unit errors were found by reading the AGC's code rather than its
+   comment: it works in int16 scale, not normalised, and its "release"
+   is a per-sample MULTIPLIER where the header's prose reads as a
+   subtraction. Neither is visible to a compiler, and the first produced
+   a radio that counted blocks, reported no underruns and played
+   silence.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

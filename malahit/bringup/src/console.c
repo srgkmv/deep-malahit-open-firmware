@@ -57,6 +57,8 @@ void console_puts(const char *s)
     }
 }
 
+static int  s_left;     /* '-' seen: pad on the right instead */
+
 static void put_unsigned(uint32_t v, uint32_t base, int width, char pad)
 {
     char buf[11];
@@ -70,6 +72,15 @@ static void put_unsigned(uint32_t v, uint32_t base, int width, char pad)
         buf[n++] = (char)(d < 10U ? ('0' + d) : ('a' + d - 10U));
         v /= base;
     }
+
+    if (s_left) {
+        int digits = n;
+
+        while (n > 0) { console_putc(buf[--n]); }
+        while (digits < width) { console_putc(' '); digits++; }
+        return;
+    }
+
     while (n < width) {
         buf[n++] = pad;
     }
@@ -118,6 +129,26 @@ void console_printf(const char *fmt, ...)
             plus = 1;
             fmt++;
         }
+        /*
+         * '-' - pad on the right, and it is here for exactly the reason
+         * the comment above gives for '+', having cost the same kind of
+         * damage one step further on. A table of measurements printed
+         * with "%-10s" produced the literal text "%-10s" in the column
+         * and then read every later argument in that line one position
+         * out: sample counts in the thousands of millions, a voltage
+         * where a label belonged, and one number that was the NEXT
+         * row's threshold. It looked like an instrumentation bug in the
+         * thing being measured.
+         *
+         * Left-justified columns are what a table wants, so a format
+         * string that asks for one should get it rather than quietly
+         * poisoning the rest of the line.
+         */
+        s_left = 0;
+        if (*fmt == '-') {
+            s_left = 1;
+            fmt++;
+        }
         if (*fmt == '0') {
             pad = '0';
             fmt++;
@@ -131,15 +162,49 @@ void console_printf(const char *fmt, ...)
 
         switch (*fmt++) {
         case 'd': {
-            int32_t v = va_arg(ap, int32_t);
-            if (v < 0) {
-                console_putc('-');
-                put_unsigned((uint32_t)(-v), 10U, width ? width - 1 : 0, pad);
-            } else {
-                if (plus) { console_putc('+'); }
-                put_unsigned((uint32_t)v, 10U,
-                             (plus && width) ? width - 1 : width, pad);
+            /*
+             * THE SIGN BELONGS AGAINST THE NUMBER, which is not what
+             * this did. It printed the sign and then asked
+             * put_unsigned() to right-justify the digits inside the
+             * remaining width, so "%+4d" of -4 came out as "-  4" -
+             * the sign stranded at the far left of the column with
+             * three spaces between it and its own digits. In a table
+             * of trim values that is not a typo, it is a different
+             * number to the eye.
+             *
+             * Correct is: work out how wide the whole thing is, pad to
+             * the column first, then sign, then digits. Zero padding is
+             * the one exception and goes AFTER the sign - "-0042", not
+             * "00-42".
+             */
+            int32_t  v    = va_arg(ap, int32_t);
+            uint32_t mag  = (v < 0) ? (uint32_t)(-v) : (uint32_t)v;
+            int      sign = (v < 0) || plus;
+            int      n    = sign;
+            uint32_t t    = mag;
+
+            do { n++; t /= 10U; } while (t != 0U);
+
+            if (!s_left && pad != '0') {
+                while (n < width) { console_putc(' '); n++; }
             }
+
+            if (v < 0)   { console_putc('-'); }
+            else if (plus) { console_putc('+'); }
+
+            if (!s_left && pad == '0') {
+                while (n < width) { console_putc('0'); n++; }
+            }
+
+            {
+                int left = s_left;
+
+                s_left = 0;                 /* the digits never pad */
+                put_unsigned(mag, 10U, 0, ' ');
+                s_left = left;
+            }
+
+            if (s_left) { while (n < width) { console_putc(' '); n++; } }
             break;
         }
         case 'u':
@@ -150,7 +215,16 @@ void console_printf(const char *fmt, ...)
             break;
         case 's': {
             const char *s = va_arg(ap, const char *);
-            console_puts(s ? s : "(null)");
+            const char *t = s ? s : "(null)";
+            int         n = 0;
+
+            while (t[n] != '\0') { n++; }
+
+            int padn = width - n;
+
+            if (!s_left) { while (padn-- > 0) { console_putc(' '); } }
+            console_puts(t);
+            if (s_left)  { while (padn-- > 0) { console_putc(' '); } }
             break;
         }
         case 'c':

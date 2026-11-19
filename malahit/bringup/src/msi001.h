@@ -67,6 +67,16 @@
 #define MSI_FIF1_HZ         132000000U    /* AM first IF, 22 MHz part */
 
 /*
+ * The DC calibration timers are counted in N reference periods, and N is
+ * fixed by the same XTALSEL choice - datasheet table 21 pairs the two.
+ * For 22 MHz, N = 55, so one tick is 55/22 = 2.5 us exactly. That the
+ * two tables are indexed by the same three bits is easy to miss, and
+ * getting N from the wrong row makes every DC timing figure wrong by a
+ * factor the console would print without complaint.
+ */
+#define MSI_DCCAL_N         55U
+
+/*
  * The synthesiser comparison frequency is 4 x FREF1, and FLO is that
  * divided by the band's LO divider:
  *
@@ -180,6 +190,105 @@ const msi_plan_t *msi001_last_plan(void);
  *   mixbu    AM block-up-convert mixer gain, 0..3
  */
 void msi001_set_gain(uint8_t bb_gr, int lna_gr, int mix_gr, uint8_t mixbu);
+
+/*
+ * DC OFFSET CALIBRATION - register 1 bits 16:14, and the speed-up bit 17.
+ *
+ * THIS WAS THE WORST NUMBER ON THIS BOARD, so the controls are public
+ * and not a constant buried in the .c file. It was also a firmware
+ * fault rather than a hardware one - see the long note in msi001.c.
+ *
+ * The datasheet specifies 50 mV of residual offset with continuous
+ * calibration and 5 mV with the speed-up bit (table 13, "O/P residual
+ * DC offset", for register 1 D[17:14] = 0101 and 1101). What this
+ * driver used to produce was 1122 mV on one run and a railed converter
+ * on another, which is not a poor part, it is a trim that was switched
+ * off.
+ *
+ * Four things the datasheet says about it that the driver has to respect:
+ *
+ *   1. Calibration happens "on chip power up or synthesizer
+ *      programming" - every table of baseband specs is footnoted that
+ *      way. Writing register 2 is therefore a calibration trigger as
+ *      well as a tuning command.
+ *
+ *   2. "As ... the baseband gain settings changes then the effective DC
+ *      offset will also change" (section 5.4). So a calibration is only
+ *      valid for the gain it was taken at - and the datasheet's own
+ *      power-up order writes register 2 BEFORE register 1, which means
+ *      following it literally calibrates at the previous gain. That is
+ *      what msi001_dc_recal() is for.
+ *
+ *   3. Static mode does not calibrate. It is "no DC tracking": it holds
+ *      whatever the last calibration left, until the hold circuit leaks.
+ *
+ *   4. The speed-up bit widens the high-pass corner so the loop settles
+ *      fast, and is "not intended to be used during active reception
+ *      periods due to the significant loss of energy around DC". Which
+ *      is exactly the shape of a calibration burst: turn it on, let it
+ *      converge, turn it off, hold.
+ */
+#define MSI_DCCAL_STATIC      0U    /* no tracking: hold the last value  */
+#define MSI_DCCAL_PERIODIC1   1U    /* refresh every  N/fref x DCRATE    */
+#define MSI_DCCAL_PERIODIC2   2U    /* every 2N/fref x DCRATE            */
+#define MSI_DCCAL_PERIODIC3   3U    /* every 3N/fref x DCRATE            */
+#define MSI_DCCAL_ONESHOT     4U    /* short track, then hold            */
+#define MSI_DCCAL_CONTINUOUS  5U    /* always tracking: a hole at DC     */
+
+/* Set the mode, and the speed-up bit with it. Writes register 1, which
+ * is also what re-arms a one-shot. */
+void msi001_set_dccal(uint32_t mode, int speedup);
+
+uint32_t msi001_dccal_mode(void);
+int      msi001_dccal_speedup(void);
+
+/*
+ * Calibrate NOW, at the gain that is set now, and go back to holding.
+ *
+ * Continuous tracking with the speed-up bit for `settle_ms`, then back
+ * to whatever mode was configured before the call. This is the sequence
+ * the datasheet describes in pieces and never writes down: speed-up to
+ * converge deeply and quickly, continuous so it converges at all, then
+ * the configured hold mode so that nothing keeps digging a hole at the
+ * tuned frequency while someone is listening to it.
+ *
+ * Call it after any change to the gain or the signal path. Two
+ * milliseconds is ample - the tracking time in table 20 is measured in
+ * microseconds.
+ */
+void msi001_dc_recal(uint32_t settle_ms);
+
+/*
+ * Whether msi001_set_gain() recalibrates behind itself. On by default,
+ * because a gain change invalidates the held calibration and no caller
+ * should have to know that. Turn it off to measure the offset without
+ * the recalibration - the only way to show what the recalibration is
+ * worth - or in an AGC, which steps the gain far too often to pay two
+ * milliseconds and a DC transient at every step.
+ */
+void msi001_set_dc_auto(int on);
+int  msi001_dc_auto(void);
+
+/*
+ * Register 6, the periodic-mode timers. Reset values are DCTRK_TIM = 1
+ * and DCRATE_TIM = 2048, which with this board's 22 MHz reference
+ * (N = 55, so N/fref = 2.5 us) is a 2.5 us tracking window every
+ * 5.12 ms - a spectral hole 0.05 % of the time, repeating at 195 Hz.
+ *
+ *   track  1..63     DCTRK_TIM, tracking window
+ *   rate   2..4095   DCRATE_TIM, refresh period, must exceed track
+ */
+void msi001_set_dc_timers(uint32_t track, uint32_t rate);
+
+/*
+ * What those timers mean in time, for the mode now selected. Both may be
+ * NULL; a zero period means the mode is not a periodic one.
+ *
+ * NANOSECONDS, because one tick is 2.5 us on this board and a function
+ * returning microseconds reported the reset tracking window as "2 us".
+ * A figure that is 20 % short still reads like a measurement.
+ */
+void msi001_dc_timing_ns(uint32_t *period_ns, uint32_t *track_ns);
 
 /*
  * Which AM input port. Port 1 is 1 kohm, meant for a ferrite rod; port 2

@@ -412,6 +412,12 @@ data from bit 4 up. Nine-plus-twenty-bit fields and an address at the
 bottom mean a byte-oriented driver cannot talk to this part at all;
 `src/msi001.c` uses SPI1 with a native 24-bit frame.
 
+**Register 1 carries the DC offset trim as well as the gain**, and the
+two interact: the calibration is only valid for the gain it was taken
+at. The driver selects `DCCAL` = periodic1 and recalibrates after a gain
+change; the long version, and the measurement that forced it, is under
+"The DC offset" below.
+
 The bit layout was checked against both worked examples in datasheet
 table 16 before any of it ran — THRESH = 312 decodes from its register
 word, and INT = 32 with FRAC = 51 gives exactly 1672.5 MHz for a 26 MHz
@@ -474,28 +480,85 @@ don't-care on HF, so each real path appears four times in the sweep.
 
 ### Front end gains **[measured]**
 
-At 10 MHz, against the same generator, levels taken from the **FFT peak**:
+**Retaken 04/11/2026 on a known path.** Every earlier version of this
+table went through the add-on board in an inherited state — 30 dB of
+attenuation the firmware did not know about, and an unrecorded filter —
+so those numbers are void and these replace them.
 
-| Change | Carrier level | peak at |
-|---|---|---|
-| AM **port 2** (75 Ω), preamp off, 0 dB GR | −18.4 dBFS | +3000 Hz |
-| AM **port 1** (1 kΩ), preamp off, 0 dB GR | −43.1 dBFS | −937 Hz |
-| AM port 2, **preamp on** | −3.7 dBFS | +3000 Hz |
-| AM port 2, 20 dB gain reduction | −37.7 dBFS | +3000 Hz |
-| AM port 2, 40 dB gain reduction | −58.0 dBFS | +3000 Hz |
-| AM port 2, 59 dB gain reduction | −75.3 dBFS | +71625 Hz |
+**The bench, written down this time:** generator at 10.000 MHz, AM 70 %
+at 1000 Hz, **100 mV through a 40 dB pad = −47 dBm** at the antenna.
+Add-on board: 50 Ω input, 4.5 MHz highpass, attenuator stated per
+block. Levels from the FFT peak, in upstream's uncalibrated dB — every
+figure below is a *difference* between two rows, so the scale cancels.
 
-**Use AM port 2.** It is at least 24.7 dB better here, which is what the
-input impedances predict — port 1 is 1 kΩ for a ferrite rod, port 2 is
-75 Ω for an antenna, and this board feeds the tuner from the filter bank.
-"At least", because on port 1 the carrier is no longer the strongest
-thing in the band: the peak column shows the search landing on something
-else at −937 Hz, which is the measurement saying so rather than
-pretending. The same happens at 59 dB of gain reduction.
+**Working point A**, add-on attenuator 0 dB, gain reduction 48 dB
+chosen by `rf_autorange()` on the hottest row:
 
-The preamp (BGA614 on `PE0`) is worth **+14.7 dB**. Programmed gain
-reduction tracks measurement within about 0.7 dB at 20 dB and 0.4 dB at
-40 dB, which is the evidence that register 1 is being written correctly.
+| | peak | ADC | snr |
+|---|---|---|---|
+| AM **port 2** (75 Ω), preamp ON | 126.5 dB | 49 % | 71 dB |
+| AM **port 1** (1 kΩ), preamp ON | 77.8 dB | 5 % | 35 dB |
+| AM port 2, preamp OFF | 111.4 dB | 12 % | 64 dB |
+
+- **Port 2 is +48.7 dB better than port 1** — reproducible to 0.2 dB
+  over three runs. The old table could only say "at least 24.7 dB",
+  because on port 1 the carrier had sunk below the noise and the peak
+  search was reporting something else. With a clean path it is visible
+  and the figure is a real one.
+- **The preamp (BGA614 on `PE0`) is worth +15.1 dB**, which agrees with
+  the old +14.7 dB — a ratio between two rows taken a second apart
+  survives almost anything, which is why it was the one number in the
+  old table that was right.
+
+**Working point B** for the gain control, preamp OFF and the add-on
+attenuator at 31.5 dB, so that fifty decibels of reduction fit under
+the register's 59 dB limit:
+
+| GR | peak | ADC | step |
+|---|---|---|---|
+| 12 dB | 107.4 dB | 17 % | — |
+| 22 dB | 104.7 dB | 10 % | 2.7 dB ← compressing |
+| 32 dB | 96.6 dB | 6 % | 8.1 dB ← compressing |
+| 42 dB | 86.5 dB | 5 % | **10.1 dB** |
+| 52 dB | 76.6 dB | 5 % | **9.9 dB** |
+
+**Gain reduction tracks to 0.1 dB above about 32 dB, and the front end
+compresses below it** at this input level. That is a more useful fact
+than the old "within 0.7 dB" — it says *where* the control is
+trustworthy, and the boundary is the thing an AGC has to respect.
+
+> ### Step by step, not against a single reference
+>
+> Measured cumulatively against the 12 dB row, the same data read as a
+> flat −9 dB error at 20, 30 and 40 dB and looked like a gain control
+> broken everywhere. **A constant offset across every row is the
+> signature of one bad row** — and the bad row was the reference, which
+> was compressed.
+>
+> Consecutive steps put it where it belongs: three of the four are
+> within 0.1 dB and the two at the bottom are the front end running out
+> of linearity. Same numbers, opposite conclusion.
+
+> ### Zero gain reduction cannot be a reference row, at any input level
+>
+> The first retake tried, wound the add-on attenuator to its 31.5 dB
+> limit looking for a level where the preamp-on row would stop
+> clipping, never found one, and reported the loudest **noise** bin to
+> a tenth of a decibel for two rows. Every figure derived from them was
+> wrong and none of it looked wrong.
+>
+> §8b already had the reason: at 0 dB GR the baseband has 77 dB of gain
+> and fills the converter with its own amplified noise whatever the
+> signal does. That operating point cannot be reached by attenuating
+> the input.
+>
+> The old table had the same flaw. It did not show, because 30 dB of
+> add-on attenuation nobody knew about was holding it in the linear
+> region by accident.
+>
+> `addon_report_tail()` now flags any row whose peak is not within
+> three bins of where the carrier must be, and no derived figure is
+> printed unless both of its rows passed that check.
 
 > ### Do not measure an absolute level in a single DFT bin
 >
@@ -523,30 +586,229 @@ sensitivity, the opposite of what most of the upstream AGC code assumes.
 
 With the carrier well clear of the noise floor (preamp on):
 
-- **image rejection 22.7 to 32.2 dB** uncorrected, across runs
-- **DC / LO leakage −7.7 dBFS, which is 15 dB *above* the carrier** and
-  only 8 dB from clipping the ADC
+- **image rejection 22.7 to 32.2 dB** uncorrected, across runs, 34 dB
+  with `iqbal.c` on by its own A/B test
+- **DC / LO leakage −25.6 dBFS**, with 18 % of the converter in use —
+  see the next section for what that figure used to be
 
-The image figure is what `iqbal.c` exists to improve on. **The DC figure
-is the open problem of the RF chain**: with the preamp on, the mixer's own
-offset is within 8 dB of full scale, so most of the ADC's range is being
-spent digitising the receiver's own error rather than signal. That is a
-sensitivity loss, not a cosmetic one, and it is the first thing to attack
-in step 7.
+The image figure is what `iqbal.c` exists to improve on. Measuring it
+needs care: with the preamp off the image sits in the noise, and the
+first version of that test reported it as anything between 8 and 31 dB on
+consecutive captures.
 
-More precisely: the mixer's own offset is the largest single
-thing in the band and it eats ADC headroom that the wanted signal could
-have used. `src/msi001.c` currently selects **static** DC calibration,
-which recalibrates on every synthesiser programming and then holds — the
-right choice for a receiver, since the periodic and continuous modes keep
-digging a hole at DC, and on a zero-IF receiver DC is the tuned frequency
-itself. If the leakage turns out to drift, register 6's timers and the
-periodic modes are the answer, but that should be a response to measured
-drift rather than a precaution.
+### The DC offset, and why it is in millivolts **[measured]**
 
-Measuring either number needs care: with the preamp off the image sits in
-the noise, and the first version of this test reported it as anything
-between 8 and 31 dB on consecutive captures.
+This was the worst number on the board and it was a firmware fault, not
+a hardware one. It is written out at length because the symptom pointed
+nowhere near the cause, and because the two numbers that mattered were
+in different units from the ones being printed.
+
+**What it looked like.** −7.7 dBFS of DC, 15 dB *above* the wanted
+carrier and 8 dB from clipping — recorded here for weeks as "the open
+problem of the RF chain", a hardware limitation to be worked around.
+
+**What it was.** `src/msi001.c` wrote `DCCAL = 000` into register 1, on
+the argument that static mode "calibrates once on synthesiser
+programming and then holds", which avoids the spectral hole the tracking
+modes dig at DC — and DC on a zero-IF receiver is the tuned frequency
+itself. The argument was wrong at its first step. Table 20 defines 000
+as **"No DC tracking"**, and section 5.4 is explicit that static mode
+*holds* whatever the last calibration left. Selecting it is how the trim
+is switched off.
+
+The part arrives with `DCCAL = 101`, continuous (table 28's reset
+column). **So the tuner's own power-on default was better than what this
+firmware chose**, and the whole problem was a register written on a
+misreading.
+
+**In millivolts, which is the only unit that could settle it.** One ADC
+count is 43.16 µV — the NAU8822's full scale is 1.0 Vrms at 0 dB PGA
+with VDDA = 3.3 V, and this board runs the PGA at 0 dB with no boost.
+Datasheet table 13 gives the MSi001's own residual offset as 50 mV in
+continuous mode and 5 mV with the speed-up bit. At 0 dB of baseband gain
+reduction, measured at the codec's input:
+
+| mode | I | Q | ADC used |
+|---|---|---|---|
+| tuner untouched, reset default | +29 mV | −138 mV | — |
+| **`DCCAL` = 000, what this firmware wrote** | **+1122 mV** | **−778 mV** | **99 %** |
+| 1 shot, short track then hold | +199 mV | +168 mV | 39 % |
+| **periodic1, register 6 reset timers** | **+69 mV** | **−13 mV** | **60 %** |
+| continuous | +73 mV | −16 mV | 67 % |
+| continuous + `DCCAL_SPEEDUP` | +33 mV | −13 mV | 100 % ← noise |
+
+The second row is not an offset, it is a **railed converter**: ±1410 mV
+is the rail. Every level measured through it was a measurement of
+nothing, which is how step 5's image rejection came out as −4.8 dB on
+the run that found this.
+
+> ### The number that mattered was the spread, not the value
+>
+> That second row is unrepeatable, and *that* is the diagnosis. Four
+> runs of identical code, same configuration, same bench, nothing
+> connected to the antenna:
+>
+> | | run 1 | run 2 | run 3 | run 4 |
+> |---|---|---|---|---|
+> | `DCCAL` = 000, static | **+2.4** | **+0.3** | **−17.6** | **−22.6** dBFS |
+> | periodic1 | −25.5 | −26.1 | −25.8 | −25.1 dBFS |
+> | periodic1, 12 dB GR, preamp on | — | −25.5 | −25.6 | −25.5 dBFS |
+>
+> Static spans **25 dB** across four runs; periodic1 spans one, and the
+> working configuration spans a tenth. Static mode holds whatever the
+> trim happened to be left holding, so its result depends on the
+> history of the part — what the factory firmware did, what the previous
+> load did, how long ago. There is no value to measure.
+>
+> And −7.7 dBFS, the figure carried in this file for weeks as a property
+> of the hardware, sits in the middle of that spread. It was never a
+> measurement of the board. It was one sample of a quantity with no
+> settled value, which is exactly the kind of number that survives
+> being written down: it is plausible, it is reproducible to within a
+> few dB on any given afternoon, and it is about the firmware.
+>
+> **A figure that will not repeat is not a loose measurement of
+> something, it is a measurement of nothing** — and the way to find out
+> is to take it four times before believing it once.
+
+**Why not continuous, which the part itself defaults to.** periodic1
+with register 6's reset timers tracks for **2.5 µs every 5.12 ms** — one
+part in 2048, repeating at 195 Hz — and measured the same offset as
+continuous to within 4 mV and the same AC noise to within 0.4 %. The
+original worry about a permanent hole at the tuned frequency was the
+right worry. It just has a cheaper answer than switching the trim off.
+
+The speed-up row is the one to read twice: it wins on offset and
+measured **six times the AC noise**, exactly as section 5.4 warns
+("significant loss of energy around DC ... not intended to be used
+during active reception"). A mode that wins on the number being
+optimised and loses on the signal is not a win, and only a column for
+each makes that visible.
+
+**Static hold still has one use, and it is a good one.** Above about
+20 dB of baseband gain reduction the offset is inside the trim's range,
+and a calibration burst followed by a hold measured **+10 mV and
+−6 mV** — better than continuous by a factor of seven and better than
+the datasheet's own speed-up figure. Held for 20 s it moved by 2 mV,
+so **the hold circuit does not measurably leak**; that was the one thing
+that would have justified a periodic refresh, and it does not. Static is
+not the default only because the default has to be safe at full gain.
+
+**The calibration follows the gain**, which is section 5.4's other
+point: "as ... the baseband gain settings changes then the effective DC
+offset will also change". At 20 dB GR, the same gain measured −127 mV
+and −232 mV with a stale calibration and +12 mV and +23 mV with a fresh
+one — a factor of ten for a 2 ms burst. The datasheet's own power-up
+flow (figure 5) writes register 2, the calibration trigger, *before*
+register 1, which carries the gain, so following it literally calibrates
+for a gain the part no longer has. `msi001_set_gain()` now recalibrates
+behind itself whenever the selected mode is one that holds.
+
+The whole measurement is `test_dc_offset()` in `bringup/src/main.c`, and
+it needs no generator: a standing offset is the receiver's own error and
+is cleanest measured with the input quiet.
+
+### The whole receive path, checked against a number set outside it
+
+**[measured]** Generator at 10.000 MHz, AM 70 % at 1000 Hz, 100 mV
+through a 40 dB pad — about −47 dBm at the antenna. `test_am_envelope()`
+in `bringup/src/main.c`:
+
+| | measured | set |
+|---|---|---|
+| modulation depth | **66.4 %** | 70 % |
+| 2nd harmonic of the envelope | −43.9 dB | — |
+| 3rd harmonic | −49.7 dB | — |
+| ADC used | 51 %, no clipping | — |
+
+The depth is within **0.46 dB** of what the generator was told to
+produce, and the envelope's harmonic distortion is 44 dB down. One
+number, set outside the radio and nowhere in our code, reproduced
+through the filter bank, the mixer, the baseband filter, the codec,
+the SAI and the sample framing. It is the first end-to-end check of the
+receive path that does not depend on a calibration of ours.
+
+The residual 0.46 dB is **not** the receiver. I/Q imbalance was the
+obvious suspect and `tools/envdft.py` rules it out: imbalance leaves the
+recovered depth at exactly 70.0 %, because its wobble is at twice the
+carrier rate — tens of kilohertz from 1000 Hz — and a coherent DFT at
+1000 Hz never sees it. A 5 % relative error on a generator's modulation
+setting is ordinary.
+
+> ### The first version of this measurement accused the generator
+>
+> It read **62.5 % depth with the 3rd harmonic at −26.6 dB**, which is
+> exactly what a distorting generator looks like. It was the
+> instrument. `|I + jQ|` is not linear, so the mixer's standing DC
+> offset beats against the rotating carrier, flattens the modulation
+> and manufactures harmonics of it.
+>
+> With the offset this board actually has — +1705 and −332 counts
+> against an envelope of 6371, so 26 % — `envdft.py` predicts **66.0 %
+> and −37.0 dB from a mathematically perfect 70 % signal.** Almost the
+> whole "distortion" was produced by measuring it.
+>
+> Subtracting the mean of I and Q first fixes it, and the fix is worth
+> noting twice: it is the same correction upstream applies in
+> `demod_am.c` as `s_rf_dc_i`/`s_rf_dc_q` before the NCO mix. Arriving
+> at it independently, from the other end, is some evidence it belongs
+> there.
+
+### Upstream fixes this too, at the other level, and both are needed
+
+Worth knowing before step 8, because it would be easy to find upstream's
+version of this and conclude one of the two is redundant. They are not
+the same fix and neither can do the other's job.
+
+Upstream's receiver never puts a wanted signal at analogue DC.
+`NCO_OFF_MIN_HZ` in `User/nco.h` keeps the station **6 to 44 kHz above
+the LO, never below and never through the middle**, and the long comment
+above the define in `User/main.c` says why: the LO leakage self-mixes to
+0 Hz *always*, so a dial that walked across the centre would play a
+carrier that is not on the air.
+
+Six kilohertz of distance turned out not to be enough, and the way they
+found out is worth reading. The original comment claimed the ±4 kHz
+channel filter put the leakage "outside with margin" — true for AM and
+SSB on the day it was written. Then the wide filters arrived and nobody
+re-checked the number. Measured on the coefficients in `demod_am.c`,
+with the offset at its 6 kHz minimum:
+
+| channel filter | leakage rejected by |
+|---|---|
+| `CHF` — AM and SSB, −3 dB at 4 kHz | −14.5 dB |
+| `NFM_CHF` — −3 dB at 6.25 kHz | −2.3 dB |
+| `AIS_CHF` — −3 dB at 9 kHz | −0.1 dB |
+
+A user reported "artefactos en los pasos pegados a la frecuencia
+intermedia cero" and the `sim/rf_dc.c` bank put a figure on it: with a
+weak station in NFM 6 kHz from the LO, **45.7 % of what came out of the
+speaker was not the station.**
+
+Their fix is `s_rf_dc_i`/`s_rf_dc_q` in `demod_am.c` — a running mean of
+I and Q, subtracted before the NCO mix — and their own comment notes
+that widening the 6 kHz hole is the obvious wrong answer, since it costs
+dial travel and the DC is still there.
+
+**Why this port still wants the hardware trim.** Subtracting a mean in
+software removes the leakage from the *audio* and cannot recover a
+single bit of converter range: by the time firmware sees a sample, the
+headroom is already spent. That is the whole argument above, and
+upstream's comment is quiet about headroom because software has nothing
+to say about it. Conversely the hardware trim leaves 73 mV and −15 mV
+of residual, which is still a DC term that self-mixes into NFM and AIS
+audio exactly as measured. So:
+
+- **the hardware trim buys headroom**, 26 dB of it, and nothing else can
+- **upstream's subtraction buys audio**, and nothing else can
+
+The port gets the second one free when `demod_am.c` is grafted. Neither
+makes the other unnecessary, and `demod_am_get_rf_dc()` is the accessor
+that will let the two be compared on this board.
+
+> **The front-end table above has been retaken** on a known path, with
+> the DC offset fixed and the add-on board under control. Its figures
+> are the current ones.
 
 ### NAU8822 — codec
 
@@ -578,6 +840,21 @@ this part at all. SPI6 is configured for 16-bit frames.
 | `LHP` / `RHP` | J5, the 3.5 mm jack, through 100 µF and a 10 µH choke |
 | `AUXOUT1` / `AUXOUT2` | not connected |
 | `LLIN`/`GPIO2`, `RLIN`/`GPIO3`, `LAUXIN`, `RAUXIN` | not connected |
+
+> **The outputs come up MUTED, and that is deliberate.**
+> `nau8822_configure()` sets the volumes, enables the drivers and then
+> calls `nau8822_mute(1)`: a bring-up image must not come up shouting a
+> full-scale tone into a small speaker. Nothing else in the firmware
+> unmutes, so **anything that expects to hear something must unmute
+> itself** — `test_audio_listen()` does, at −18 dB, and re-mutes
+> afterwards. That gap cost three days of a silent speaker when step 4's
+> tone test was retired and took its unmute with it; `WORKING.md`'s
+> trap 17 has the story.
+>
+> `Vspk_ON` on `PE1` gates the amplifier's supply and **this firmware
+> never writes it** — measured on 05/11/2026 as an output already driven
+> high by the factory firmware. The audio works by inheritance, which is
+> not the same as working.
 
 **LS1 has no ground connection.** It sits between `LSPKOUT` and
 `RSPKOUT`, so the two amplifiers must drive it in antiphase: register 43
@@ -674,6 +951,48 @@ audio quality degrades. Since the MCU already supplies MCLK, SAI1 must be
 the I²S master and generate BCLK and FS from the same clock tree — which it
 does, and which is the opposite of how the DEEPSDR 101 is wired, where the
 AIC3204 is master and the GD32 is the slave.
+
+### What the factory firmware leaves in the DMA controllers **[measured]**
+
+Read over SWD on 04/11/2026, with our own image running and halted — so
+this is what the factory firmware set up and then never got the chance to
+tear down, and **it is still running**. Halting the core does not stop a
+DMA controller; it is a separate bus master.
+
+`RCC_AHB1ENR` = `0x08000023`: both DMA1 and DMA2 are clocked.
+
+| DMAMUX1 ch | request | stream | CR | pointed at |
+|---|---|---|---|---|
+| 0 | 88 SAI1_B | DMA1 S0 | ours | — |
+| 1 | 87 SAI1_A | DMA1 S1 | ours | — |
+| 2 | 62 SPI3_TX | DMA1 S2 | `0x00030440`, EN=0 | the panel, idle |
+| **9** | **87 SAI1_A** | **DMA2 S1** | **`0x000e2d41`, EN=1** | `0x30023de0` / `0x30025de0` |
+| **13** | **88 SAI1_B** | **DMA2 S5** | **`0x00062d11`, EN=1** | `0x30027de0` / `0x30029de0` |
+
+Both live streams are circular, double-buffered, half-word, and wired to
+`SAI1_Block_A->DR` (`0x40015820`) and `SAI1_Block_B->DR` (`0x40015840`).
+That is the stock firmware's audio transport, and it has been running
+through every run of this bring-up.
+
+`0x2200` is what `sai1_dma_start()`'s scan reports on **the first load
+after a power cycle** — channels 9 and 13 — and `0x0000` on every reload
+after it, because by then this firmware has unwired them and the factory
+image has not run since. Both were measured; zero is the right answer
+for a reload and the wrong one for a cold boot.
+
+Two consequences, one harmless and one not:
+
+- **It writes into D2 SRAM at `0x30000000`.** This image lives entirely
+  in AXI SRAM at `0x24000000`, so nothing of ours has ever been
+  corrupted by it. That is luck, not design, and it is a reason to keep
+  the linker script where it is.
+- **It shares the request line.** Harmless while the SAI is polled,
+  because `DMAEN` is clear in both blocks and a peripheral that makes no
+  requests feeds no stream — and then it cost exactly half the receive
+  stream the moment our firmware set `DMAEN`. `sai1_dma_start()` now
+  scans all sixteen multiplexer channels and takes back any that names
+  one of its requests. The same is owed to SPI3_TX before the panel
+  moves to DMA. `WORKING.md`'s trap 16 has the symptom.
 
 ### Display throughput **[measured]**
 
@@ -844,7 +1163,7 @@ handled.
 FRAM is a better home for settings than flash — no wear levelling, no erase
 blocks, no write-cycle budget.
 
-### Controls
+### Controls **[measured]**
 
 Two rotary encoders — `RENC1` on `PC0`/`PC1`, `RENC2` on `PC2_C`/`PC3_C` —
 each with a push-button, plus `ENC_BUT` on `PA1` and the standby button SW3
@@ -852,8 +1171,652 @@ on `PC13`. All encoder lines have 1 nF to ground (C61/C62/C66/C67).
 
 The DEEPSDR 101 has one encoder. The second one is free UI budget.
 
+**Both work, confirmed on the radio 05/11/2026.** Each common terminal
+goes to ground, A and B carry nothing but their 1 nF cap, and there is
+**no external pull anywhere** — so the MCU's internal pull-ups are not
+optional, they are the circuit. With them on, a line floats high when
+its contact is open and both lines read 0 at a detent, which is an
+EC11's resting state and is easy to mistake for a short. Turning
+produces the textbook cycle:
+
+    00 -> 10 -> 11 -> 01 -> 00
+
+four quarter-steps a detent, which is what upstream's
+`QUARTER_STEPS_PER_DETENT = 4` expects. 297 line changes in twenty
+seconds of ordinary turning.
+
+**Which knob is which:** the small one on top is `RENC2`, the big one
+below it is `RENC1`. First read off the order the two were turned in
+against the order the pins moved — one report, and the weakest thing in
+the section. Then confirmed from the other side, which is why it is
+`[measured]`: with the driver moved to `PC0`/`PC1`, turning the **big**
+knob tuned the receiver and turning the small one did nothing. The peak
+ran +19 875 → −37 125 Hz monotonically, with no reversal, and then held
+for 169 console lines while the small knob was being turned.
+
+The driver is on `RENC1`, the big knob, because that is the one a hand
+reaches for to tune.
+
+#### The push-buttons are a RESISTOR LADDER, not GPIOs **[measured]**
+
+This is the part no pin map can carry, and it is on page 3 of
+`Malahit_schematics_15012020.pdf`: `ENC_BUT` is one analog line shared by
+both buttons.
+
+**The voltages are measured, and the schematic's resistor values do not
+produce them** (05/11/2026, `test_adc()`, 16-bit conversions on
+`ADC1_INP1`):
+
+| | `ENC_BUT` measured | counts | what 47k/68k/22k predicts |
+|---|---|---|---|
+| idle | 3.300 V | 65503–65535 | 3.30 V |
+| **big knob** (ENC1) | **2.498 V** | 49599–49712 | 1.95 V |
+| **small knob** (ENC2) | **1.656 V** | 32809–32917 | 1.05 V |
+| both | **1.423 V** | 28246–28359 | 0.86 V |
+
+Every press reads high against the arithmetic, so R18/R19 are not the
+68 kΩ and 22 kΩ read off page 3. Working backwards, the two branches are
+about **3.11 and 0.99 times the top resistor** — 146 kΩ and 47 kΩ if the
+top one is really 47 kΩ.
+
+> **Why these three plateaus are certainly the three button states.** The
+> third one predicts itself: if "both" is the two branches in parallel,
+> its voltage follows from the other two with **no resistor value and no
+> reference voltage anywhere in the arithmetic** — the scale cancels. That
+> gives 1.418 V against 1.423 V measured, a fifth of a per cent. So the
+> identification rests on neither the schematic nor `VREF+`.
+>
+> **Which knob is which** was settled by the hand: big pressed first,
+> small second, both third, and the plateaus arrived in that order.
+
+Each class holds to within about 113 counts, against gaps of 4592
+between neighbours, so the classification has nearly two orders of
+magnitude of margin. `src/adc.c` puts its thresholds at the midpoints
+with a dead band, and keeps them as **fractions of full scale**: the
+ladder's top goes to the same 3.3 V rail that feeds `VREF+`, so a sagging
+rail moves the ladder and the full scale together and the ratio does not
+move at all.
+
+On a 3.3 V input `VIL` is 0.99 V and `VIH` is 2.31 V, so **the big knob's
+press at 2.498 V is above `VIH` and the small one's at 1.656 V is in the
+undefined band** — which is the measured version of the same conclusion
+the predicted voltages reached: two buttons on one pin can only be told
+apart by measuring, and this one cannot be read as a GPIO at all. The
+first attempt here did read it as a GPIO, got the idle level, and
+announced it as a press.
+
+`SYSCFG_PMCR`, as the factory firmware leaves it, is **`0x01000000`**
+(measured 05/11/2026, and printed by `test_adc()` on every run): `PA0SO`
+set, so the battery pad's analog switch is **open**; `PA1SO` **clear**,
+so `ENC_BUT`'s switch is **CLOSED** and that pad reaches the digital port
+`PA1` as well as the converter. `PC2SO`/`PC3SO` clear too, which is why
+`PC2`/`PC3` work as ordinary GPIOs for the second encoder.
+
+> **This contradicts an earlier note here**, which recorded `0x03000000`
+> and both switches open, and the earlier one is the one to distrust: it
+> was read once, in passing, while the subject was the encoder's digital
+> lines. The value above is printed by a test whose whole job is this
+> register.
+>
+> It does not change what the firmware does — nothing here writes `PMCR`,
+> and a closed switch leaves the ladder undisturbed because `PA1`'s reset
+> state is analog with no pull. What it changes is the explanation: with
+> the switch closed there IS something on `PA1` to read as a GPIO. It
+> would read the ladder through the input buffer, which for one of the two
+> presses sits in the undefined band — so the pin is still unreadable as a
+> digital input, for a different reason than the one written down before.
+
+#### Which ADC channel, settled by measurement **[measured]**
+
+No STM32H743 datasheet is in `../../docs/`, and this file's rule is that
+a pin map gets quoted rather than remembered. So the channels were
+identified on the radio by `test_adc_pins()`, which reads the four
+candidates with `PCSEL` narrowed to **one at a time** and prints them
+(05/11/2026):
+
+| channel | counts | behaviour | verdict |
+|---|---|---|---|
+| 0 | 1 568 | wanders 927–1 984 | pad connected to nothing |
+| 1 | 65 534 | steady, and followed the finger | **a mirror — see below** |
+| **16** | **41 460** | steady 41 439–41 500 | **`ADC_IN`** |
+| 17 | 5 528 → 28 400 | wandered over 23 000 counts | **`ENC_BUT`** |
+
+> **The `ENC_BUT` row was wrong for a day, and the way it was wrong is
+> worth keeping.** `PA1` has a second, analog-only pad with its own
+> channel and an analog switch between the two, and `SYSCFG_PMCR` holds
+> that switch — set by the **factory firmware**, before our image runs.
+> On the day of the table above it was CLOSED, so channel 1 was a mirror
+> of channel 17 and the finger confirmed the mirror. A power cycle later
+> it came up open, channel 1 went floating, and every button in the radio
+> reported itself held down for ever.
+>
+> `adc_init()` now **writes** `PMCR` rather than reading it, opening both
+> switches every time, so both nets sit on the pads this board bonds:
+> **`ENC_BUT` on channel 17, `ADC_IN` on channel 16**. The asymmetry
+> noted below — one net apparently on a `_C` channel and one on a plain
+> one — was the clue, and it was shrugged at.
+
+**Channel 16 is the battery, confirmed against a multimeter** rather than
+against a pin table: the meter read **4.15 V** at the cell, the schematic
+makes `ADC_IN` the midpoint of two 10 kΩ resistors across it, and 41 460
+counts doubled is **4.17 V** — six parts in a thousand.
+
+The asymmetry — one net on a `_C` channel and the other on a plain one —
+is not explained here and does not need to be. It would take the
+package's own pin map to say which pad each pin bonds, and both channels
+are confirmed by physical evidence, which outranks a pin map.
+
+> **An earlier note here had the battery on channel 0, reading 3.05 V at
+> the cell.** That was not a battery reading at all. `PCSEL` was being
+> OR-ed rather than set, so the floating channel 0 was being read with
+> the saturated `ENC_BUT` channel preselected alongside it and was
+> dragged to a steady, plausible, entirely fictional 1.53 V. With one
+> channel preselected at a time it wanders between 0.05 and 0.1 V, which
+> is what an unconnected pad should look like. **A number that is stable
+> is not thereby a measurement.**
+
+#### The battery **[measured]**
+
+`ADC_IN` is `ADC1_INP16`, the midpoint of R34/R36 (10 kΩ each) from
+ground to `BAT`, with C78 100 nF across the lower half. **No diode
+anywhere in that path** — the DEEPSDR's battery sense has one and this
+board does not, so nothing has to be added back.
+
+    V_cell = 2 x V_pin
+
+`VREF+` is **measured, not assumed** — see the next section. The firmware
+converts the part's own bandgap every millisecond and divides, so the
+rail is followed rather than described.
+
+#### The rail, measured against the chip's own bandgap **[measured]**
+
+`VREFINT` is a ~1.2 V reference that does **not** move with the supply,
+so converting it *against* the supply measures the supply:
+
+    VDDA = 3300 mV x VREFIN_CAL / raw
+
+On this part the internal channels are on **ADC3**, which is why there
+are two converters in `src/adc.c`. Both facts needed to use it are
+datasheet facts and there is no datasheet in `../../docs/`, so both were
+established on the radio (05/11/2026):
+
+- **The channel is `ADC3_INP19`.** Every ADC3 channel was read with the
+  bandgap switched off and again with it on. Channel 19 moved by
+  **11 200 counts** (13 148 → 24 348); no other channel moved by more
+  than 512.
+- **ST's factory calibration is at `0x1FF1E860`** and reads **24 327**,
+  which is inside the only window a 16-bit conversion of a 1.18–1.24 V
+  reference against 3.3 V can occupy. The two neighbours are plausible
+  too — `0x1FF1E820` = 12 375 and `0x1FF1E840` = 16 418, the temperature
+  sensor's two calibration points, the second higher than the first as
+  it must be. A wrong base address does not produce three sensible
+  numbers in a row.
+
+| route to VDDA | result |
+|---|---|
+| this die's factory value | **3 298 mV** |
+| the bandgap's nominal 1 216 mV | 3 274 mV |
+| the multimeter, via the cell | 3 280 mV |
+
+Within 0.7 % of each other, and **only the third did not come out of
+this chip** — which is the only one that could have caught the other two
+agreeing on something wrong. The firmware uses the factory value: it
+removes the bandgap's part-to-part spread, which the nominal cannot.
+
+> **What is left is the divider, and the reference cannot fix it** — two
+> 10 kΩ resistors at 1 % allow about 40 mV at a full cell, and a ratio
+> error is invisible from inside the chip. Checked from outside
+> 05/11/2026: the radio said **4 163 mV**, the meter **4.16 V**.
+>
+> **No trim was applied, and that is the result.** The meter reads to
+> 10 mV, so its answer covers 4 155–4 165 and the radio's number is
+> inside it. The disagreement is smaller than the resolution of the
+> instrument measuring it, so a constant fitted to it would be fitting
+> the meter's last digit. `ADC_BAT_TRIM_PPT` stays 0 and
+> `test_bat_calib()` prints the table to read it off, for the day a
+> millivolt-resolution meter is at hand.
+
+#### The die thermometer **[measured]**
+
+Same converter, same method, its own enable bit: **`ADC3_INP18`** moved
+by **9 369 counts** when `TSEN` was switched on, against 11 045 for the
+bandgap on channel 19. Each was found by toggling *its own* bit — a
+difference test identifies only what it actually switched, and the first
+version of this test switched `VREFEN` twice and then named the
+runner-up, which was simply an unconnected pad drifting.
+
+ST measures the sensor at 30 °C and 110 °C, both at 3.3 V, and leaves
+the two readings in system memory. They are believed because the pair
+only makes sense one way:
+
+| | counts | at 3.3 V |
+|---|---|---|
+| `TS_CAL1` (`0x1FF1E820`) | 12 375 | 623 mV at 30 °C |
+| `TS_CAL2` (`0x1FF1E840`) | 16 418 | 827 mV at 110 °C |
+| slope | 50.5 counts/°C | **2.537 mV/°C** |
+
+A silicon sensor of this kind sits near 620 mV at 30 °C and climbs about
+2.5 mV/°C. **Both land where they must — an offset and a slope,
+independent of each other — out of two words that were only read.** No
+other reading of them (12 bits, a different pair of temperatures, a
+different reference) produces two textbook figures at once.
+
+    T = 30 + (raw x VDDA / 3300 - TS_CAL1) x 80 / (TS_CAL2 - TS_CAL1)
+
+The `VDDA / 3300` is not decoration: both calibration points were taken
+at 3.3 V, so a reading against another rail has to be referred back
+before it is compared with them. Skip it and the thermometer drifts as
+the battery sags — about half a degree at 3.28 V.
+
+**Measured: 40.5 °C.** That is the **die**, not the room: at 480 MHz
+this part runs well above ambient, so a reading near the room
+temperature would be the suspicious one.
+
+The percentage in the header pill is a **straight line from 3.3 V to
+4.2 V**, which is the weakest number on that screen. A lithium cell's
+real curve is flat through the middle of its charge, so a line reads high
+for most of a discharge and then falls off quickly, and a cell on charge
+sits above its resting voltage besides. Upstream's `battery.c` does
+exactly the same thing — it was read in the hope of grafting a real
+curve, and it has two constants and an interpolation.
+
 ### USB
 
 OTG_FS on `PA11`/`PA12`, ID on `PA10`, VBUS sense on `PA9` through JP2.
 Micro-B connector J3, 33 Ω series (RN4). Also the charge input for the
 TP4056.
+
+---
+
+## 7. THE ADD-ON BOARD — it is in the signal path and we do not drive it
+
+**This unit has the optional add-on board fitted between the antenna and
+the main PCB.** Two sources, and they are not interchangeable:
+
+- `docs/Receiver20_Optional_PCB_EN.pdf` — **the vendor's own schematic**,
+  and the authority for the connector mapping and the fitting notes.
+- `~/Projects/Radio/MalahitDSP/MalahitAddonBoard/` — a KiCad rebuild of
+  the same board. Good for connectivity, and its netlist is where the
+  tables below come from — but its `J2` is drawn with the **main
+  board's** 8-pin numbering, not the add-on's 10-pin one, and its 2021
+  netlist predates the `J6` its own 2023 schematic shows. Check it
+  against the vendor PDF before trusting a pin number from it.
+
+> ### Read this before trusting any level measured so far
+>
+> Every RF measurement in this file was taken **through this board**,
+> and our firmware has never written a single bit to it. So it has been
+> sitting in whatever state the factory firmware last left — which
+> includes **up to 31.5 dB of attenuation** and a choice of four
+> filters, one of which would reject the 10 MHz test signal almost
+> entirely.
+>
+> The stock firmware's display says `ATT 30` on this bench, and the
+> radio's owner confirms that **the factory firmware leaves this
+> board's attenuator at 30 dB**. So thirty decibels of the signal path
+> were unaccounted for in everything above — not "if", measured.
+>
+> It is the "loading over SWD resets nothing" lesson one level further
+> out: not an inherited *register*, an inherited *board*.
+>
+> And the relay is **latching** (HFD2/003-S-L2, two coils), so its
+> position survives a power cycle. There is no default state to fall
+> back on, for it or for the shift register's output latch.
+
+### What is on it
+
+- **High-Z input** — 2SK544 JFET follower into a TC4-1+ 4:1 transformer,
+  selected by the latching relay K1 against the direct 50 Ω path.
+- **PE4312 digital step attenuator** (DD1), 6 bits, 0.5 dB steps,
+  0–31.5 dB.
+- **A second filter bank** — two PE42641 SP4T switches (U3 in, U4 out)
+  around four filters: a 0.5–1.5 MHz bandpass, a 1.5–4.5 MHz bandpass,
+  a 4.5 MHz highpass and a 500 kHz lowpass.
+- **74HC595 shift register** (U2) driving all of it.
+- Its own LDO (LD3985M33, `3v3sw`) enabled by `Vext_ON`.
+
+### The control interface — the two sides of the harness
+
+Six signals, and that is the whole interface. **The two ends are
+numbered differently and it is easy to describe the wrong one** —
+`docs/Receiver20_Optional_PCB_EN.pdf` is the vendor's own drawing and
+carries the mapping as a legend, "Connecting pins: Add. board – Main
+board". Its note says the link is made "by soldering pieces of any
+wire" between the two, so there is no cable to inspect either.
+
+| add-on J2 (10 pins) | signal | vendor's main-board pin (8 pins) |
+|---|---|---|
+| 1 | `+BAT` | +BAT |
+| 2 | `Vext_ON` — enables the LDO: no power, no board | 1 |
+| 3 | `REL_R_ON` — relay RESET coil (latching) | 2 |
+| 4, 5 | not connected | NC |
+| 6 | `REL_S_ON` — relay SET coil (latching) | 3 |
+| 7 | `595DIN` — 74HC595 SER | 6 |
+| 8 | `595LE` — 74HC595 RCLK, 47 kΩ pull-down | 4 |
+| 9 | `595CLK` — 74HC595 SRCLK | 5 |
+| 10 | `GND` | GND |
+
+**The vendor's main-board side is an 8-pin connector and this radio's
+is the 10-pin `J7`**, so the legend's right-hand column does not apply
+here directly: J7 carries `BAT`, then `PD15` down to `PD8`, then `GND`.
+Wiring J2 straight through to J7 pin-for-pin is therefore **wrong**,
+and the live registers prove it — that mapping would put `Vext_ON` on
+`PD15`, which is configured as an *input*.
+
+What this unit actually uses is in "The MCU pins" below, taken from the
+firmware that drives it.
+
+`OE` is tied to ground, so the outputs are always enabled. `SRCLR` is
+held by an RC from `3v3sw` (47 kΩ, 1 µF ≈ 47 ms), which clears the
+**shift register** at power-up — but *not* the output latch, so the
+outputs come up undefined until something clocks RCLK.
+
+### The shift-register byte
+
+Shifting MSB first, the **first bit sent ends up at QH**:
+
+| bit | pin | signal |
+|---|---|---|
+| 7 | QH | `ATT_DATA` |
+| 6 | QG | `ATT_CLK` |
+| 5 | QF | `ATT_LE` |
+| 4 | QE | `BPFE12` — U3 (input switch) V2 |
+| 3 | QD | `BPFE11` — U3 V1 |
+| 2 | QC | `BPFE22` — U4 (output switch) V2 |
+| 1 | QB | `BPFE21` — U4 V1 |
+| 0 | QA | not connected |
+
+**The attenuator is programmed THROUGH the shift register.** Its
+`DATA`, `CLK` and `LE` are three of the 595's outputs, so each bit sent
+to the PE4312 costs three whole 595 writes — set data, raise clock,
+lower clock. Around 160 clock edges for one attenuation change, which
+is slow and completely acceptable. The filter bits must be held
+unchanged throughout, or the band switches while the attenuator is
+being written.
+
+### The filter switches **[measured]** — the same trap as the main board
+
+The two PE42641s put the same filter on **different port numbers**, so
+`BPFE1x` and `BPFE2x` need **different** values. Exactly as in §6, and
+with the same consequence: writing the same code to both ends joins the
+input of one filter to the output of another, and the result is not a
+weak signal but **no** signal.
+
+| filter | U3 (in) | U4 (out) | byte |
+|---|---|---|---|
+| 1.5–4.5 MHz | RF1 (0,0) | RF3 (0,1) | `0x22` |
+| 0.5–1.5 MHz | RF2 (1,0) | RF4 (1,1) | `0x36` |
+| **4.5 MHz highpass** | RF3 (0,1) | RF1 (0,0) | **`0x28`** |
+| 500 kHz lowpass | RF4 (1,1) | RF2 (1,0) | `0x3c` |
+
+(Bytes include `ATT_LE` = `0x20`, which is the attenuator lines' resting
+value — see below.)
+
+**Established by sweeping all sixteen codes**, not by reading a
+drawing, because the two drawings disagree about U4's port order and
+the vendor's turned out to be the right one. Against the 10 MHz
+carrier, exactly one code passed:
+
+| | peak | snr |
+|---|---|---|
+| E12=0 E11=1 E22=0 E21=0 | **136 dB** | **56 dB** |
+| E12=0 E11=0 E22=0 E21=1 | 99 dB | 23 dB |
+| the other fourteen | 84–87 dB, peak wandering | 8–11 dB |
+
+The second row is the confirmation worth having: a 10 MHz carrier
+37 dB down through a **1.5–4.5 MHz bandpass** is a real filter's
+stopband, and it lands on the one code the same truth table predicts
+for that filter. Two independent rows, one table.
+
+With the gain set once on the passing filter so that nothing clips —
+a rejection measured against a clipped reference is not a rejection —
+the bank measures:
+
+| filter | peak | rejection at 10 MHz |
+|---|---|---|
+| 4.5 MHz highpass | 126 dB, snr 70 dB | — passes |
+| 1.5–4.5 MHz | 89 dB | **37 dB** |
+| 500 kHz lowpass | 72 dB | **54 dB** |
+| 0.5–1.5 MHz | 59 dB, into the noise | **67 dB** |
+
+The ordering is the physical one: the adjacent band rejects least, the
+far one most.
+
+> ### This file asserted the opposite, on the rebuild's authority
+>
+> The first driver took the port order from the KiCad rebuild, whose
+> U4 lists its four ports differently from the vendor's schematic, and
+> this section confidently said the trap was *not* here. The four codes
+> it produced — `0x00`, `0x14`, `0x0A`, `0x1E` — are four of the
+> fourteen that connect nothing.
+>
+> The warning at the top of this section, that the rebuild must be
+> checked against the vendor PDF before a pin number is taken from it,
+> was written two hours earlier **by the same hand that then did not
+> check**. Writing a caveat down is not the same as applying it.
+>
+> Sixteen combinations is a minute of bench time and settles the
+> question against both drawings at once. §6 reached the main board's
+> bank the same way, by sweeping all 64.
+
+### The attenuator
+
+`P/S` (pin 13) is tied to `3v3sw`, and the six parallel control pins are
+all commoned through a single 10 kΩ to ground — which can only mean
+**serial mode**, since in parallel mode those pins could only ever
+select 0 dB or 31.5 dB together. *Inferred from the wiring; the PE4312
+datasheet is not in `docs/` and should confirm it before the driver is
+believed.* `PUP1`/`PUP2` are pulled low through 10 kΩ, which sets the
+power-up attenuation state.
+
+`ATT_DATA` reaches the part through a 10 kΩ series resistor (R24),
+which is unusual on a logic line and slows the edge; at the speeds a
+bit-bang through a shift register runs, it does not matter.
+
+The programming sequence, instruction for instruction from the factory
+image:
+
+    ATT_LE = 0                      open the latch
+    six times:
+        ATT_DATA = next bit, MSB first
+        ATT_CLK  = 0
+        ATT_CLK  = 1                rising edge clocks it in
+    ATT_DATA = 0
+    ATT_LE   = 1                    rising edge latches, AND STAYS HIGH
+    ATT_CLK  = 0
+
+Each of those lines is a whole 595 write, so one attenuation change
+costs about twenty-two of them — a fraction of a millisecond.
+
+**The register is in half-decibels and the factory passes whole ones**,
+doubling on the way in (`lsls r5, r0, #1`), which is how both the step
+size and the bit order are known rather than guessed.
+
+> **`ATT_LE` rests HIGH**, and that is not obvious. The first version
+> of this driver forced it low on every filter write, reasoning that a
+> low latch line cannot produce a latch edge — true, and beside the
+> point, because it took the part out of the state it is left sitting
+> in. **Idle a line where the firmware that works idles it**, and
+> change only the bits being asked for.
+
+### And it attenuates by what it is told **[measured]**
+
+`test_addon_atten()` walks the **six individual bits** rather than
+round decibels, because each bit has twice the weight of the last and
+that makes four separate claims testable at once — bit order, step
+size, which edge latches, and whether the register counts decibels or
+halves:
+
+| code | asked | measured | error |
+|---|---|---|---|
+| 1 | 0.5 dB | 0.4 dB | +0.1 |
+| 2 | 1.0 dB | 1.0 dB | 0.0 |
+| 4 | 2.0 dB | 2.0 dB | 0.0 |
+| 8 | 4.0 dB | 3.8 dB | +0.2 |
+| 16 | 8.0 dB | 7.9 dB | +0.1 |
+| 32 | 16.0 dB | 15.7 dB | +0.3 |
+| 63 | 31.5 dB | 31.2 dB | +0.3 |
+| 0 | 0.0 dB | **0.0 dB** | exact return |
+
+**Within 0.3 dB over the whole 31.5 dB range.** The doubling down the
+measured column confirms the bit order; the fact that code 2 is 1 dB
+and code 32 is 16 dB confirms half-decibel steps; and the last row
+returning exactly to the reference is what distinguishes a part being
+programmed from one drifting.
+
+> ### A 1 dB instrument cannot check a 0.5 dB part
+>
+> The first run of this sweep read a tidy, systematic **1 dB short** at
+> every setting above 2 dB. A systematic error of that size and shape
+> looks like a real property of the part, and it was entirely in the
+> measurement: `(int32_t)pk.db` truncated both the reference and the
+> reading, so their difference lost up to a decibel.
+>
+> Reporting in tenths made the same sweep accurate to 0.3 dB. That the
+> instrument's resolution has to be finer than the thing it is checking
+> should have been settled before the measurement rather than after it.
+
+### The MCU pins **[measured, and read out of the factory firmware]**
+
+J2 goes to **J7** on the main board, the 10-pin header the schematic
+labels `OPTIONAL`: pin 1 is `BAT`, pins 2–9 are `PD15` down to `PD8`,
+pin 10 is `GND`. (The 2×7 header carrying `PB0`–`PB2`, `PE7`–`PE9` and
+`PD8`–`PD15` is **J6**, which is the debug-UART one and is not fitted
+on this unit.)
+
+The hand-soldered harness is **not** pin-for-pin, so which J7 pin
+carries which signal had to be measured rather than read off:
+
+| signal | pin | J7 | how it was established |
+|---|---|---|---|
+| `Vext_ON` | **PD9** | 8 | the only remaining driven output that is HIGH, and the LDO's INH is active-high with a 10 kΩ pull-down |
+| `REL_?_ON` | **PD8** | 9 | factory firmware, 10 ms pulse pair |
+| `REL_?_ON` | **PD11** | 6 | factory firmware, 10 ms pulse pair |
+| `595LE` | **PD10** | 7 | factory firmware, held low across the shift and raised at the end |
+| `595DIN` | **PD12** | 5 | factory firmware, set per bit from the MSB |
+| `595CLK` | **PD13** | 4 | factory firmware, toggled twice per bit |
+
+> **The two HIGH pins are exactly the two that should be high**, which
+> is the check that makes the rest of this credible rather than
+> plausible. `Vext_ON` must be high or the board has no power at all,
+> and the shift routine *ends* by raising `595LE` — so PD9 and PD10
+> reading 1, and every other one of them reading 0, is what this
+> assignment predicts and not something it was fitted to.
+
+`PD14` is a seventh driven output on the same header and is **not** one
+of these six; it is touched by a different routine and nothing here
+knows what it does. `PD15` is an input.
+
+Two sources, and they agree. First, the live registers: our firmware
+never writes port D above bit 1, so **the configuration the factory
+firmware left was still in `GPIOD->MODER` and `ODR` and could simply be
+read over SWD** — PD8–PD14 outputs, PD15 input, PD9 and PD10 high. That
+is the "loading over SWD resets nothing" rule finally being *useful*.
+
+Second, the factory image itself (`Firmware/dsp1_dump.bin`, plaintext
+Thumb). The relay pair is a textbook latching drive — set one line,
+clear the other, delay 10, clear the first — and the shift-out is
+unmistakable:
+
+    bic  #0x400     PD10 = 0            LE low for the whole shift
+    movs r5, #8
+    loop:
+      tst  #0x80    test the MSB        MSB FIRST
+      orr/bic #0x1000   PD12 = that bit DATA
+      lsls r3, #1
+      bic  #0x2000  PD13 = 0            CLK low
+      orr  #0x2000  PD13 = 1            CLK high, shifts
+      subs r5, #1; bne loop
+    bic  #0x1000    PD12 = 0
+    orr  #0x400     PD10 = 1            LE high, latches
+
+That also **confirms MSB-first**, so the byte layout above — first bit
+sent lands in QH — is the factory's own convention and not an
+assumption.
+
+### The relay is ours **[measured]**
+
+`test_addon_relay()` drives it, `src/addon.c` is the driver, and the
+first thing it established is audible: **the relay clicks.** PD8 and
+PD11 are the two coils, one 10 ms pulse each, and it latches.
+
+Through a 50 Ω cable from the generator, over two separate loads:
+
+| position | peak | ADC | floor | snr |
+|---|---|---|---|---|
+| as found (factory's own) | 123 dB | 48 % | 82 | 41 dB |
+| after PD8 | 123–124 dB | 49–51 % | 82 | 41 dB |
+| after PD11 | 120 dB | 31–37 % | 82 | 37 dB |
+
+So the factory firmware leaves it in **PD8's position**, and the two
+positions differ by a repeatable **3–4 dB** with an identical noise
+floor.
+
+> ### Three decibels is the right answer, and the first test called it a failure
+>
+> That test asked for tens of decibels and reported "the relay is not
+> switching" for a relay that was audibly switching. Two mistakes, both
+> about the circuit rather than the code:
+>
+> - **R19 and R20, the 470 kΩ pair, are a static drain to ground**, not
+>   940 kΩ in series with the signal. Nothing puts that in the path.
+> - **A High-Z input hardly loads a 50 Ω generator**, so it sees the
+>   full open-circuit voltage — 6 dB more than the matched case — and
+>   the source follower and the TC4-1+ give some of that back. A few
+>   decibels between the two paths is what the physics predicts.
+>
+> The lesson is not "use a smaller threshold". It is that a threshold
+> is a prediction, and this one was never checked against the circuit
+> before being used to judge the hardware.
+
+### And PD8 is the 50 Ω input **[measured]**
+
+Settled without a whip, by letting the firmware that has the *label*
+choose the position and then asking which of our coils reproduces it:
+the stock UI was set to **50 Ω**, this image was loaded, and the level
+was read **before either coil was touched**.
+
+| | peak | ADC |
+|---|---|---|
+| **as found, untouched** | **123 dB** | **52 %** |
+| after PD8 | 124 dB | 51–54 % |
+| after PD11 | 120 dB | 32–37 % |
+
+Zero decibels from PD8 and three from PD11, and the ADC column says the
+same thing more plainly. So **PD8 selects 50 Ω and PD11 selects
+High-Z**, and `addon.c` names them `addon_input_50r()` and
+`addon_input_highz()` rather than A and B.
+
+Two details that make this an experiment rather than a reading:
+
+- **The gain is fixed at 16 dB for all three**, not autoranged.
+  `rf_autorange()` exists to hold the converter near half scale, so
+  letting it run between the readings would have quietly cancelled the
+  very difference being measured.
+- **All three are in one run**, so nothing about the bench can drift
+  between the numbers being compared.
+
+> The first version of the decision rule demanded the nearer candidate
+> be two whole decibels nearer, got 1 dB against 3 dB, and printed
+> "cannot tell" on the run that answered the question. A fixed margin
+> between two distances is the wrong shape of test when the quantity
+> being resolved is itself only three decibels; the natural dividing
+> line is **half the gap between the two candidates**, which is what it
+> uses now.
+
+### What is still open
+- **What PD14 does.** It is driven, it is on this header, and it is not
+  one of the six.
+- **The RF topology through J6/J3 on the add-on board.** The 2021
+  netlist predates the `J6` that the 2023 schematic shows, so the
+  through-path is read off the drawing and not yet confirmed from a
+  netlist. The vendor's own note is the practical statement of it:
+  *"The output of the additional board is connected to the input of the
+  UFL–UFL receiver board with a pigtail"*, and the standard SMA–UFL
+  pigtail has to be dismantled to fit it. So the add-on board is in
+  **series** ahead of the receiver, not a branch — there is no bypass.
+- **The PE4312 `P/S` polarity**, inferred from the wiring above. The
+  datasheet is not in `docs/`.
+
+None of these blocks writing the driver; all four want checking before
+any level measured through this board is quoted again.

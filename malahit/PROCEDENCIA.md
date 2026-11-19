@@ -28,6 +28,7 @@ directly — no copy, no fork, objects prefixed `up_` and `dsp_`:
 | `User/gfx2.c` | 969 |
 | `User/gfx.c` | 385 |
 | `User/spectrum.c` | 2078 |
+| `User/encoder.c` | 332 |
 | `User/spec_rotulos.c` | 846 |
 | `User/idioma.c` | 60 |
 | `User/fonts_data.c` | glyph tables |
@@ -37,8 +38,9 @@ Those are part of the same AGPL-3.0 work and raise no new licence
 question. ARM's CMSIS-DSP sources carry Apache-2.0 headers, same as the
 CMSIS-Core headers below.
 
-**One upstream file has been modified**, and it is recorded here so the
-divergence is never a surprise:
+**Several upstream files have been modified** — it said "one" long after
+there were eight, which is the sort of count that goes stale silently —
+and each is recorded here so the divergence is never a surprise:
 
 - `User/gfx2.h` — `GFX2_W` and `GFX2_H` wrapped in `#ifndef`, so the
   screen size can be set from the build. Generic, follows the pattern
@@ -64,6 +66,52 @@ divergence is never a surprise:
   layout made before now. All three now keep their distance from
   `GFX2_W`, and the battery's four numbers became `HDR_BAT_*`. At 800
   px wide every one of them produces the number it produced before.
+
+- `User/encoder.c` — the three pin pairs (`ENC_A_PORT`/`PIN`,
+  `ENC_B_*`, `ENC_BTN_*`) wrapped in `#ifndef`, so a second board can
+  say where its encoder is wired; plus `ENC_BTN_PRESSED`, which says
+  **which level is a press**, because that is a property of the board
+  and not of the decoder — the DEEPSDR's switch goes to Vcc and this
+  one's goes to ground. The two levels used to be spelt out inline, in a
+  comparison against `SET` and a hard-coded pull-down; they are now one
+  `btn_read()` that returns "pressed" and a `ENC_BTN_PUPD` that asks for
+  the pull which holds the line at its IDLE level. Everything else in
+  the file — the quadrature table, the debounce integrator, the hold
+  timer, the short/long classification — was already written in terms of
+  "the debounced state is a press" rather than a voltage, which is why
+  this change reaches three lines and not thirty.
+
+- `User/encoder.c`, second edit — **`ENC_BTN_READ`, for a button that is
+  not a pin at all.** Defined, it names a function the board supplies and
+  that function becomes the whole of the reading: no port, no pin, no
+  pull, and `ENC_BTN_PRESSED` stops meaning anything. The Malahit is why.
+  Both of its encoder buttons sit on **one** analog line through a
+  resistor ladder, so one of the two presses puts it at 1.95 V — on a
+  3.3 V input that is neither a low nor a high but the undefined band in
+  between, and no pull or polarity can rescue it. It takes an ADC and two
+  thresholds.
+
+  The guard is in `encoder_init()` as well, and that one is not
+  tidiness: `ENC_BTN_PORT`/`PIN` still carry their upstream defaults, so
+  an unguarded `gpio_mode_set()` would configure whatever they name —
+  on this board `PC9`, the touch controller's I²C data line. An encoder
+  driver writing a pull-up onto a bus is a fault nobody would look for
+  there. Verified by preprocessing the file with this port's flags: two
+  `gpio_mode_set()` calls survive, for bits 0 and 1 of port C, and none
+  for the button.
+
+  Everything below the reader is untouched, which is the point of doing
+  it here: the debounce integrator, the hold timer, the short/long
+  classification on release and the "pressed and turned" consumption all
+  keep working for a board whose button is a voltage. A second copy of
+  any of them would have been the alternative.
+
+`User/encoder.c` is also **compiled twice**, the second time with its
+public names renamed through `-D` so the board's second encoder gets its
+own copy of the file's statics. That is not a modification — the source
+is identical and unmodified in both objects — but it is worth recording
+next to them, because `encoder2_tick()` exists with no definition to
+find. See `ENC2_RENAME` in `bringup/reglas.mk` and `src/enc2.h`.
 
 All of them are generic: a constant becoming configurable, or a literal
 becoming a named expression. None adds anything Malahit-specific, and

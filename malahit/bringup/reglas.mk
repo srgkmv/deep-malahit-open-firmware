@@ -242,6 +242,128 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/spectrum.c
 # remaining literals overridable are generic, are upstream's own
 # #ifndef pattern, and are recorded in PROCEDENCIA.md.
 #
+#
+# encoder.c - 241 lines of quadrature decoding, button debouncing and
+#           short/long press classification, of which four lines touch a
+#           register. It wants encoder_tick() at 1 kHz and this board
+#           already has a 1 kHz SysTick with a handler, so the graft
+#           needs no new interrupt and no new vector - which matters,
+#           because startup_stm32h743.S has a name for none of the 150
+#           external ones.
+#
+#           THE PINS COME FROM HERE. Upstream's six defines are #ifndef
+#           now (PROCEDENCIA.md), so this is where this board's wiring
+#           lives: BOARD.md section 5 has RENC1 on PC0/PC1 and the
+#           encoder button on PA1.
+#
+#           ENC_BTN_PRESSED says which level is a press, and this is a
+#           PREDICTION until test_encoder() has run with a finger on the
+#           button. The DEEPSDR's switch goes to Vcc and wants 1; the
+#           encoder's own A/B lines on this board are pulled UP by the
+#           factory firmware, which means its contacts go to ground, so a
+#           button wired the same way wants 0. The test probes the pin
+#           with both pulls and says which it is; a wrong guess here
+#           costs a button that never reports, not a confused one.
+#
+#           compat/gd32f4xx.h is what makes it compile: the four GPIO
+#           calls it needs, onto this chip's registers, and nothing else.
+#
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/encoder.c
+#           RENC1 BY CHOICE: the user wants the BIG knob to tune, and
+#           BOARD.md section 6 has the big one as RENC1. Which encoder
+#           the driver gets is a UI decision, not a capability - both
+#           work and both give a textbook Gray sequence, 00, 10, 11, 01.
+#           See test_encoder_lines().
+#
+#           NEITHER IS DEAD, though the first version of this comment
+#           said RENC1 was, as a measurement, and was wrong. It showed
+#           no movement across three runs and sixty seconds of supposed
+#           turning, which was read as a fault; the fourth run, with the
+#           same configuration, recorded 151 changes on it. The absences
+#           were windows nobody was standing in, the same mistake the
+#           audio test had already cost twice.
+#
+#           AND THE KNOB-TO-PIN MAPPING WAS THE WEAK LINK, so moving
+#           here was also the test of it. "Small on top = RENC2, big
+#           below = RENC1" came from the ORDER the two knobs were turned
+#           in against the order the pins moved - one report, with the
+#           hand out of reach of the oscilloscope. Confirmed from the
+#           other side on 05/11/2026: with these pins the BIG knob tunes
+#           and the small one does nothing, peak +19875 -> -37125 Hz
+#           monotonically and then still for 169 console lines while the
+#           small one was turned. Mapping and request agree.
+#
+#           PC0/PC1 also need nothing from SYSCFG_PMCR. PC2_C/PC3_C are
+#           dual-pad pins whose analog switches decide whether they
+#           reach the digital port at all; these two are ordinary.
+#
+#           THE BUTTON IS NOT A GPIO ON THIS BOARD, so it does not
+#           arrive as a port and a pin. ENC_BUT is a resistor ladder:
+#           47k to 3.3 V, 68k to ground for ENC1 and 22k for ENC2, which
+#           is 1.95 V and 1.05 V - one of them inside the input buffer's
+#           undefined band, where no pull and no polarity can help. Two
+#           buttons on one pin can only be told apart by measuring the
+#           voltage, which is why the factory firmware keeps PA1 in
+#           analog mode with its switch open.
+#
+#           ENC_BTN_READ names the function that answers instead, and
+#           upstream keeps everything else: the debounce integrator, the
+#           hold timer, the short/long classification on release and the
+#           "pressed and turned" consumption are all written in terms of
+#           "the debounced state is a press" and do not care where the
+#           press came from. src/adc.c supplies the answer from ADC1,
+#           sampled a millisecond at a time from SysTick.
+#
+#           The guard matters in encoder_init() too, and not for
+#           tidiness: ENC_BTN_PORT and ENC_BTN_PIN keep their upstream
+#           defaults, so an unguarded gpio_mode_set() would configure
+#           PC9 - the touch controller's I2C data line. See
+#           PROCEDENCIA.md for both edits.
+#
+#           The PC4 placeholder this replaced was the honest version of
+#           not having an ADC: a pin BOARD.md lists as NOT CONNECTED,
+#           with a press defined as the level its pull-up cannot produce,
+#           so the driver reported an idle button for ever instead of
+#           inventing presses. Not PC13, which was the first choice and a
+#           bad one: that is the standby button, and a real button in
+#           that slot would have reported real presses belonging to
+#           something else.
+DEFS += -DENC_A_PORT=GPIOC -DENC_A_PIN=GPIO_PIN_0
+DEFS += -DENC_B_PORT=GPIOC -DENC_B_PIN=GPIO_PIN_1
+DEFS += -DENC_BTN_READ=adc_enc1_down
+
+#
+# THE SECOND KNOB IS THE SAME FILE, COMPILED TWICE.
+#
+# This board has two encoders and upstream's encoder.c has file-scope
+# state, so it is a one-knob module: a second instance needs a second
+# copy of that state. The choices were to write a second decoder, to
+# restructure upstream's into something instance-based, or this.
+#
+# This is the one that costs nothing and copies nothing. A second
+# translation unit of the SAME source gets its own statics for free -
+# that is what a static is - and the public names are renamed on the
+# command line so the two do not collide. The second knob therefore
+# gets the identical quadrature table, the identical debounce
+# integrator and the identical short/long classification, already
+# tested on the first knob, with no new decoding code to be wrong in a
+# different way.
+#
+# What it costs is this comment: `encoder2_tick()` has no definition
+# anywhere to grep for, which is a surprise worth warning about once.
+# src/enc2.h declares the renamed names so the rest of the port can see
+# them normally.
+#
+ENC2_RENAME  = -Dencoder_init=encoder2_init
+ENC2_RENAME += -Dencoder_tick=encoder2_tick
+ENC2_RENAME += -Dencoder_take_delta=encoder2_take_delta
+ENC2_RENAME += -Dencoder_take_press=encoder2_take_press
+ENC2_RENAME += -Dencoder_take_long_press=encoder2_take_long_press
+ENC2_RENAME += -Dencoder_button_down=encoder2_button_down
+ENC2_RENAME += -Dencoder_consume_press=encoder2_consume_press
+ENC2_RENAME += -Dencoder_invertido_pon=encoder2_invertido_pon
+ENC2_RENAME += -Dencoder_invertido=encoder2_invertido
+
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/spec_chrome.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_top.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_act.c
@@ -305,6 +427,7 @@ LDLIBS   = -lm
 LDSCRIPT ?= stm32h743_ram.ld
 
 OBJECTS  = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
+OBJECTS += $(BUILD_DIR)/up_encoder2.o   # the second knob; rule further down
 OBJECTS += $(addprefix $(BUILD_DIR)/,$(notdir $(ASM_SOURCES:.S=.o)))
 OBJECTS += $(addprefix $(BUILD_DIR)/up_,$(notdir $(UPSTREAM_SOURCES:.c=.o)))
 OBJECTS += $(addprefix $(BUILD_DIR)/dsp_,$(notdir $(DSP_SOURCES:.c=.o)))
@@ -314,7 +437,22 @@ vpath %.c $(sort $(dir $(C_SOURCES)))
 
 all: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET).bin $(BUILD_DIR)/$(TARGET).hex
 
-$(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
+#
+# THIS FILE IS A PREREQUISITE OF EVERY OBJECT, and it has to be said
+# explicitly because -MMD cannot say it: the compiler lists the headers
+# it opened, and a -D that changes what a file COMPILES TO was never a
+# header. So a wiring change here - the encoder's pins are the live
+# example - left every .o untouched and `make` answered "nothing to be
+# done", which is the worst possible answer: the next load puts the
+# OLD image on the radio and the bench test then measures the previous
+# decision. Caught once; it must not be available to catch twice.
+#
+# The cost is that editing this file rebuilds everything. That is the
+# right trade for a file that holds the flags.
+#
+BUILD_RULES = reglas.mk GNUmakefile
+
+$(BUILD_DIR)/%.o: %.c $(BUILD_RULES) | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
 
 #
@@ -329,14 +467,31 @@ CFLAGS_FONTS = $(MALAHIT_FONTS)
 $(BUILD_DIR)/up_fonts_data.o: CFLAGS_FONTS =
 $(BUILD_DIR)/up_ui_top.o:     CFLAGS_FONTS = $(MALAHIT_FONTS_TOP)
 
-$(BUILD_DIR)/up_%.o: $(UPSTREAM_DIR)/%.c | $(BUILD_DIR)
+$(BUILD_DIR)/up_%.o: $(UPSTREAM_DIR)/%.c $(BUILD_RULES) | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $(CFLAGS_EXTRA_UPSTREAM) $(CFLAGS_FONTS) $< -o $@
 
 vpath %.c $(sort $(dir $(DSP_SOURCES)))
-$(BUILD_DIR)/dsp_%.o: %.c | $(BUILD_DIR)
+$(BUILD_DIR)/dsp_%.o: %.c $(BUILD_RULES) | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
 
-$(BUILD_DIR)/%.o: %.S | $(BUILD_DIR)
+#
+# THE SECOND KNOB'S OBJECT, and it lives DOWN HERE for a reason that
+# cost a confused minute: the first target in a makefile is the default
+# goal, and this rule sitting up with the ENC2_RENAME flags made
+# `make` build one object file and stop, reporting it as up to date.
+# Nothing failed and nothing was linked. Same family as the -D that
+# did not trigger a rebuild (WORKING.md trap 20): the build system
+# quietly did something other than what was asked.
+#
+$(BUILD_DIR)/up_encoder2.o: $(UPSTREAM_DIR)/encoder.c $(BUILD_RULES) | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $(CFLAGS_EXTRA_UPSTREAM) $(ENC2_RENAME) \
+	      -UENC_A_PIN -UENC_B_PIN -UENC_BTN_READ \
+	      -DENC_A_PORT=GPIOC -DENC_A_PIN=GPIO_PIN_2 \
+	      -DENC_B_PORT=GPIOC -DENC_B_PIN=GPIO_PIN_3 \
+	      -DENC_BTN_READ=adc_enc2_down \
+	      $< -o $@
+
+$(BUILD_DIR)/%.o: %.S $(BUILD_RULES) | $(BUILD_DIR)
 	$(AS) -c $(ASFLAGS) $< -o $@
 
 $(BUILD_DIR)/$(TARGET).elf: $(OBJECTS) $(LDSCRIPT)
