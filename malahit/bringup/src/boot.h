@@ -57,4 +57,12 @@ int  boot_power_key(void);
  * comes from). Never returns: waking is a reset. */
 void boot_standby(void) __attribute__((noreturn));
 
+/*
+ * The power button for a firmware that has stopped: polled, with no
+ * SysTick and interrupts masked. fault_park() ends here. Held for
+ * BOOT_POWER_OFF_MS it switches off exactly as boot_power_tick() does;
+ * until then it only waits. Never returns.
+ */
+void boot_power_park(void) __attribute__((noreturn));
+
 #endif /* MALAHIT_BOOT_H */

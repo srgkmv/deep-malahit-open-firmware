@@ -1,6 +1,7 @@
 #include "stm32h7xx.h"
 #include "fault.h"
 #include "console.h"
+#include "boot.h"         /* boot_power_park() */
 
 /*
  * Everything here runs with the machine already broken, so it does as
@@ -32,10 +33,25 @@ static void fault_park(void)
      * Written straight to the register rather than through
      * board_watchdog_feed(), because this runs after a fault and
      * should not depend on anything that might be what broke.
+     *
+     * The console's ring goes out first: from the display loop on,
+     * output is buffered, and the bytes still queued are the last
+     * thing the run said before it crashed. console_flush() polls with
+     * interrupts left masked and is bounded by the ring's size.
      */
-    for (;;) {
-        IWDG1->KR = 0xAAAAU;
-    }
+    console_flush();
+
+    /*
+     * AND THE POWER BUTTON STILL WORKS. Interrupts are masked here, so
+     * boot_power_tick() - which lives in SysTick - is dead, and nothing
+     * starts the watchdog in this firmware: until 20/11/2026 a crash
+     * left a frozen radio that could not be switched off at all.
+     * boot_power_park() polls the button, still feeds the watchdog in
+     * case anything ever starts it, and switches off on a 3 s hold.
+     * The core stays halt-able throughout - that was the point of
+     * parking.
+     */
+    boot_power_park();
 }
 
 void fault_record(uint32_t *frame, uint32_t exc_return)

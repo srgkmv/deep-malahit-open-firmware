@@ -1,5 +1,6 @@
 #include "boot.h"
 #include "stm32h7xx.h"
+#include "clock.h"          /* clock_sysclk_hz, for boot_power_park() */
 
 /*
  * ROM DFU ON THE ENCODER BUTTONS - THE FACTORY FIRMWARE'S OWN RECIPE.
@@ -272,6 +273,21 @@ void boot_standby(void)
     }
 
     /*
+     * AND NO SYSTEM EXCEPTION LEFT PENDING, or the WFI below never
+     * sleeps: WFI wakes on anything pending even with PRIMASK set, and
+     * stopping SysTick does not un-pend a tick. From SysTick's own
+     * handler - the button in normal use - the tick is active, not
+     * pending, so it never showed. From boot_power_park(), after a
+     * crash with interrupts masked, a tick had been pending all along:
+     * found 20/11/2026 with the backlight dark and the speaker off and
+     * the MCU still powered, spinning through WFI - a radio that looked
+     * off and was draining the battery. Read on the radio: ICSR
+     * 0x0440F000, SysTick pending; cleared over SWD, it went into
+     * standby at once.
+     */
+    SCB->ICSR = SCB_ICSR_PENDSTCLR_Msk | SCB_ICSR_PENDSVCLR_Msk;
+
+    /*
      * What the hand notices goes first: backlight (PB8) and speaker
      * amplifier (PE1) off. These are plain logic outputs into MOSFET
      * gates and switching them changes nothing the clock tree depends
@@ -413,4 +429,61 @@ void boot_power_tick(void)
 
     if (down) { s_key_ms = 0U; return; }
     if (++s_key_ms >= 50U) { boot_standby(); }
+}
+
+/*
+ * THE POWER BUTTON AFTER A CRASH - found 20/11/2026.
+ *
+ * fault_park() runs with interrupts masked, so SysTick never runs and
+ * boot_power_tick() with it. There is no watchdog either - nothing in
+ * this firmware starts the IWDG, and the option bytes leave it to
+ * software - so a crashed radio stayed on, frozen, with a power button
+ * that did nothing: the only way out was the battery.
+ *
+ * So the same gesture, polled: held BOOT_POWER_OFF_MS, the backlight
+ * and the speaker go, and standby follows 50 ms after the release -
+ * the rules boot_power_tick() keeps, for the same reasons. Timed on the
+ * DWT cycle counter, switched on here, because nothing else can be
+ * trusted after a fault. clock_sysclk_hz is clamped to what the clock
+ * tree can be: at the wrong end the hold is 0.4 s or 22 s, never
+ * for ever.
+ */
+void boot_power_park(void)
+{
+    key_input();
+
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CTRL        |= DWT_CTRL_CYCCNTENA_Msk;
+
+    uint32_t hz = clock_sysclk_hz;
+
+    if (hz < 64000000U || hz > 480000000U) { hz = 480000000U; }
+
+    uint32_t per_ms = hz / 1000U;
+    uint32_t t0     = 0U;
+    int      held   = 0;
+
+    for (;;) {
+        IWDG1->KR = 0xAAAAU;            /* harmless if it is not running */
+
+        if (!key_down_raw()) { held = 0; continue; }
+        if (!held) { held = 1; t0 = DWT->CYCCNT; continue; }
+        if ((uint32_t)(DWT->CYCCNT - t0) >= per_ms * BOOT_POWER_OFF_MS) {
+            break;
+        }
+    }
+
+    RCC->AHB4ENR |= RCC_AHB4ENR_GPIOBEN | RCC_AHB4ENR_GPIOEEN;
+    (void)RCC->AHB4ENR;
+    GPIOB->BSRR = (1UL << (8U + 16U));      /* backlight */
+    GPIOE->BSRR = (1UL << (1U + 16U));      /* speaker amplifier */
+
+    t0 = DWT->CYCCNT;   /* the release is timed from now, not the press */
+    for (;;) {
+        IWDG1->KR = 0xAAAAU;
+        if (key_down_raw()) { t0 = DWT->CYCCNT; continue; }
+        if ((uint32_t)(DWT->CYCCNT - t0) >= per_ms * 50U) { break; }
+    }
+
+    boot_standby();
 }

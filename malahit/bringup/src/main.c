@@ -6847,6 +6847,17 @@ int main(void)
                    (uint32_t)SELFTEST);
 
     /*
+     * THE CONSOLE GOES BUFFERED HERE, and not a line earlier: from now
+     * on a byte is queued and UART7's interrupt sends it, instead of the
+     * CPU waiting 87 us for each. The status line below is ~300 of them
+     * a frame - ~26 ms of a ~113 ms frame, measured 20/11/2026.
+     *
+     * The boot stays polled on purpose: it is where runs hang, and a
+     * hang keeps whatever is still queued. console.c has the rest.
+     */
+    console_async(1);
+
+    /*
      * Two things the loop does early on that are MEASUREMENTS, and so
      * belong to SELFTEST: the iqbal A/B at 15 s (the corrector off, then
      * on - a stretch of worse image rejection, on purpose), and the
@@ -7311,11 +7322,16 @@ int main(void)
          */
         /*
          * THE FRAME PERIOD, MEASURED, not added up from the parts. The
-         * parts are each timed separately and their sum leaves out the
-         * console write that prints them, which on this line is 230
-         * characters at 115200 baud - 20 ms, a third of the frame. A
-         * frame rate quoted from the sum of the timed pieces would be
-         * wrong by that much, in the flattering direction.
+         * parts are each timed separately and their sum leaves out
+         * everything between them - the console write above all, which
+         * on this line was ~300 characters at 115200 baud, ~26 ms, until
+         * the console went buffered (console_async). A frame rate quoted
+         * from the sum of the timed pieces would be wrong by whatever
+         * that leaves out, in the flattering direction.
+         *
+         * `con` is console_stalls(): the writes that found the console's
+         * ring full and had to wait for the line. While it stays at 0
+         * the console costs the frame only the formatting.
          */
         static uint64_t last_frame;
         uint64_t        now_c  = board_cycles();
@@ -7363,13 +7379,14 @@ int main(void)
         }
 
         console_printf("%s cap %5u us dry %u err %u irq %u/%u am %u/%u "
-                       "hook %uk/%uk stale %u | frame %5u us (%u fps) | ",
+                       "hook %uk/%uk stale %u con %u | frame %5u us "
+                       "(%u fps) | ",
                        used_dma ? "dma" : "pol",
                        s_cap_us, sai1_tx_underruns(), sai1_dma_errors(),
                        sai1_blocks, sai1_block_overruns,
                        am_blocks(), (uint32_t)am_level(),
                        am_cycles() / 1000U, am_cycles_worst() / 1000U,
-                       board_loop_stale_ms(),
+                       board_loop_stale_ms(), console_stalls(),
                        per_us, (per_us != 0U) ? (1000000U / per_us) : 0U);
 
         console_printf("peak %+7d Hz %3d dB | phase %+3d.%02u deg "

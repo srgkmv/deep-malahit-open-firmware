@@ -46,6 +46,7 @@ Other useful commands, all taking `ADAPTER=ft2232d`:
 | `swd.sh id` | chip ID, flash size, unique ID |
 | `swd.sh fault` | the last crash record |
 | `swd.sh clean` | quieten a crashed core |
+| `swd-call.sh <elf> <fn> [args]` | call one firmware function on the RUNNING radio, from the display loop, and let it carry on |
 | `swd.sh -c init -c halt -c "mdw <addr> 1"` | read anything |
 
 ---
@@ -106,7 +107,7 @@ five separate bugs that each looked like something else:
   the inherited state corrupts the image itself rather than a
   peripheral. Its own section is below.
 
-Two more, 20/11/2026, both new since the image before every load is our
+Three more, 20/11/2026, all new since the image before every load is our
 own one with its block interrupt running:
 
 - **The old image's DMA was still writing.** Halting a core halts no
@@ -129,8 +130,24 @@ own one with its block interrupt running:
   active bit survives anyway. **If a RAM run reports `irq 0/0`, suspect
   this first.**
 
-  Both were found by the same set of loads, and the second was hiding
-  behind the first: the fix for the DMA was tested on runs that had no
+- **A SysTick left pending by a crashed image ran the NEW image's
+  handler before its first instruction** - and switched the radio off.
+  `fault_park()` runs with interrupts masked, so SysTick pends and stays
+  pending; stopping SysTick does not un-pend it, and `ICPR` covers only
+  external interrupts. On `resume` (and on `step`: openocd's "auto"
+  masking lets pending interrupts run first) the core took it through
+  the new vector table, already loaded, with the new image's `.data`
+  and `.bss` still holding the old image's bytes. Its
+  `boot_power_tick()` read console text where its statics now live -
+  "armed", "held" for ever - and called `boot_standby()`. Every load
+  over a parked crash died before printing a byte; read on the radio,
+  parked: `ICSR = 0x0440F000`, SysTick pending. `core_clean` now clears
+  `PENDSTCLR`/`PENDSVCLR`, and the same load comes up and reports the
+  crash. **Halting is not a clean slate either: pending exceptions
+  survive it, and run first.**
+
+  The first two were found by the same set of loads, and the second was
+  hiding behind the first: the fix for the DMA was tested on runs that had no
   audio, and nobody - me - looked at the `irq` column until a "final"
   check. Read every column of the first status line after a load, not
   just the one the change was about.
@@ -758,6 +775,26 @@ That also rules out `st-info` and `st-flash`, which only speak HLA.
 ---
 
 ## If the radio switches itself off
+
+> **Read this first - 20/11/2026.** Most of this section describes the
+> factory firmware's watchdog, which is gone from flash. **Our firmware
+> starts no watchdog** (nothing writes `0xCCCC`; the option bytes leave
+> it to software), so nothing resets a hung radio. What happens now:
+>
+> - **A crash parks the core** in `fault_park()`: console flushed, record
+>   at `0x2407FF00`, interrupts masked, the power button POLLED by
+>   `boot_power_park()` - hold 3 s, the backlight goes, it switches off on
+>   release. Before 20/11 the button was dead after a crash (it lives in
+>   SysTick) and the radio could only be stopped at the battery.
+> - **A load over SWD onto a parked crash switched the radio off** until
+>   `core_clean` learnt to clear a pending SysTick - "LOADING OVER SWD
+>   RESETS NOTHING", the third 20/11 entry. Some of the unexplained
+>   power-offs in `SIGUIENTE.md` may have been this; that is not shown.
+> - **`boot_standby()` did not sleep when called with a tick pending**:
+>   the screen went dark, the MCU stayed powered, spinning through
+>   `WFI`. It now clears pending system exceptions before `WFI`.
+> - The next load reports the crash (`THE PREVIOUS RUN CRASHED`) only
+>   if the radio was NOT switched off in between: the record is in RAM.
 
 Two different things look the same from the bench, and both end with
 `Error connecting DP: cannot read IDR`, because PC6 going low takes the

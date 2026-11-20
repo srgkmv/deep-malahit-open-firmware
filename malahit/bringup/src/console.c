@@ -41,10 +41,133 @@ void console_init(void)
     while (!(UART7->ISR & USART_ISR_TEACK)) { }
 }
 
-void console_putc(char c)
+/*
+ * THE TRANSMIT RING - output that does not stop the radio.
+ *
+ * Polled, every byte waits for the line: 87 us at 115 200 baud. The
+ * display loop's status line is ~300 characters, so it cost ~26 ms of
+ * every ~113 ms frame - measured 20/11/2026, the single largest item
+ * after the waterfall. The UART is only ~25 % busy at that rate, so
+ * the bytes fit on the wire in the background; the CPU was simply
+ * waiting for them.
+ *
+ * So from console_async(1) on - the start of the display loop - bytes
+ * go into this ring and UART7's interrupt sends them. Nothing is ever
+ * dropped: a full ring makes the writer wait, as before, pumping bytes
+ * out itself so that it does not depend on the interrupt to make
+ * progress.
+ *
+ * THE BOOT STAYS POLLED, and that is the trade this console has always
+ * made: a buffered byte is not on the wire, and a run that hangs with
+ * bytes in the ring loses them - the last lines, which are the ones
+ * that say where it stopped. The boot is where runs hang, and it is a
+ * second of output. In the loop the cases are covered as far as they
+ * can be: the interrupt is at priority 0, so a block interrupt that
+ * hangs still lets it drain; fault_park() flushes before it parks.
+ * Only a hang with interrupts masked keeps what is queued - at the
+ * loop's rate, about one line.
+ *
+ * Polled whenever buffering cannot work or should not be trusted: before
+ * console_async(1), inside any exception, with interrupts masked. And a
+ * polled byte sends everything queued first, so the order on the wire
+ * is always the order of the calls.
+ */
+#define TX_RING     8192U                   /* a power of two */
+
+static char              s_tx[TX_RING];
+static volatile uint32_t s_head;    /* next free byte; the writer's only  */
+static volatile uint32_t s_tail;    /* next to send; changed only by the
+                                     * interrupt or with it masked        */
+static volatile uint32_t s_async;
+static volatile uint32_t s_stalls;  /* writes that found the ring full    */
+
+static void tx_poll(char c)
 {
     while (!(UART7->ISR & USART_ISR_TXE_TXFNF)) { }
     UART7->TDR = (uint8_t)c;
+}
+
+/*
+ * One queued byte onto the wire, if there is one and the transmitter
+ * has room. With interrupts masked so it cannot race UART7_IRQHandler
+ * on s_tail - and restored as they were, so a caller that already had
+ * them off (fault_park) keeps them off.
+ */
+static void tx_pump_one(void)
+{
+    uint32_t pm = __get_PRIMASK();
+
+    __disable_irq();
+    if (s_tail != s_head && (UART7->ISR & USART_ISR_TXE_TXFNF)) {
+        UART7->TDR = (uint8_t)s_tx[s_tail & (TX_RING - 1U)];
+        s_tail = s_tail + 1U;
+    }
+    __set_PRIMASK(pm);
+}
+
+void console_flush(void)
+{
+    /* At most a ring's worth of PROGRESS, whatever the indices say - so
+     * a ring corrupted by whatever just crashed cannot keep fault_park()
+     * here for ever. A transmitter that never empties can, exactly as
+     * the polled console always could. */
+    for (uint32_t sent = 0U; s_tail != s_head && sent <= TX_RING; ) {
+        uint32_t t = s_tail;
+
+        tx_pump_one();
+        if (s_tail != t) { sent++; }
+    }
+}
+
+void console_async(int on)
+{
+    if (on) {
+        NVIC_SetPriority(UART7_IRQn, 0);
+        NVIC_ClearPendingIRQ(UART7_IRQn);
+        NVIC_EnableIRQ(UART7_IRQn);
+        s_async = 1U;
+    } else {
+        s_async = 0U;
+        console_flush();
+        UART7->CR1 &= ~USART_CR1_TXEIE_TXFNFIE;
+        NVIC_DisableIRQ(UART7_IRQn);
+    }
+}
+
+uint32_t console_stalls(void) { return s_stalls; }
+
+void UART7_IRQHandler(void)
+{
+    while (s_tail != s_head && (UART7->ISR & USART_ISR_TXE_TXFNF)) {
+        UART7->TDR = (uint8_t)s_tx[s_tail & (TX_RING - 1U)];
+        s_tail = s_tail + 1U;
+    }
+    if (s_tail == s_head) {
+        UART7->CR1 &= ~USART_CR1_TXEIE_TXFNFIE;
+    }
+}
+
+void console_putc(char c)
+{
+    if (!s_async || __get_IPSR() != 0U || __get_PRIMASK() != 0U) {
+        if (s_tail != s_head) { console_flush(); }
+        tx_poll(c);
+        return;
+    }
+
+    if (s_head - s_tail >= TX_RING) {
+        s_stalls++;
+        while (s_head - s_tail >= TX_RING) { tx_pump_one(); }
+    }
+
+    s_tx[s_head & (TX_RING - 1U)] = c;
+    __DMB();                    /* the byte before the index that shows it */
+    s_head = s_head + 1U;
+
+    /* The interrupt switches itself off when the ring runs dry; this
+     * switches it back on. A race between the two costs one spurious
+     * interrupt that finds nothing to send, never a lost byte. */
+    UART7->CR1 |= USART_CR1_TXEIE_TXFNFIE;
 }
 
 void console_puts(const char *s)

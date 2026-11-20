@@ -432,7 +432,11 @@ g_pfnVectors:
     .word Default_Handler
     .endr
     .word DMA1_Stream0_IRQHandler   /* 11 - SAI1_B receive, the block hook */
-    .rept 150 - 11 - 1              /* 12..149 */
+    .rept 82 - 11 - 1               /* 12..81 */
+    .word Default_Handler
+    .endr
+    .word UART7_IRQHandler          /* 82 - the console's transmit ring */
+    .rept 150 - 82 - 1              /* 83..149 */
     .word Default_Handler
     .endr
 
@@ -461,3 +465,4 @@ g_pfnVectors:
     /* Weak, like the rest: a build without sai1.c still links, and the
      * slot points at Default_Handler, which reports rather than hangs. */
     weak_handler DMA1_Stream0_IRQHandler
+    weak_handler UART7_IRQHandler

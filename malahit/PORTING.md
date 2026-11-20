@@ -850,6 +850,31 @@ Each step should end with something visible on the radio.
    started - the old image's DMA, and a halt inside the block interrupt
    that left the new image with no audio. `WORKING.md`, "LOADING OVER
    SWD RESETS NOTHING".
+19. **The console stops costing the frame, and a crash can be switched
+   off.** *20/11/2026* — from the display loop on, console output goes
+   into an 8 kB ring that UART7's interrupt sends (`console_async()`).
+   The ~300-character status line had cost ~26 ms of every ~113 ms
+   frame, the CPU waiting on the wire; the frame is now **~80 ms, 12.5
+   fps**, with nothing dropped (`con` on the line counts writes that
+   found the ring full: 0). The boot stays polled, because that is where
+   runs hang, and `fault_park()` flushes the ring before it parks -
+   checked with a deliberate crash, whose last line came out whole.
+
+   Going faster uncovered a hidden bug: the first capture after the DMA
+   is armed copied a half that had not been filled yet - one block of
+   zeros - hidden until now by the ~50 ms the polled console took to
+   print the arm report. `sai1_rx_half()` waits for the first half,
+   once per arm.
+
+   And chasing a power-off after a crash found two real faults and one
+   loader trap: after a crash **the power button did nothing** (it lives
+   in SysTick, masked while parked, and no watchdog runs), so
+   `fault_park()` now polls it - 3 s held switches off, checked on the
+   radio; `boot_standby()` **did not sleep** with a tick pending, a dark
+   radio still drawing power - it now clears pending exceptions first;
+   and a load over a parked crash ran the new image's SysTick handler on
+   the old image's memory, which switched the radio off - `core_clean`
+   now clears it. `WORKING.md` has all three.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

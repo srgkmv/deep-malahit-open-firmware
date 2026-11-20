@@ -24,6 +24,21 @@ void console_putc(char c);
 void console_puts(const char *s);
 
 /*
+ * Buffered output: from console_async(1) on, bytes go into a ring that
+ * UART7's interrupt sends, instead of each one waiting for the line.
+ * Off (polled) until then - see console.c for why the boot stays
+ * polled, and what a buffered console can lose.
+ *
+ * console_flush() puts everything queued on the wire before it returns,
+ * by polling; safe with interrupts masked. console_stalls() counts the
+ * writes that found the ring full and had to wait - zero means the
+ * console never slowed the caller down.
+ */
+void     console_async(int on);
+void     console_flush(void);
+uint32_t console_stalls(void);
+
+/*
  * A deliberately small printf. Supports %s %c %% and, for integers,
  * %d %u %x %08x (and %lu/%lx, which are the same thing on this target).
  *

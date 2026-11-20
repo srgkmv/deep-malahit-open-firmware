@@ -1,50 +1,125 @@
 # Where to pick this up
 
-Rewritten 19/11/2026, updated 20/11/2026. `WORKING.md` is still the file
+Rewritten 19/11/2026, updated 20/11/2026 (late at night). `WORKING.md` is still the file
 to read first; this one only says what the next session should do and
 what it must not trust.
 
-## 20/11/2026, late: the fast boot is done — and NOT yet in flash
+## 20/11/2026, night: fast boot, buffered console, a crash that can be switched off — none of it in flash yet
 
-**What is in the tree, uncommitted:** `SELFTEST` (`main.c`, `reglas.mk`).
-The default boots to screen and audio in **2.5 s**; `SELFTEST=1` is the
-old 37 s boot, unchanged. Both tested on the radio over RAM, the fast
-one six times: carrier on the dial on every `baseband:` line, `dry 0`,
-the block interrupt counting. `PORTING.md` step 18 has what had to move
-out of the tests first (the receive clock edge, the add-on relay and
-filter - all three were test outputs).
+**In git:** the fast boot (`SELFTEST`, `PORTING.md` step 18, commit
+`77142f4`) and, after it, step 19: the buffered console (frame ~113 ms
+-> **~80 ms, 12.5 fps**), the first-capture-after-arm fix, and the crash
+path - `fault_park()` flushes the console and polls the power button,
+`boot_standby()` clears pending exceptions so it really sleeps, and
+`core_clean` clears a pending SysTick. All of it tested on the radio over
+RAM; the crash path with a deliberate fault (a throwaway build, not in
+the tree) and the owner's hand on the button. **Both ways of switching
+off were checked to the end**, the normal 3 s hold and the same hold
+after a crash: the backlight goes at 3 s, and after the release the
+debug port is dead - the chip really unpowered, not just dark.
 
-**What is NOT done: the flash write.** `build_flash/bringup.bin` is
-built, `SELFTEST=0`, 96 024 bytes, sha256 `6277cd69…4d8472`. It needs
-the owner's hands - both encoder buttons + power, then the `dfu-util`
-line in `WORKING.md`. Until then the radio still boots the 37 s image
-from flash. **On the first cold boot of it, check** the `Boot      :`
-line (~2.5 s), the `Add-on    :` line (filter, 50 ohm, 0 dB), and that
-`irq` counts. One thing only a cold boot exercises: `addon_init()` now
-waits 10 ms when it finds the add-on board unpowered, before the first
-write to it - on a RAM load the board is always already on.
+**Seen once, not chased:** a RAM load onto the OLD flash image while its
+37 s test boot was running left the touch controller silent (`*** no
+answer at 0x38 ***`), and the boot spent 6 s scanning the bus for it
+(8.3 s instead of 2.5 s). Most likely the load caught the old image
+mid-transfer with the FT6236; it did not happen on any load over the new
+image. If it shows up after a cold boot of the new image, it is real.
 
-**Two RAM-load traps, both fixed, both in `WORKING.md`** under "LOADING
-OVER SWD RESETS NOTHING": the old image's DMA writing into the new one,
-and a halt inside the block interrupt that leaves the new image as that
-exception for good - `irq 0/0`, no audio, until a power cycle. **If a
-RAM run shows `irq 0/0`, that is the first suspect.** The startup now
-returns out of it by itself, and `core_clean` avoids it. The previous
-session's RAM logs were checked: all of them have the interrupt
-counting, so their measurements stand.
+**IN FLASH since 21/11/2026, ~00:15**: `build_flash/bringup.bin`,
+`SELFTEST=0`, 96 960 bytes, sha256 `7b870abd…bcbd189`, written over DFU
+WITHOUT `:leave`, read back (`-U`, same length) and identical byte for
+byte, THEN left with a 4-byte `-s 0x08000000:4:leave -U` (its "get_status"
+error is the device leaving, normal). It boots cold in ~2.3 s, touch
+works. That write-verify-leave sequence is the one to repeat;
+`tools/flash-dfu.sh` still writes with `:leave` and verifies nothing.
+
+**OPEN, AND FIRST: AFTER SOME COLD STARTS THE RADIO RECEIVES NOTHING.**
+Two cold starts out of three tonight, one with each firmware: `leak DC`
+normal (~1 700), interrupts counting, audio running - and no carrier at
+all: `station` 3-8, the peak wandering over noise, SNR 10-12 dB, ADC 7 %.
+It is decided in the first second - `rf_autorange()` already sees no
+carrier (`28 dB ... ADC at 31%` against `44 dB ... 41%` on a good start;
+the boot log is otherwise identical) - and it lasts for minutes. **Any
+re-run of the init cures it at once**: a RAM load, or the same flash
+image started warm from the debugger.
+
+| cold start, 20-21/11 | preceded by | off for | carrier |
+|---|---|---|---|
+| old flash image | the radio switching itself off (crash test) | minutes | **none** |
+| new flash image | the image's own power-off right after DFU `:leave` | 1-2 min | **none** |
+| new flash image | the owner's normal 3 s hold | seconds | yes |
+| new flash image, several more | the owner's normal 3 s hold | various | yes, every time |
+
+**A pattern, not a proof:** both deaf starts followed a power-off the
+radio did BY ITSELF - the crash test's, and the image's own one straight
+after DFU `:leave` - and none of the owner's ordinary 3 s holds has been
+followed by one. If it is real, what differs is what the board looked
+like at the moment the power went: a crashed or barely-started image
+leaves the add-on board and the tuner in states an ordinary run never
+does. The cheap test of that is a DFU `:leave` followed by a cold start,
+twice - with the console recording from power-on.
+
+**Ruled out:** the flash build (the same image started warm receives);
+the add-on board powering up cold (simulated warm, once - but the fault
+is intermittent, so once is weak); relay pulses on a warm board (three
+injected, no effect). **Not ruled out:** the add-on's 595 losing the
+filter code on a freshly powered board (a wrong code is NO signal, which
+is what this looks like), the MSi001, the BPF/preamp GPIOs. The old
+image also failed although its tests rewrite the tuner and the filter
+dozens of times - which points at something written ONCE, early.
+
+**How to catch it, prepared and tried:** when a cold start comes up
+deaf, do NOT reload - that cures it and destroys the evidence. Instead:
+1. Snapshot the state (GPIOE/GPIOD/GPIOA, SPI1, the `s_shadow` arrays of
+   `msi001.c` and `nau8822.c` - `nm -l` tells the two apart) and compare
+   with a good start. The good start's values, read tonight:
+   `GPIOE_ODR 00005003`, `GPIOD_ODR 00000603`, msi001 shadow
+   `000023e1 0000042c 00019d0d 00000852 00000000 00028fff 0 0`.
+2. Then `tools/swd-call.sh build_flash/bringup.elf <step> [args]`, one
+   init step at a time, reading the `baseband:` line after each:
+   `msi001_retune 9988000`, `msi001_tune 9988000 0`, `addon_set_filter 2`
+   (the highpass), `addon_set_att_halfdb 0`, `msi001_set_am_port 1`,
+   `msi001_preamp 1`, `msi001_bpf <code>`. The first one after which the
+   carrier appears is the step that does not take after power-up. The
+   tool calls into the running image and it carries on - tried tonight.
+
+**The OLD flash image did not receive the generator after a power-on,
+20/11/2026 late.** `leak DC` normal (~1 680) and the block interrupt
+counting, but `station` 4-8, the peak wandering over noise, SNR 10 dB;
+a RAM load of the new image a minute later, nothing touched on the
+bench, had it at full level (`adc 43%`, peak +12 000 Hz 124 dB), and the
+owner heard and saw it. Its boot log was not captured, so its relay and
+filter decisions are unknown. The new image did the same - see
+the OPEN paragraph above.
+
+**Two things about this bench, also from tonight:**
+- **There is no watchdog.** Nothing in our firmware starts the IWDG and
+  the option bytes leave it to software. Every note below that says "the
+  watchdog resets it after 32 s" is about the factory firmware.
+  Whether the radio WANTS one is a decision, not done: on this unit a
+  watchdog reset is a power-off.
+- **`station` in the `baseband:` line is a ±12 Hz probe.** It read ~20
+  instead of ~900 tonight with the carrier at full level and the audio
+  normal - most likely the generator a few tens of hertz off 10.000 MHz.
+  It is not a reception test; `peak`, `adc` and the ear are.
+
+**Three new RAM-load traps tonight, all fixed, all in `WORKING.md`** under
+"LOADING OVER SWD RESETS NOTHING" - the old image's DMA, a halt inside
+the block interrupt (`irq 0/0`, no audio), and a SysTick left pending by
+a parked crash (the radio switches off on the next load). **If a RAM run
+shows `irq 0/0`, or the radio dies on a load, start there.**
 
 **Next, in order of what the radio gains:**
 
-1. **The console line in the display loop costs ~20 ms of every frame**
-   (230 characters at 115 200 baud, polled). With `SELFTEST 0` it could
-   go once a second, like `baseband:`; that is a frame rate of ~11 fps
-   instead of ~9 for one `if`. Decide what the bench still needs from
-   it per frame first.
+1. **The deaf cold start**, above - with the procedure ready, it needs
+   only the next time it happens, and the console recording from power-on.
 2. **The panel on SPI DMA** - "THE NEXT THING TO DO" in `WORKING.md`.
-   Measured today: waterfall 48 ms, trace 7-25 ms of an ~100 ms frame.
+   Measured tonight: waterfall 48 ms and trace 17-26 ms of an ~80 ms
+   frame - now nearly all of it.
 3. **Remember the dial and the volume** across power-offs. Every boot
    starts on 10.000 MHz at -24 dB; there is an FM25W256 FRAM on the
-   board (`BOARD.md` section 6) and no driver for it yet.
+   board (`BOARD.md` section 6) and no driver for it yet. The same FRAM
+   could keep the crash record, which a power-off now loses.
 4. The 100 kHz-step test for the 10 MHz digital noise (below), when the
    owner has the radio in hand.
 

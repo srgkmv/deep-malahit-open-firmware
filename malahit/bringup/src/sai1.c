@@ -900,6 +900,8 @@ static int16_t  s_tx_ring[2U * SAI1_TX_HALF_MAX * 2U];
 static uint32_t s_rx_half;          /* frames per half, as armed */
 static uint32_t s_tx_half;
 static int      s_dma_on;
+static uint32_t s_armed_cyc;    /* DWT->CYCCNT when the streams started */
+static int      s_rx_primed;    /* a whole half has filled since then   */
 
 static uint32_t s_dma_err;
 static uint32_t s_dma_err_bits;
@@ -1326,6 +1328,14 @@ int sai1_dma_start(uint32_t rx_frames, uint32_t tx_frames)
 
     s_dma_on  = 1;
     s_aligned = 0;      /* the polled path's parity is no longer known */
+    /* See sai1_rx_half(): nothing in the ring is real yet. DWT is
+     * switched on here rather than assumed - it is am_init()'s, and the
+     * tests arm before am_init() has run. Never reset: only differences
+     * are taken. */
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CTRL        |= DWT_CTRL_CYCCNTENA_Msk;
+    s_armed_cyc = DWT->CYCCNT;
+    s_rx_primed = 0;
 
     /*
      * A SNAPSHOT, A HUNDRED MICROSECONDS IN.
@@ -1552,6 +1562,33 @@ uint32_t sai1_rx_half(int16_t *dst, uint32_t frames)
 
     uint32_t total = 4U * frames;
     uint32_t words = 2U * frames;
+
+    /*
+     * NOT BEFORE A HALF HAS FILLED. The half the stream is NOT in is
+     * the finished one - except for the first 42.7 ms after an arm,
+     * when it is the half sai1_dma_start() has just zeroed. A caller
+     * that comes straight back gets a block of digital silence that
+     * looks like a perfectly good capture: one black waterfall row and
+     * a probe reading "leak DC 0 station 0 mirror 0".
+     *
+     * It was always there and always hidden: the display loop printed
+     * a ~600-character arm report first, ~50 ms on the polled console,
+     * which is longer than a half. Buffering the console (20/11/2026)
+     * took the delay away and the zeros showed.
+     *
+     * Waited out here on the CPU's cycle counter - not on the block
+     * interrupt, and not on board_cycles(), which stands still when
+     * SysTick is not being serviced - so a capture depends on nothing
+     * that might not be running. Once per arm, at most one half.
+     */
+    if (!s_rx_primed) {
+        uint32_t fs   = (s_clock.fs_hz != 0U) ? s_clock.fs_hz : 192000U;
+        uint32_t need = (uint32_t)(((uint64_t)frames * clock_sysclk_hz) / fs)
+                      + clock_sysclk_hz / 2000U;            /* +0.5 ms */
+
+        while ((uint32_t)(DWT->CYCCNT - s_armed_cyc) < need) { }
+        s_rx_primed = 1;
+    }
 
     /*
      * Copy the half the stream is NOT in, then check it is still not in
