@@ -114,13 +114,22 @@ touched.
 records 91 ms and 16 ms from 05/11. Not attributed: nothing between
 then and now ran on the radio, so there is no baseline to compare with.
 One piece of arithmetic worth having: a full repaint of the 440 x 120
-trace at 18 bpp is 158 kB, which at 30 MHz SPI is 42 ms - and
-`spectrum_draw()` does exactly that: its pass 3 assembles every row of
-the rectangle and pushes it with one `gfx_blit` per row, every frame,
-whatever the signal. So **38 ms is the expected figure and 16 ms is the
-one to explain** - a smaller trace then, a faster SPI clock, or fewer
-bits per pixel. Either way it is the SPI DMA's job (WORKING.md, "THE
-NEXT THING TO DO"), not this change's.
+trace at 18 bpp is 158 kB, which at 30 MHz SPI is 42 ms - so 38 ms is
+nearly the whole trace going out.
+
+**It depends on the picture, and that is upstream's design.** An
+earlier version of this note said `spectrum_draw()` pushes the whole
+rectangle "whatever the signal"; it does not. It works out each
+column's CEILING - the highest row the trace, fill or peak reaches -
+and skips the bands of rows above it, which are only the unchanged
+background and grid (`User/spectrum.c`, "LAS BANDAS QUE NO HACE FALTA
+..."). Measured 20/11/2026 on the same image: **7.7 ms** with the preamp
+off and the ADC at 6 %, against **38 ms** with it on and a noisy floor
+at 58 %. A high noise floor fills the trace and costs a full repaint;
+16 ms on 05/11 is a picture in between. Not a regression, and the
+waterfall's 41 ms - which has no such skipping - is the bigger item.
+Either way it is the SPI DMA's job (WORKING.md, "THE NEXT THING TO
+DO").
 
 ## The radio switching itself off: what was ruled out today
 
