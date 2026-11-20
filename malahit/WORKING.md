@@ -10,14 +10,21 @@ code onto it without losing an evening. Everything here was paid for.
 
 ```bash
 cd malahit/bringup
-make                                    # build
+make                                    # build; SELFTEST=1 adds the tests
 ADAPTER=ft2232d ../tools/swd.sh ram build/bringup.elf
 ```
 
 `ram` loads into AXI SRAM and starts the image **without touching
-flash**, so the factory firmware is always still there and a power cycle
-undoes everything. There is no reason to write flash yet, and one very
-good reason not to — see "no way back" below.
+flash**, so a power cycle undoes everything. Since 20/11/2026 what is in
+flash is OUR firmware, not the factory's, and what a RAM load inherits
+is its state - see "LOADING OVER SWD RESETS NOTHING", which got two
+more entries the day that became true. Updating flash is DFU, not SWD:
+"The way back" below.
+
+`make SELFTEST=1` (or `make flash SELFTEST=1`) builds the image with
+the 37 s of bring-up tests in the boot; the default boots straight to
+the radio. The value is kept in `build*/flags.txt`, so changing it
+rebuilds everything and repeating it rebuilds nothing.
 
 Console: UART7 at 115200 on package pins 37 (PE7, RX) and 38 (PE8, TX).
 There is no J6 header on this unit; the leads go to the pins.
@@ -98,6 +105,35 @@ five separate bugs that each looked like something else:
 - **The D-cache was on.** The worst of the five, and the only one where
   the inherited state corrupts the image itself rather than a
   peripheral. Its own section is below.
+
+Two more, 20/11/2026, both new since the image before every load is our
+own one with its block interrupt running:
+
+- **The old image's DMA was still writing.** Halting a core halts no
+  DMA: SAI1 kept streaming samples into the old receive ring through
+  the load and into the new image's first milliseconds - after its
+  `.bss` was zeroed. Shown as I/Q pairs in `sai1.c`'s `s_mux_released`
+  (a 16-bit mask that read `0x2c8df875`). `core_clean` now resets SAI1
+  and every DMA controller through RCC before the load.
+- **The core was halted INSIDE the block interrupt**, and the new image
+  then ran entirely as that exception. The AM demodulator keeps the
+  core in exception 27 about 40 % of the time; `ram_run` writes PC, SP
+  and xPSR, but neither the IPSR nor the NVIC's active bit changes, and
+  no register write can clear an active bit. Everything at priority 0
+  - SysTick, so knobs, buttons, screen - kept working; the block
+  interrupt never arrived again: **`irq 0/0`, no audio**, and inherited
+  by every load after it until a power cycle. The startup code now
+  returns out of any exception it finds itself in (step 0 in
+  `startup_stm32h743.S`), `core_clean` switches the interrupts off and
+  waits 20 ms before it halts, and `main()` prints a warning if an
+  active bit survives anyway. **If a RAM run reports `irq 0/0`, suspect
+  this first.**
+
+  Both were found by the same set of loads, and the second was hiding
+  behind the first: the fix for the DMA was tested on runs that had no
+  audio, and nobody - me - looked at the `irq` column until a "final"
+  check. Read every column of the first status line after a load, not
+  just the one the change was about.
 
 Every "the reset value is fine" is really "whatever the previous
 firmware left is fine". **Write the registers you depend on.**
@@ -672,8 +708,10 @@ throughout. Every link was checked on the radio:
 After `:leave` the image starts with the power button not held, so it
 switches itself off; that is correct. Switch on with a short press.
 Holding the power button for more than three seconds switches off
-(`BOOT_POWER_OFF_MS`). The boot is still the bring-up image's: about
-45 s of self-tests before the main screen.
+(`BOOT_POWER_OFF_MS`). The boot goes straight to the radio: screen and
+audio 2.5 s after SysTick starts. The bring-up tests - 37 s of them -
+run only in a `SELFTEST=1` build (`make flash SELFTEST=1`); see
+`main.c`, "SELFTEST", for what had to move out of them first.
 
 ### What the first cold boots found — LOADING OVER SWD RESETS NOTHING, three more times
 

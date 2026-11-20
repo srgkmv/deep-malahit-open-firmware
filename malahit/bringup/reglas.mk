@@ -382,6 +382,19 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_act.c
 C_SOURCES = $(wildcard src/*.c)
 ASM_SOURCES = startup_stm32h743.S
 
+#
+# SELFTEST: whether the boot runs the bring-up tests - main.c, under
+# "SELFTEST", has what they are and what had to move out of them first.
+# 0 boots straight to the radio, 2.5 s; 1 runs every test, 37 s of them:
+#
+#   make flash SELFTEST=1
+#
+# Set from the command line, so it is the case the paragraph above
+# BUILD_RULES below does NOT cover: no file changes. FLAGS_STAMP does.
+#
+SELFTEST ?= 0
+DEFS += -DSELFTEST=$(SELFTEST)
+
 OPT = -O2 -g3
 
 CFLAGS  = $(MCUFLAGS) $(DEFS) $(INCLUDES) $(OPT)
@@ -434,7 +447,7 @@ OBJECTS += $(addprefix $(BUILD_DIR)/up_,$(notdir $(UPSTREAM_SOURCES:.c=.o)))
 OBJECTS += $(addprefix $(BUILD_DIR)/dsp_,$(notdir $(DSP_SOURCES:.c=.o)))
 vpath %.c $(sort $(dir $(C_SOURCES)))
 
-.PHONY: all ram flash size clean
+.PHONY: all ram flash size clean FORCE
 
 all: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET).bin $(BUILD_DIR)/$(TARGET).hex
 
@@ -451,7 +464,18 @@ all: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET).bin $(BUILD_DIR)/$(TARGET
 # The cost is that editing this file rebuilds everything. That is the
 # right trade for a file that holds the flags.
 #
-BUILD_RULES = reglas.mk GNUmakefile
+# AND A FLAG GIVEN ON THE COMMAND LINE - `make SELFTEST=1` - changes no
+# file at all, so it is the same trap with nothing left to catch it.
+# FLAGS_STAMP holds the values in a file of their own, rewritten only
+# when they differ from the last build in this directory: changing one
+# rebuilds everything, and repeating one rebuilds nothing.
+#
+FLAGS_STAMP = $(BUILD_DIR)/flags.txt
+BUILD_RULES = reglas.mk GNUmakefile $(FLAGS_STAMP)
+
+$(FLAGS_STAMP): FORCE | $(BUILD_DIR)
+	@echo 'SELFTEST=$(SELFTEST)' | cmp -s - $@ \
+	    || echo 'SELFTEST=$(SELFTEST)' > $@
 
 $(BUILD_DIR)/%.o: %.c $(BUILD_RULES) | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@

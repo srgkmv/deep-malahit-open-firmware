@@ -32,6 +32,11 @@ void addon_init(void)
     RCC->AHB4ENR |= RCC_AHB4ENR_GPIODEN;
     (void)RCC->AHB4ENR;         /* the usual RCC read-back delay */
 
+    /* Was the board already powered? Asked before anything is written:
+     * see the settle at the end. */
+    int was_on = addon_powered()
+              && ((PORT->MODER >> (ADDON_PIN_VEXT * 2U)) & 3U) == 1U;
+
     /*
      * LEVELS BEFORE MODES. Setting MODER first would make a pin an
      * output carrying whatever ODR happened to hold, which for the two
@@ -55,6 +60,25 @@ void addon_init(void)
     pin_output(ADDON_PIN_REL_HIZ);
     pin_output(ADDON_PIN_DIN);
     pin_output(ADDON_PIN_CLK);
+
+    /*
+     * AND IF IT WAS OFF, LET ITS SUPPLY COME UP before anybody writes to
+     * it. The 595 and the PE4312 run off the board's own LDO, enabled by
+     * the pin just raised, and a byte clocked into an unpowered register
+     * is simply gone - with nothing to say so, because neither part can
+     * be read back.
+     *
+     * Every boot before 20/11/2026 got this by accident: the first write
+     * came after a console line, ~5 ms, and the tests wrote everything
+     * again seconds later. With SELFTEST 0 the console line is still the
+     * only thing in between and nothing writes again, so the margin is
+     * made explicit. The LDO needs well under a millisecond; 10 ms costs
+     * nothing, and only on a power-up - a RAM load over a running image
+     * finds the board already on and skips it.
+     */
+    if (!was_on) {
+        board_delay_ms(10U);
+    }
 }
 
 static void relay_pulse(uint32_t coil, uint32_t other)

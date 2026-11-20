@@ -97,6 +97,35 @@ const palette_t *g_pal = &k_pal_oscura;
 uint32_t g_phase = 0xFFFFFFFFU;
 #define PHASE(n)  do { g_phase = (n); __DSB(); } while (0)
 
+/*
+ * SELFTEST: WHETHER THE BOOT MEASURES THE BOARD OR JUST RUNS THE RADIO.
+ *
+ * 0, the default: screen and audio 2.5 s after SysTick starts. The
+ * radio boots from flash and is used as a radio now, and 37 seconds of
+ * bring-up tests on every power-on - most of them wanting a generator
+ * on the bench - was the bring-up image's habit, not the radio's need.
+ * (Both figures off the "Boot      : screen and audio up" line, on the
+ * radio, 20/11/2026.)
+ *
+ * 1: every test that ran before, in the same order (`make SELFTEST=1`,
+ * or `make flash SELFTEST=1`). The makefile rebuilds when the value
+ * changes - see FLAGS_STAMP in reglas.mk, and trap 20 for why it has to.
+ *
+ * The tests are skipped with if (SELFTEST), not #if, so both builds
+ * compile every one of them and neither can rot.
+ *
+ * WHAT THIS COST TO MAKE SAFE is trap 17 again, three times: three
+ * settings the radio ran on were OUTPUTS of tests. The receive clock
+ * edge came from test_rx_timing() (now sai1.c's default), the add-on
+ * relay from test_addon_relay()'s measurement, and the add-on filter
+ * from whichever test touched it last. main() now sets all of them
+ * itself, after the tests, so what the radio runs on cannot depend on
+ * which tests ran.
+ */
+#ifndef SELFTEST
+#define SELFTEST    0
+#endif
+
 /* ------------------------------------------------------------------ */
 /* A tone, without libm                                               */
 /* ------------------------------------------------------------------ */
@@ -5969,6 +5998,36 @@ int main(void)
                    "PRIMASK %u\n",
                    SysTick->CTRL, SysTick->LOAD, SysTick->VAL,
                    board_millis(), __get_PRIMASK());
+
+    /*
+     * AND IS ANY EXCEPTION STILL MARKED ACTIVE? Only possible on a load
+     * over SWD: the startup code returns out of the exception the old
+     * image was halted in (startup_stm32h743.S, step 0), and a second
+     * one nested underneath - SysTick inside the block interrupt - would
+     * be left behind. An active bit cannot be cleared by writing to it,
+     * and while it stays set that interrupt never arrives again. So say
+     * so, before the symptom - a radio with no audio - can be mistaken
+     * for anything else.
+     */
+    {
+        uint32_t act = 0U;
+
+        for (uint32_t i = 0; i < 8U; i++) { act |= NVIC->IABR[i]; }
+        act |= SCB->SHCSR & (SCB_SHCSR_SYSTICKACT_Msk
+                             | SCB_SHCSR_PENDSVACT_Msk
+                             | SCB_SHCSR_MONITORACT_Msk
+                             | SCB_SHCSR_SVCALLACT_Msk
+                             | SCB_SHCSR_USGFAULTACT_Msk
+                             | SCB_SHCSR_BUSFAULTACT_Msk
+                             | SCB_SHCSR_MEMFAULTACT_Msk);
+        if (act != 0U || __get_IPSR() != 0U) {
+            console_printf("*** started with an exception still active: "
+                           "IPSR %u, IABR0 0x%08x, SHCSR 0x%08x - its "
+                           "interrupt\n    will never arrive. Power-cycle "
+                           "the radio. ***\n", __get_IPSR(), NVIC->IABR[0],
+                           SCB->SHCSR);
+        }
+    }
     PHASE(2);
 
     board_power_on();
@@ -5991,21 +6050,28 @@ int main(void)
      * stable. The other order works too and makes the first measurement
      * after configuration meaningless, which is worse than failing.
      */
-    console_printf("PLL2 plan, before anything is written\n");
-    console_printf("-------------------------------------\n");
-    console_printf("  Neither 160 nor 192 kHz is exactly synthesisable\n");
-    console_printf("  from 22 MHz - see sai1.h. The error below is the\n");
-    console_printf("  residual, in parts per BILLION, against X1's own\n");
-    console_printf("  1500 ppm measured in step 1.\n\n");
-    console_printf("       fs | N  FRACN   /P /MCK |       VCO |      "
-                   "MCLK |   ppb\n");
-    console_printf("  --------+---------------------+-----------+------"
-                   "-----+------\n");
-    print_plan(48000U);
-    print_plan(96000U);
-    print_plan(160000U);
-    print_plan(192000U);
-    console_printf("\n");
+    if (SELFTEST) {
+        console_printf("PLL2 plan, before anything is written\n");
+        console_printf("-------------------------------------\n");
+        console_printf("  Neither 160 nor 192 kHz is exactly synthesisable\n");
+        console_printf("  from 22 MHz - see sai1.h. The error below is the\n");
+        console_printf("  residual, in parts per BILLION, against X1's own\n");
+        console_printf("  1500 ppm measured in step 1.\n\n");
+        console_printf("       fs | N  FRACN   /P /MCK |       VCO |      "
+                       "MCLK |   ppb\n");
+        console_printf("  --------+---------------------+-----------+------"
+                       "-----+------\n");
+        print_plan(48000U);
+        print_plan(96000U);
+        print_plan(160000U);
+        print_plan(192000U);
+        console_printf("\n");
+    } else {
+        console_printf("Boot      : SELFTEST 0 - the bring-up tests are "
+                       "skipped. Build with\n");
+        console_printf("            SELFTEST=1 to run them (main.c, "
+                       "\"SELFTEST\").\n\n");
+    }
 
     PHASE(6);
     if (sai1_init() != SAI1_OK) {
@@ -6156,8 +6222,10 @@ int main(void)
      * whenever there is a hand free, and the plateaus are read off the
      * log. The hang is written down in WORKING.md rather than fixed.
      */
-    test_adc(0);
-    test_vrefint();
+    if (SELFTEST) {
+        test_adc(0);
+        test_vrefint();
+    }
 
     /*
      * RETIRED, HAVING ANSWERED: the divider needed no trim, because the
@@ -6218,8 +6286,16 @@ int main(void)
      */
     (void)test_encoder_scan;
 
-    test_rx_timing();
-    test_control_bus();
+    /*
+     * test_rx_timing() CHOOSES the receive edge and applies it - which
+     * is why sai1.c's default is now the answer it always chose, so that
+     * skipping it changes nothing. test_control_bus() restores every
+     * register it touches.
+     */
+    if (SELFTEST) {
+        test_rx_timing();
+        test_control_bus();
+    }
 
     PHASE(14);
     /*
@@ -6237,8 +6313,10 @@ int main(void)
     /* STEP 5                                                         */
     /* ============================================================== */
 
-    console_printf("\n");
-    tuner_report_plans();
+    if (SELFTEST) {
+        console_printf("\n");
+        tuner_report_plans();
+    }
 
     PHASE(15);
     msi001_init();
@@ -6328,33 +6406,60 @@ int main(void)
                    (uint32_t)(addon_att_halfdb() / 2U),
                    (uint32_t)((addon_att_halfdb() & 1U) ? 5U : 0U));
 
-    test_addon_filter_sweep();
-    test_addon_atten();
-    test_front_end();
+    if (SELFTEST) {
+        test_addon_filter_sweep();
+        test_addon_atten();
+        test_front_end();
+
+        /*
+         * STEP 8'S FIRST QUESTION, and it runs before the screen rather
+         * than after it: the DC offset is the one measurement that
+         * invalidates every other level on the board, so anything measured
+         * before it is fixed has to be measured again. It needs no
+         * generator - a standing offset is the receiver's own error.
+         */
+        test_dc_offset();
+        test_signal_quality();
+
+        /* The envelope test wants a gain that is not clipping, or it
+         * measures our own converter instead of the generator. */
+        msi001_preamp(1);
+        (void)rf_autorange();
+        test_am_envelope();
+
+        /*
+         * STEP 9a. The gain is already autoranged for the 50 ohm path, so
+         * the High-Z position will simply read low - which is the whole
+         * point and carries no risk of clipping.
+         */
+        test_addon_relay();
+        test_addon_filters();       /* table now measured, not read */
+    }
 
     /*
-     * STEP 8'S FIRST QUESTION, and it runs before the screen rather
-     * than after it: the DC offset is the one measurement that
-     * invalidates every other level on the board, so anything measured
-     * before it is fixed has to be measured again. It needs no
-     * generator - a standing offset is the receiver's own error.
+     * THE ADD-ON BOARD, SET FOR LISTENING BY main() - not left as the
+     * last test found it, and on a normal boot no test touches it at all.
+     *
+     * It latches across power cycles, so without this it would run on
+     * whatever the previous boot - or the previous firmware - left.
+     *
+     *   filter  the one for the dial. dial_tune() keeps it right from
+     *           the first detent on; this covers the time before that.
+     *   relay   50 ohm, PD8 (BOARD.md section 7, "And PD8 is the 50 ohm
+     *           input"). test_addon_relay() used to choose it by
+     *           MEASURING a generator, and with an antenna instead of a
+     *           generator that is a coin toss between two readings of
+     *           noise; the stock firmware leaves it on 50 ohm too.
+     *
+     * The attenuator was set to 0 dB above, and the tests that move it
+     * put it back.
      */
-    test_dc_offset();
-    test_signal_quality();
-
-    /* The envelope test wants a gain that is not clipping, or it
-     * measures our own converter instead of the generator. */
-    msi001_preamp(1);
-    (void)rf_autorange();
-    test_am_envelope();
-
-    /*
-     * STEP 9a. The gain is already autoranged for the 50 ohm path, so
-     * the High-Z position will simply read low - which is the whole
-     * point and carries no risk of clipping.
-     */
-    test_addon_relay();
-    test_addon_filters();       /* table now measured, not read */
+    addon_set_filter(addon_filter_for(GEN_HZ));
+    addon_input_50r();
+    console_printf("Add-on    : filter %s, 50 ohm input, %u.%u dB "
+                   "attenuation\n\n", addon_filter_name(addon_filter()),
+                   (uint32_t)(addon_att_halfdb() / 2U),
+                   (uint32_t)((addon_att_halfdb() & 1U) ? 5U : 0U));
 
     /*
      * Settings for the display, with the gain reduction MEASURED rather
@@ -6400,9 +6505,17 @@ int main(void)
      * So the transport changes here, at the boundary between "measure
      * the hardware" and "run the radio", and every number in BOARD.md
      * section 6 stays comparable with the ones taken before this step.
+     *
+     * Both are tests, and neither OWNS the transport the radio runs on:
+     * they leave the DMA armed at the tone test's sizes, and the display
+     * loop's first DMA frame finds that and re-arms at AUDIO_HALF_FRAMES
+     * after its polled frames have stopped it. With SELFTEST 0 the loop
+     * arms it from nothing, on its first frame - the same arm.
      */
-    test_audio_gap();
-    test_dma_transport();
+    if (SELFTEST) {
+        test_audio_gap();
+        test_dma_transport();
+    }
 
     /* ============================================================== */
     /* STEP 6: THE SPECTRUM                                           */
@@ -6723,13 +6836,29 @@ int main(void)
     console_printf("  WHAT THE KNOB DOES: turning tunes, a short press of\n");
     console_printf("    its button cycles the step. Both print here.\n\n");
 
+    /*
+     * HOW LONG THE BOOT TOOK, measured rather than estimated from a log:
+     * SysTick starts in board_power_on(), a few milliseconds into main(),
+     * and this is the last line before the radio is a radio. Measured
+     * 20/11/2026: 2.5-2.6 s with SELFTEST 0, 36.6-36.9 s with SELFTEST 1.
+     */
+    console_printf("Boot      : screen and audio up %u ms after SysTick "
+                   "started (SELFTEST %u)\n\n", board_millis(),
+                   (uint32_t)SELFTEST);
+
+    /*
+     * Two things the loop does early on that are MEASUREMENTS, and so
+     * belong to SELFTEST: the iqbal A/B at 15 s (the corrector off, then
+     * on - a stretch of worse image rejection, on purpose), and the
+     * first eight frames on the polled transport, below.
+     */
     uint32_t ab_at = board_millis() + 15000U;
-    int      ab_done = 0;
+    int      ab_done = !SELFTEST;
     uint32_t clock_at = 0U;
     uint32_t s_probe_at = 0U;
     uint32_t s_press_n = 0U, s_press2_n = 0U;
     int      s_err_absurd = 0;      /* the warning below fires once */
-    uint32_t polled_left = 8U;      /* the transport A/B, see below */
+    uint32_t polled_left = SELFTEST ? 8U : 0U;  /* transport A/B, below */
 
     for (;;) {
         iq_peak_t pk;
@@ -7210,6 +7339,13 @@ int main(void)
          * the variable's neighbours are scalars rather than arrays, so
          * there is no array to have run past; and the builds either
          * side are clean over a thousand status lines each.
+         *
+         * 20/11/2026: ONE THING THAT DOES EXACTLY THIS WAS FOUND, at
+         * load time: the previous image's SAI DMA, still running while
+         * a new one is loaded over SWD, wrote I/Q pairs into sai1.c's
+         * s_mux_released. core_clean in openocd-helpers.cfg now stops
+         * it. Whether it explains THIS event is not shown - this value
+         * also reads as a sample pair, but it appeared mid-run.
          *
          * So this is not a fix, it is a detector. The number is never
          * clamped - clamping would hide exactly the thing worth seeing -

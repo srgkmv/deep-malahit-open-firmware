@@ -829,6 +829,27 @@ Each step should end with something visible on the radio.
    done and verified. Three cold-boot bugs that no RAM test could show
    are in `WORKING.md`, and the unit turned out to be modified so the
    MCU latches its own supply (`BOARD.md` section 3).
+18. **A boot for a radio, not for a bench.** *20/11/2026* — `SELFTEST`
+   in `main.c`, 0 by default: screen and audio **2.5 s** after SysTick
+   starts, against **37 s** with the bring-up tests (`make flash
+   SELFTEST=1` puts them back; both figures off the boot's own
+   `Boot      :` line). The image also shrinks from 134 kB to 96 kB,
+   because the tests drop out of it - one flash sector instead of two.
+
+   Skipping them was trap 17 three times over: three settings the radio
+   ran on were outputs of tests. The receive clock edge (`CKSTR=1`) was
+   chosen by `test_rx_timing()`, and `sai1.c`'s default was the wrong
+   one; the add-on relay was chosen by measuring a generator, a coin
+   toss on an antenna; the add-on filter was whatever the last test
+   left. All three are now set by the startup itself, after the tests,
+   so what the radio runs on no longer depends on which tests ran.
+   Verified on the radio both ways: carrier on the dial on every
+   `baseband:` line, no underruns, and the full path unchanged.
+
+   The day also found two ways a RAM load corrupted the image it
+   started - the old image's DMA, and a halt inside the block interrupt
+   that left the new image with no audio. `WORKING.md`, "LOADING OVER
+   SWD RESETS NOTHING".
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

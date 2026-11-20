@@ -38,6 +38,66 @@ Reset_Handler:
     ldr   sp, =_estack
 
     /*
+     * 0. OUT OF HANDLER MODE, if a debugger started us inside an
+     *    exception - found 20/11/2026, and it had silenced the radio.
+     *
+     *    The block interrupt carries the AM demodulator, ~8 ms of every
+     *    21 ms, so a load over SWD halts the old image INSIDE exception
+     *    27 (DMA1_Stream0) four times in ten. ram_run then writes PC,
+     *    SP and xPSR - and the IPSR does not change, nor does the NVIC's
+     *    active bit. The whole new image ran as exception 27: SysTick, at
+     *    priority 0, still preempted it, so knobs, buttons and screen all
+     *    worked; the block interrupt, at 1 and already "active", could
+     *    never be taken again. irq 0/0, no audio, and the next load
+     *    inherits it, so it lasts until a power cycle. Seen on the radio:
+     *    xPSR 0x290f001b with the PC in gfx2_wf_blit(), IABR0 bit 11 set.
+     *
+     *    Writing the registers cannot clear an NVIC active bit; only an
+     *    exception return can. So make one: a basic frame whose return
+     *    address is this very handler, xPSR with only the Thumb bit, and
+     *    EXC_RETURN for thread mode on MSP. We land at the top again, in
+     *    thread mode, with the bit cleared.
+     *
+     *    NONBASETHRDENA first, so a return to thread mode with another
+     *    exception still nested underneath is not an INVPC fault; that
+     *    case (the halt caught SysTick preempting the block interrupt)
+     *    is rare and leaves the outer one active - main() reads the
+     *    active bits at boot and says so. And FPCCR.LSPACT cleared, because a lazy FP save the
+     *    old image's exception had reserved would otherwise land on the
+     *    old frame address - in our memory - at the first float.
+     *
+     *    A real reset arrives with IPSR 0 and skips all of it.
+     */
+    mrs   r0, ipsr
+    cbz   r0, 2f
+    ldr   r0, =0xE000EF34          /* FPU->FPCCR */
+    ldr   r1, [r0]
+    bic   r1, r1, #1               /* LSPACT */
+    str   r1, [r0]
+    ldr   r0, =0xE000ED14          /* SCB->CCR */
+    ldr   r1, [r0]
+    orr   r1, r1, #1               /* NONBASETHRDENA */
+    str   r1, [r0]
+    dsb
+    isb
+    sub   sp, sp, #32              /* r0 r1 r2 r3 r12 lr pc xpsr */
+    movs  r0, #0
+    str   r0, [sp, #0]
+    str   r0, [sp, #4]
+    str   r0, [sp, #8]
+    str   r0, [sp, #12]
+    str   r0, [sp, #16]
+    str   r0, [sp, #20]
+    ldr   r0, =Reset_Handler
+    bic   r0, r0, #1               /* a stacked PC has bit 0 clear */
+    str   r0, [sp, #24]
+    ldr   r0, =0x01000000          /* xPSR: Thumb, IPSR 0 */
+    str   r0, [sp, #28]
+    ldr   r0, =0xFFFFFFF9          /* EXC_RETURN: thread, MSP, no FP */
+    bx    r0
+2:
+
+    /*
      * 1a. Interrupts allowed again.
      *
      *     A reset clears PRIMASK; an image started by a debugger

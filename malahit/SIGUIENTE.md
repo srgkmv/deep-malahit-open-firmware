@@ -4,6 +4,50 @@ Rewritten 19/11/2026, updated 20/11/2026. `WORKING.md` is still the file
 to read first; this one only says what the next session should do and
 what it must not trust.
 
+## 20/11/2026, late: the fast boot is done — and NOT yet in flash
+
+**What is in the tree, uncommitted:** `SELFTEST` (`main.c`, `reglas.mk`).
+The default boots to screen and audio in **2.5 s**; `SELFTEST=1` is the
+old 37 s boot, unchanged. Both tested on the radio over RAM, the fast
+one six times: carrier on the dial on every `baseband:` line, `dry 0`,
+the block interrupt counting. `PORTING.md` step 18 has what had to move
+out of the tests first (the receive clock edge, the add-on relay and
+filter - all three were test outputs).
+
+**What is NOT done: the flash write.** `build_flash/bringup.bin` is
+built, `SELFTEST=0`, 96 024 bytes, sha256 `6277cd69…4d8472`. It needs
+the owner's hands - both encoder buttons + power, then the `dfu-util`
+line in `WORKING.md`. Until then the radio still boots the 37 s image
+from flash. **On the first cold boot of it, check** the `Boot      :`
+line (~2.5 s), the `Add-on    :` line (filter, 50 ohm, 0 dB), and that
+`irq` counts. One thing only a cold boot exercises: `addon_init()` now
+waits 10 ms when it finds the add-on board unpowered, before the first
+write to it - on a RAM load the board is always already on.
+
+**Two RAM-load traps, both fixed, both in `WORKING.md`** under "LOADING
+OVER SWD RESETS NOTHING": the old image's DMA writing into the new one,
+and a halt inside the block interrupt that leaves the new image as that
+exception for good - `irq 0/0`, no audio, until a power cycle. **If a
+RAM run shows `irq 0/0`, that is the first suspect.** The startup now
+returns out of it by itself, and `core_clean` avoids it. The previous
+session's RAM logs were checked: all of them have the interrupt
+counting, so their measurements stand.
+
+**Next, in order of what the radio gains:**
+
+1. **The console line in the display loop costs ~20 ms of every frame**
+   (230 characters at 115 200 baud, polled). With `SELFTEST 0` it could
+   go once a second, like `baseband:`; that is a frame rate of ~11 fps
+   instead of ~9 for one `if`. Decide what the bench still needs from
+   it per frame first.
+2. **The panel on SPI DMA** - "THE NEXT THING TO DO" in `WORKING.md`.
+   Measured today: waterfall 48 ms, trace 7-25 ms of an ~100 ms frame.
+3. **Remember the dial and the volume** across power-offs. Every boot
+   starts on 10.000 MHz at -24 dB; there is an FM25W256 FRAM on the
+   board (`BOARD.md` section 6) and no driver for it yet.
+4. The 100 kHz-step test for the 10 MHz digital noise (below), when the
+   owner has the radio in hand.
+
 ## THE RADIO RUNS OUR FIRMWARE FROM FLASH — read this first
 
 Since 20/11/2026 the factory firmware is NOT in flash: ours is, in bank
@@ -25,9 +69,9 @@ has the table and the update procedure. In short:
 - **THIS UNIT IS MODIFIED** (`BOARD.md` section 3): the MCU's own supply
   is latched by PC6 or the power button. Any reset is a power cut;
   "off" is no power at all; SWD is dead when off.
-- **The boot is the bring-up image**: ~45 s of self-tests before the
-  main screen. A fast path that skips them is an obvious next step now
-  that the radio is used as a radio.
+- **The boot is the bring-up image** in what is in flash today: 37 s
+  of self-tests before the main screen. The fast boot is built and
+  waiting to be written - see the section above.
 - `make flash` writes nothing and never will; `swd.sh flash` uses
   `reset halt`, which does not work on this board — do not use it.
 

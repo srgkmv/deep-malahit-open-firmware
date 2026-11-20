@@ -30,10 +30,21 @@ static uint32_t s_measured_fs;
  * sai1_set_fs() rewrites block B's CR1 and FRCR from scratch, so
  * anything sai1_set_rx_timing() chose has to be reapplied there or the
  * rate sweep would silently run with different framing from the test
- * that established it. Defaults are I2S as RM0433 describes it; main()
- * measures which is actually right.
+ * that established it.
+ *
+ * THE DEFAULT IS THE MEASURED ANSWER, CKSTR = 1, not RM0433's 0. It used
+ * to be 0, "as RM0433 describes it", and the radio only worked because
+ * main()'s test_rx_timing() measured the four combinations and applied
+ * the winner - the radio's receive framing was a test's OUTPUT, which is
+ * trap 17 in WORKING.md waiting for the day the test was skipped. It is
+ * skipped now on every normal boot (SELFTEST in main.c), so the answer
+ * lives here, where BOARD.md section 5 already put it ("CKSTR must be
+ * SET on the receiving block - measured"): the test picks CKSTR=1
+ * FSOFF=1 at a mean |sample| near 90, against ~16 000 for the frames
+ * shifted by a bit. It still runs, and still overrides this, with
+ * SELFTEST=1.
  */
-static int s_rx_ckstr = 0;
+static int s_rx_ckstr = 1;
 static int s_rx_fsoff = 1;
 
 /*
