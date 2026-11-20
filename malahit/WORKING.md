@@ -593,7 +593,7 @@ line.
 
 ---
 
-## No way back, yet
+## The way back — and the radio now runs from flash
 
 **There is no JP1 on this board.** The schematic shows a BOOT0 jumper;
 it is not fitted, and pin 94's trace disappears into an inner layer with
@@ -603,10 +603,104 @@ very thing a flash write would replace.
 
 So before anything is written to flash there has to be another route
 back: SWD that our firmware never disables, or our own button
-combination jumping to `0x1FF00000`. Cheap to write, and it belongs
-before the first flash write rather than after it.
+combination jumping to the ROM bootloader. Cheap to write, and it
+belongs before the first flash write rather than after it.
 
 Until then: RAM only, and the radio cannot be bricked.
+
+### What was established, 20/11/2026, on the way to the first flash write
+
+- **The whole flash is backed up**, read twice over SWD and identical,
+  with the option registers: `Deep-Malahit/backups/`, outside the repo
+  (the factory firmware is not ours to publish). Its README has the
+  hashes, the sector map and the restore commands. Bank 1 holds the
+  factory code, byte-identical to the RE dump; **bank 2 holds ~790 kB of
+  this unit's own data** that the RE dump does not have. Our image goes
+  in bank 1 only and bank 2 is never erased.
+- **How the factory firmware does it**, from its own code:
+  - DFU at boot (`0x08007a34`): GPIOA clock on, PA1 an input, **read as a
+    digital pin**; 0 means jump. "Both" is 0.86 V, below VIL, so it
+    always reads 0; the small knob alone (1.05 V) is in the undefined
+    band. This is also why it leaves PA1's analog switch closed - trap
+    23's inherited `PMCR` was this code's requirement.
+  - The jump (`0x0800e2ac`): SysTick off, RCC de-init, all 160 IRQs
+    disabled and un-pended, MSP and PC from **`0x1FF09800`** - the
+    H743's system bootloader. Not `0x1FF00000`, which is the option-byte
+    boot address and was written here before as the jump target.
+  - Power off (`0x08009a00`): PE1 (speaker amp) off, wake-up pin
+    **WKUP4 = PC13 = SW3** armed on a rising edge, every clock enable
+    cleared, `PDDS_D1|D2|D3`, **`DBGMCU_CR = 0`**, SLEEPDEEP, `wfi`. That
+    last write is why SWD dies when the radio is "off".
+- **Option bytes**: `FLASH_OPTSR_CUR = 0x0BC2AAF8` - RDP level 0, IWDG1
+  software-started (no hardware watchdog to race on a cold boot).
+- **THERE IS NO "RESET AND CATCH IT" OVER SWD.** Tried twice: NRST with
+  `reset halt`, and SYSRESETREQ with `reset_config none`. Both lose the
+  debug connection, the vector catch is lost with it, the factory
+  firmware runs from its first instruction and switches the radio off.
+  `openocd-ft2232d.cfg` claimed `reset halt` worked; it is corrected.
+
+So the way back, once our image is in flash, rests on two things and
+both have to be in it from the first write: **the DFU check as the very
+first code at boot**, before clocks or anything that can fail; and SWD
+while our firmware is running. There is no third: no BOOT0 pads, no
+reset-halt — and, it turned out, no SWD while "off" either: keeping
+`DBGMCU_CR` set in standby changed nothing, because on this unit "off"
+is a power cut (`BOARD.md` section 3). `boot.c` now writes the factory's
+`DBGMCU_CR = 0`.
+
+### Flashed, 20/11/2026 — and the round trip proven
+
+Our image is in flash and the radio boots it cold, from the power
+button, with no PC attached. Bank 1 sectors 0–1 only; bank 2 untouched
+throughout. Every link was checked on the radio:
+
+| step | result |
+|---|---|
+| backup | three reads — SWD twice, ROM DFU once — identical |
+| ours → flash | over the factory's DFU, read back byte for byte |
+| our DFU, from flash | enumerates and holds power on this unit |
+| ours → ours | rewritten over our own DFU |
+| factory restored | all 2 MB identical to the backup, and it ran |
+| ours again | over the factory's DFU, read back byte for byte |
+
+**How to update the radio from now on** — no SWD needed:
+
+    cd malahit/bringup && make flash        # builds build_flash/, writes nothing
+    # radio: hold BOTH encoder buttons, press power -> 0483:df11
+    dfu-util -a 0 -s 0x08000000:leave -D build_flash/bringup.bin
+
+After `:leave` the image starts with the power button not held, so it
+switches itself off; that is correct. Switch on with a short press.
+Holding the power button for more than three seconds switches off
+(`BOOT_POWER_OFF_MS`). The boot is still the bring-up image's: about
+45 s of self-tests before the main screen.
+
+### What the first cold boots found — LOADING OVER SWD RESETS NOTHING, three more times
+
+Every one of these hid behind state the factory firmware had left, so
+not one RAM test could have shown it. The first flash image reached the
+radio carrying all three.
+
+1. **The button ladder hangs from the switched rail.** `PA1` read before
+   `PC6` is up has no pull-up and reads 0: the first flashed image went
+   into DFU on a plain press of the power button. The factory firmware
+   raises `PC6` before its read; that was the one step of its recipe not
+   copied.
+2. **On this unit the MCU's own supply is latched by `PC6`** (`BOARD.md`
+   section 3), so a DFU entered before `PC6` is up dies when the buttons
+   are released. The owner caught it before the first write. The RAM
+   test had passed because `PC6` was still high from the image before.
+3. **`PWR_CR3` must be WRITTEN once after power-on** before the core
+   voltage can change; `clock.c` said "deliberately not touched" and
+   every image had run on the factory firmware's write. Cold, VOSRDY
+   never set: 64 MHz, no sample rate, a dark radio that was in fact
+   switched on — which the console said in plain words, and which a
+   dark screen alone would never have.
+
+The general form is the one at the top of this file, and it is now
+earned in both directions: **write the registers you depend on — and the
+pins, and the supplies — because the first boot from flash is the first
+time nothing was written for you.**
 
 ---
 

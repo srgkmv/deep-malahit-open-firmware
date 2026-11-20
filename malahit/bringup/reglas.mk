@@ -8,7 +8,8 @@
 #   make              build build/bringup.elf, .bin and .hex
 #   make ram          build, then load into AXI SRAM and run it over SWD
 #                     (does NOT touch flash - the factory firmware survives)
-#   make flash        build the flash-linked variant and program it
+#   make flash        build the flash-linked variant into build_flash/
+#                     (builds only - the write is ROM DFU, see the target)
 #   make size         section sizes
 #   make clean
 #
@@ -510,9 +511,22 @@ $(BUILD_DIR):
 ram: all
 	../tools/swd.sh ram $(BUILD_DIR)/$(TARGET).elf
 
+# THE FLASH IMAGE, BUILT ONLY - NOTHING IS WRITTEN BY MAKE.
+#
+# Into build_flash/, so the RAM image in build/ survives. It used to
+# build into build/ and program over SWD with "reset halt", which on this
+# board does not halt (WORKING.md, "No way back") - a flash write through
+# it would have run on a core nobody had stopped.
+#
+# The write itself is ROM DFU, the path proven on this radio: switch on
+# with both encoder buttons held, then the dfu-util line this prints. It
+# erases only the sectors the image covers; bank 2, this unit's own data,
+# is never touched.
 flash:
-	$(MAKE) LDSCRIPT=stm32h743_flash.ld all
-	../tools/swd.sh flash $(BUILD_DIR)/$(TARGET).elf
+	$(MAKE) LDSCRIPT=stm32h743_flash.ld BUILD_DIR=build_flash all
+	@echo
+	@echo "  flash image: build_flash/$(TARGET).bin - write it over ROM DFU with"
+	@echo "    dfu-util -a 0 -s 0x08000000:leave -D build_flash/$(TARGET).bin"
 
 size: $(BUILD_DIR)/$(TARGET).elf
 	$(SIZE) -A $<

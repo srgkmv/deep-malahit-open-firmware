@@ -1,8 +1,35 @@
 # Where to pick this up
 
-Rewritten 19/11/2026, second session of the day. `WORKING.md` is still
-the file to read first; this one only says what the next session should
-do and what it must not trust.
+Rewritten 19/11/2026, updated 20/11/2026. `WORKING.md` is still the file
+to read first; this one only says what the next session should do and
+what it must not trust.
+
+## THE RADIO RUNS OUR FIRMWARE FROM FLASH — read this first
+
+Since 20/11/2026 the factory firmware is NOT in flash: ours is, in bank
+1 sectors 0–1, and it boots cold from the power button. The factory
+image is backed up outside the repo (`Deep-Malahit/backups/`, README
+there) and the round trip — factory restored, then ours again — has
+been done once, over DFU, and verified. `WORKING.md`, "The way back",
+has the table and the update procedure. In short:
+
+- **Update**: `make flash` in `bringup/` (builds only), then switch on
+  with BOTH encoder buttons held and
+  `dfu-util -a 0 -s 0x08000000:leave -D build_flash/bringup.bin`.
+- **Power**: short press on; hold more than 3 s off. After a DFU
+  `:leave` it switches itself off — correct.
+- **RAM loads still work** for development: switch on, then
+  `swd.sh ram build/bringup.elf` as before. What they inherit is now
+  OUR firmware's state, not the factory's — a different set of
+  assumptions; keep that in mind before trusting one again.
+- **THIS UNIT IS MODIFIED** (`BOARD.md` section 3): the MCU's own supply
+  is latched by PC6 or the power button. Any reset is a power cut;
+  "off" is no power at all; SWD is dead when off.
+- **The boot is the bring-up image**: ~45 s of self-tests before the
+  main screen. A fast path that skips them is an obvious next step now
+  that the radio is used as a radio.
+- `make flash` writes nothing and never will; `swd.sh flash` uses
+  `reset halt`, which does not work on this board — do not use it.
 
 ## The tuning arrangement changed again, and this one is modelled
 
@@ -131,7 +158,14 @@ waterfall's 41 ms - which has no such skipping - is the bigger item.
 Either way it is the SPI DMA's job (WORKING.md, "THE NEXT THING TO
 DO").
 
-## The radio switching itself off: what was ruled out today
+## The radio switching itself off: what was ruled out, and what the modification explains
+
+**Half-explained, 20/11/2026**: on this unit any reset is a power cut —
+the reset drops PC6 and PC6 is what keeps the MCU powered (`BOARD.md`
+section 3). So "it switched itself off" means "something reset it", and
+the candidates are the ones below: a fault (the handler spins, the
+watchdog bites 32 s later), the watchdog, a brown-out. What reset it is
+still not known. The notes below are from 19/11 and still stand:
 
 The radio was **on** at the start of this session. Read before
 concluding anything from an empty log:

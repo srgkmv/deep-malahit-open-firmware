@@ -1,5 +1,6 @@
 #include "stm32h7xx.h"
 #include "board.h"
+#include "boot.h"
 #include "clock.h"
 #include "encoder.h"        /* ../../User/encoder.c, compiled in place */
 #include "enc2.h"           /* the same file again, for the second knob */
@@ -67,6 +68,10 @@ void SysTick_Handler(void)
     board_watchdog_feed();
 
     adc_tick();
+
+    /* The power button: held for three seconds switches off, from here
+     * so that it works with the main loop stuck (src/boot.c). */
+    boot_power_tick();
 
     if (s_encoder_live) {
         encoder_tick();
@@ -301,6 +306,26 @@ void board_power_on(void)
     BL_PORT->BSRR = (1UL << (BL_PIN + 16U));
 
     RAIL_PORT->BSRR = (1UL << RAIL_PIN);
+
+    /*
+     * PE1 = Vspk_ON, the speaker amplifier's supply, WRITTEN - for the
+     * first time in this firmware. Until now the amplifier worked
+     * because the factory firmware had left PE1 an output and high
+     * (measured 05/11/2026), which is the "loading over SWD resets
+     * nothing" rule in the analogue domain. From flash, after a real
+     * reset, PE1 is an input and the speaker would stay silent with
+     * every counter saying the audio path works. On here, with the
+     * rail: nau8822_configure() mutes the codec's outputs until
+     * somebody wants sound, so the amplifier being live first costs
+     * nothing.
+     */
+    RCC->AHB4ENR |= RCC_AHB4ENR_GPIOEEN;
+    (void)RCC->AHB4ENR;
+    gpio_output(GPIOE, 1U);
+    GPIOE->BSRR = (1UL << 1U);
+
+    /* The power button's pin, before SysTick starts calling its tick. */
+    boot_power_init();
 
     /*
      * SysTick last, because board_delay_ms() below needs it. 1 kHz off the

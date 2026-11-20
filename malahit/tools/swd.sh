@@ -15,7 +15,10 @@
 #                                   survives and a power cycle restores it
 #   ./swd.sh fault                  print the last crash record, if any
 #   ./swd.sh clean                  silence the core after a crash
-#   ./swd.sh flash firmware.elf     program and verify over SWD
+#   ./swd.sh flash firmware.elf     DO NOT USE on this board: it relies on
+#                                   "reset halt", which does not halt here
+#                                   (WORKING.md, "The way back"). Flash is
+#                                   written over ROM DFU - see "make flash".
 #   ./swd.sh reset                  reset and run
 #   ./swd.sh -c "<openocd cmd>" ... run arbitrary commands, then exit
 set -euo pipefail

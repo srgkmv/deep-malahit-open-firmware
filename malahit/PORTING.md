@@ -809,6 +809,27 @@ Each step should end with something visible on the radio.
    a radio that counted blocks, reported no underruns and played
    silence.
 
+   **Superseded 19/11/2026: the offset is now a fixed 12 kHz (Fs/16)**,
+   not Fs/4 — the tuner follows the dial on every detent, a 16-entry
+   table rotates the station back, and the panadapter shows 168 kHz
+   centred on the dial. A zero-IF version in between was modelled and
+   dropped before it ran: it subtracted the carrier with the leakage.
+   The retune mute is gone and the click it left is repaired in the
+   envelope. `WORKING.md`, "Forward again, to a fixed 12 kHz" and the two
+   retune sections after it.
+
+17. **Flash, and the way back.** *Done, 20/11/2026* — the radio boots
+   our firmware cold from flash, with no PC attached. `src/boot.c` is
+   the factory firmware's own recipe, read out of its code: both
+   encoder buttons at power-on jump to ROM DFU (`0x1FF09800`), the
+   power button held for three seconds switches off, and a reset with
+   nobody pressing it goes straight back to sleep. Written over DFU into
+   bank 1 sectors 0–1 only; the factory image is backed up outside the
+   repo and the round trip — factory restored, then ours again — is
+   done and verified. Three cold-boot bugs that no RAM test could show
+   are in `WORKING.md`, and the unit turned out to be modified so the
+   MCU latches its own supply (`BOARD.md` section 3).
+
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress
 before the hard part, rather than months of nothing.

@@ -142,6 +142,33 @@ while the radio is "off" (the MCU rail is always live anyway; power-off is
 MCU standby plus `PC6` low), which drains the battery and hides a bring-up
 step that has to be correct regardless. Bench work is easier on USB power.
 
+> ### THIS UNIT IS MODIFIED, AND THE MCU IS NOT ALWAYS ON
+>
+> Stated by the owner, 20/11/2026: on this radio **U3's INH (pin 3) is
+> not tied to VIN (pin 1)**. It is fed through diodes from **`3.3V_ON`
+> (`PC6`)** and from **`WAKEUP`** (the power button), and the button
+> itself is powered from **`BAT`**, not from `3.3V_CPU`. Other Malahits
+> are as the schematic shows; this one is not.
+>
+> So here **the MCU is powered only while the power button is held or
+> `PC6` is high**: the firmware latches its own supply, and "off" is a
+> real power cut, not standby. That explains several things this file
+> and `WORKING.md` recorded without explaining:
+>
+> - every boot reports `last reset: power-on, brown-out` — it is one;
+> - **any reset switches the radio off**: the reset returns `PC6` to an
+>   input, R38 pulls it low, and U3 goes with the peripheral rail;
+> - SWD is dead whenever the radio is "off", whatever `DBGMCU_CR` says —
+>   the chip has no power (tried with debug kept on in standby: no
+>   difference);
+> - **DFU must hold `PC6` high** or it lasts only as long as the thumbs
+>   on the buttons. The factory firmware raises it before its jump, and
+>   so does `src/boot.c`.
+>
+> The firmware is written to work on both: it latches `PC6` early, and
+> its "off" is standby with every pin floating, which on an unmodified
+> board is standby and on this one is the power cut.
+
 Other power control:
 
 | Net | Pin | Function |
@@ -216,10 +243,32 @@ Three consequences, and the third one matters a great deal.
    - or SWD, which works as long as our own firmware never disables the
      debug port and never sleeps without a way to wake;
    - or our firmware implementing the same courtesy the factory one
-     does: a button combination at boot that jumps to `0x1FF00000`.
+     does: a button combination at boot that jumps to the bootloader.
 
    Item three is cheap to write and should exist before the first flash
    write, not after it.
+
+**Done, 20/11/2026, and proven both ways on the radio.** `src/boot.c` is
+the factory recipe: at every reset, before `.data`, `.bss` or a clock,
+`PC6` up, ~20 ms for the rail, `PA1` read as a digital pin, and if it is
+low, quiesce and jump to **`0x1FF09800`** — the H743's bootloader. Not
+`0x1FF00000`, which this file used to give: that is the option-byte boot
+address, and the factory code's literal says `0x1FF09800`. The jump
+target is where the bootloader's own vector table starts.
+
+Measured, so the next person does not have to:
+
+- **The ladder hangs from the switched rail.** With `PC6` low `PA1` has
+  no pull-up and reads 0 — "both buttons held" on every cold boot. The
+  first flash image did exactly that. Raise `PC6` and wait before
+  reading.
+- **No `JP1` pads, no reset-and-halt over SWD** (`WORKING.md`, "No way
+  back"): ROM DFU on the buttons is the way back, plus SWD while our
+  firmware is running.
+- **The round trip works**: our image written over the factory DFU,
+  rewritten over our own DFU, the factory image restored from the backup
+  (all 2 MB identical afterwards, and it ran), and ours written back over
+  the factory DFU again. `dfu-util` needs no root on this PC.
 
 ### Debug UART — header J6
 

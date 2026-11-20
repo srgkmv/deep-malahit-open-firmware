@@ -2,3 +2,4 @@ build/
 *.o
 *.d
 *.map
+build_flash/

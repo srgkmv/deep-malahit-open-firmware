@@ -90,15 +90,30 @@ static int clock_bring_up(void)
     /*
      * 1. CORE VOLTAGE.
      *
-     * PWR_CR3 is deliberately not touched. Its reset value already selects
-     * the internal LDO, which is what this board uses: VCAP1 and VCAP2
-     * carry 2.2 uF each and there is no SMPS inductor anywhere on the
-     * schematic. CR3 also latches - several of its bits can only be
-     * written once after reset - so writing it "just to be sure" is a way
-     * to lose, not to win.
+     * THE SUPPLY CONFIGURATION IS WRITTEN FIRST, and this comment used to
+     * say the opposite: "PWR_CR3 is deliberately not touched. Its reset
+     * value already selects the internal LDO." The value is right - this
+     * board runs the internal LDO, VCAP1/VCAP2 with 2.2 uF each and no
+     * SMPS inductor anywhere - but after a power-on the H743 will not
+     * change the core voltage until the supply configuration has been
+     * WRITTEN, once; until then VOSRDY never sets. Every image that ever
+     * ran here was loaded over SWD onto the factory firmware, which had
+     * written it long before, so the first image to boot from flash
+     * (20/11/2026) was also the first to meet a clean PWR: "core voltage
+     * never became ready", HSI at 64 MHz, no sample rate, a dark radio.
      *
-     * Scale 1 first (VOS = 0b11), then the overdrive step to Scale 0.
+     * The value is the factory firmware's own, read out of its boot code
+     * (0x080079c8: PWR_CR3 = 6, LDOEN | SCUEN, BYPASS clear), and it is
+     * also CR3's reset value - so this changes nothing the chip had not
+     * already chosen; it only says so, which is what the hardware waits
+     * for. CR3 is write-once per power-on: over SWD onto an image that
+     * already wrote it, this write is ignored, which is harmless because
+     * it is the same value.
      */
+    PWR->CR3 = PWR_CR3_LDOEN | PWR_CR3_SCUEN;
+    WAIT_FOR(PWR->CSR1 & PWR_CSR1_ACTVOSRDY, CLOCK_ERR_VOSRDY);
+
+    /* Scale 1 first (VOS = 0b11), then the overdrive step to Scale 0. */
     PWR->D3CR = PWR_D3CR_VOS;                      /* VOS = 0b11, Scale 1 */
     WAIT_FOR(PWR->D3CR & PWR_D3CR_VOSRDY, CLOCK_ERR_VOSRDY);
 

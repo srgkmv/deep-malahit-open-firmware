@@ -49,6 +49,7 @@
 #include "encoder.h"      /* ../../User/encoder.c - upstream */
 #include "enc2.h"         /* the same file again, for the small knob */
 #include "am.h"
+#include "boot.h"         /* the power button, for the console */
 #include "agc.h"          /* ../../User/agc.c - upstream; the retune test
                            * computes the gain with ITS constants */
 #include <math.h>         /* log10f, for the retune test's decibels */
@@ -7027,10 +7028,11 @@ int main(void)
              * one to fix.
              */
             console_printf("  buttons: ENC_BUT %u -> class %u   down "
-                           "%u/%u   presses %u/%u\n",
+                           "%u/%u   presses %u/%u   power %u\n",
                            adc_raw_enc_but(), adc_buttons(),
                            encoder_button_down(), encoder2_button_down(),
-                           s_press_n, s_press2_n);
+                           s_press_n, s_press2_n,
+                           (uint32_t)boot_power_key());
             /*
              * THE LINE IS LOW AND THESE THREE SAY WHY. A high-impedance
              * source read with too short a sample time reads low, so

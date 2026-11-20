@@ -139,6 +139,30 @@ Reset_Handler:
     isb
 
     /*
+     * 3a. IS ANYBODY SWITCHING US ON? From flash, a reset with the power
+     *     button not held goes straight back to standby (src/boot.c). A
+     *     RAM image over SWD returns at once. It touches no global, which
+     *     is what makes calling it before .data and .bss legal.
+     *
+     *     FIRST, and that order was learnt: the DFU check below has to
+     *     wait ~20 ms for the peripheral rail before it can read the
+     *     ladder, and on the owner's unit the press of the power button
+     *     is the only thing powering the MCU until PC6 is up. Asked
+     *     second, a quick press could already be over.
+     */
+    bl    boot_power_check
+
+    /*
+     * 3b. THE WAY BACK. Both encoder buttons held at power-on jumps to
+     *     the ROM bootloader (src/boot.c), before .data, .bss and the
+     *     clocks, so that nothing this firmware does later can stand
+     *     between a held button and DFU. Same rules as 3a. Raises PC6
+     *     either way - the ladder hangs from that rail. Returns if the
+     *     buttons are not held.
+     */
+    bl    boot_dfu_check
+
+    /*
      * 4. Copy .data from its load address to its run address. In the RAM
      *    link those two are the same and this loop copies zero bytes; in
      *    the flash link it does the real work.
