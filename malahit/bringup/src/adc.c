@@ -814,43 +814,52 @@ uint8_t adc_bat_pct(void)
  * decision that is immune to it, and upstream's battery.c is a long
  * account of what happens when a rail's real voltage is assumed.
  *
- * MEASURED ON THE RADIO, 05/11/2026, and they are NOT what the
- * schematic's resistor values predict:
+ * MEASURED ON THE RADIO, 20/11/2026, with adc_init() writing PMCR - and
+ * they ARE what the schematic's resistor values predict:
  *
- *                  measured              predicted from 47k/68k/22k
- *   idle        65535  (3300 mV)          65535
- *   big knob    49623  (2498 mV)          38750
- *   small knob  32863  (1655 mV)          20894
- *   both        28271  (1423 mV)          17128
+ *                  measured, 7-9 readings    predicted, 47k/68k/22k
+ *   idle        65535                        65535
+ *   big knob    38924  (38887 .. 38944)      38751   +0.4 %
+ *   small knob  20855  (20824 .. 20898)      20895   -0.2 %
+ *   both        17091  (17064 .. 17120)      17122   -0.2 %
  *
- * Every press reads HIGHER than the arithmetic says, so the 68k and 22k
- * read off page 3 are not what is fitted here. Working backwards from
- * the measurement, the two branches are about 3.11 and 0.99 times the
- * top resistor - 146k and 47k if the top one really is 47k.
+ * THE FIRST TABLE HERE, 05/11/2026, SAID THE OPPOSITE, and it was a
+ * measurement of somebody else's configuration (WORKING.md, trap 23).
+ * It read 49623 / 32863 / 28271 - every press higher than the
+ * arithmetic - and concluded that the 68k and 22k on page 3 were not
+ * what is fitted. What was not fitted was OUR configuration of PMCR: the
+ * factory firmware had left PA1's analog switch closed, hanging the
+ * digital pad on the ladder, and the switch's load is what moved the
+ * plateaus. Since adc_init() opens it, the plateaus sit within half a
+ * per cent of the schematic, and the thresholds measured through the
+ * closed switch classified the big knob as the small one and the small
+ * one as both.
  *
  * WHAT MAKES THIS A MEASUREMENT AND NOT THREE NUMBERS: the third
  * plateau predicts itself. If "both" is the two branches in parallel,
- * its voltage follows from the other two with no resistor value needed
- * anywhere - the scale cancels - and that arithmetic gives 1418 mV
- * against 1423 measured, a fifth of a per cent. So these three plateaus
- * really are one button, the other button, and both, and no part of that
- * conclusion rests on the schematic or on VREF+ being 3.3 V.
+ * its reading follows from the other two with no resistor value needed
+ * anywhere - the scale cancels - and that arithmetic gives 17129
+ * against 17091 measured, 0.2 %. It held through the closed switch too
+ * (a fifth of a per cent then), which is exactly why the old table was
+ * believed: a self-consistent ladder says the three plateaus are one
+ * button, the other and both - it cannot say the ladder was not being
+ * loaded.
  *
- * WHICH KNOB IS WHICH was settled the only way it can be: the hand
- * pressed the big knob first, the small one second and both third, and
- * the plateaus arrived in that order. "ENC1" below means the big knob,
- * the one that tunes.
+ * WHICH KNOB IS WHICH: the hand pressed the big knob first and the
+ * small one second, three times over, and both together three times on
+ * their own; the plateaus arrived in that order. "ENC1" below means the
+ * big knob, the one that tunes, and it is the 68k branch.
  *
  * Boundaries sit halfway between neighbours, with a dead band around
  * each one: a sample that lands inside a dead band keeps the previous
  * answer. That is hysteresis against ADC noise and has nothing to do
  * with contact bounce, which is upstream's 20 ms debounce integrator's
- * job and is left entirely to it. The narrowest gap here is 4592
- * counts, so 1000 of dead band costs nothing.
+ * job and is left entirely to it. The narrowest gap here is small to
+ * both, 3764 counts, so 1000 of dead band still leaves 880 either side.
  */
-#define BAND_NONE_ENC1      57579U       /* 65535 .. 49623 */
-#define BAND_ENC1_ENC2      41243U       /* 49623 .. 32863 */
-#define BAND_ENC2_BOTH      30567U       /* 32863 .. 28271 */
+#define BAND_NONE_ENC1      52230U       /* 65535 .. 38924 */
+#define BAND_ENC1_ENC2      29890U       /* 38924 .. 20855 */
+#define BAND_ENC2_BOTH      18973U       /* 20855 .. 17091 */
 #define BAND_DEAD            1000U       /* ~1.5 % of full scale */
 
 static uint8_t classify(uint32_t raw, uint8_t prev)

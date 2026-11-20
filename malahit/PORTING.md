@@ -654,13 +654,15 @@ Each step should end with something visible on the radio.
    975 µs by then — with the two channels alternating. 32 369
    conversions and zero timeouts across a run.
 
-   The measurement corrected the schematic: the presses read 2.498,
-   1.656 and 1.423 V against 1.95, 1.05 and 0.86 predicted from the
-   47k/68k/22k on page 3, so those values are not what is fitted. The
-   identification holds regardless, because **"both pressed" predicts
-   itself** from the other two plateaus with no resistor value and no
-   reference voltage in the arithmetic — 1.418 V against 1.423 V
-   measured. `BOARD.md` §6.
+   The first measurement (05/11) read 2.498, 1.656 and 1.423 V against
+   1.95, 1.05 and 0.86 predicted from the 47k/68k/22k on page 3, and
+   concluded the resistors were not what is fitted. **Wrong: it was
+   measured through the closed `PA1` analog switch** (trap 23).
+   Remeasured 20/11 with `PMCR` written: 1.960, 1.050 and 0.861 V, the
+   schematic to half a per cent, and the thresholds moved with them.
+   **"Both pressed" predicts itself** from the other two plateaus with
+   no resistor value and no reference voltage in the arithmetic —
+   17 129 counts against 17 091 measured. `BOARD.md` §6.
 
 13. **The battery.** *Done, 05/11/2026* — the header pill shows a real
    percentage, from **ADC1 channel 16**: the midpoint of R34/R36, two

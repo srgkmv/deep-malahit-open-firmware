@@ -3437,10 +3437,12 @@ static void test_adc(int interactive)
     console_printf("    -----------+---------+-----------------+---------+"
                    "----------------\n");
 
-    /* The column to compare against is the previous MEASUREMENT, not the
-     * schematic's arithmetic - those numbers were 38750/20894/17128 and
-     * the hardware disagreed with all three. See adc.c. */
-    static const uint32_t k_nom[4] = { 65535U, 49623U, 32863U, 28271U };
+    /* The column to compare against is the previous MEASUREMENT - the
+     * 20/11/2026 one, with PMCR written, which also agrees with the
+     * schematic's 47k/68k/22k to half a per cent. The 05/11 numbers
+     * that used to be here were taken through a closed analog switch
+     * (WORKING.md trap 23). See adc.c. */
+    static const uint32_t k_nom[4] = { 65535U, 38924U, 20855U, 17091U };
 
     for (uint32_t i = 0; i < 4U; i++) {
         if (seen[i] == 0U) {
@@ -3461,12 +3463,11 @@ static void test_adc(int interactive)
                    "big first,\n");
     console_printf("  small second, both third, and the plateaus arrived "
                    "in that\n");
-    console_printf("  order. The schematic's own resistor values predicted "
-                   "all three\n");
-    console_printf("  wrong by a wide margin and are not what is fitted - "
-                   "see adc.c,\n");
-    console_printf("  including the check that needs no resistor value at "
-                   "all.\n");
+    console_printf("  order. With PMCR written they match the schematic's "
+                   "47k/68k/22k\n");
+    console_printf("  to half a per cent - see adc.c, including the check "
+                   "that needs\n");
+    console_printf("  no resistor value at all.\n");
     console_printf("  adc_conversions %u, adc_timeouts %u - the second one "
                    "must be 0.\n\n",
                    adc_conversions, adc_timeouts);

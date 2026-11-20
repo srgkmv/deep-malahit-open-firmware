@@ -155,16 +155,27 @@ proves nothing. Disassemble those three sites before writing a byte
 there - the factory firmware may keep its clock, or a DFU flag, in
 them.
 
-## Two things that were being chased and are not finished
+## The button thresholds: done, 20/11/2026
 
-**1. The button thresholds need re-measuring.** `adc_init()` now writes
-`SYSCFG_PMCR` itself instead of inheriting it (trap 23), which takes the
-`PA1_C` pad off the ladder and can move every plateau. The four
-thresholds in `adc.c` were measured with that pad still attached. Press
-each button with the radio running and read the plateaus off the
-display loop's once-a-second `buttons:` line.
+Remeasured with `PMCR` written, off the display loop's `buttons:` line:
+big knob 38 924, small 20 855, both 17 091 - **the schematic's
+47k/68k/22k to half a per cent**. The 05/11 table that said "the
+resistors are not what is fitted" was measured through the closed `PA1`
+switch; with its thresholds the big knob read as the small one and the
+small one as both. New midpoints in `adc.c`, and verified on the radio
+the same day: classes 1, 2, 3 for big, small, both; short big cycles the
+step, short small swaps volume and RF gain, long small toggles the
+preamp - by the log and by the owner's eye. `BOARD.md` §6 has the table.
 
-**2. `test_adc(1)` hangs.** Not diagnosed, worked around. It printed its
+A press of BOTH is delivered to both knobs at once (upstream's encoder.c
+runs per knob), so it cycles the step and swaps the small knob's job
+together, and a long one toggles the preamp. Nothing is bound to "both"
+as a gesture of its own; if something ever is, it has to swallow the two
+single presses it currently produces.
+
+## Still not finished
+
+**`test_adc(1)` hangs.** Not diagnosed, worked around. It printed its
 first heartbeat and then neither looped nor returned. Given the list
 above, "hung" may have been a power-off.
 

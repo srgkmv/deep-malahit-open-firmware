@@ -1203,47 +1203,56 @@ This is the part no pin map can carry, and it is on page 3 of
 `Malahit_schematics_15012020.pdf`: `ENC_BUT` is one analog line shared by
 both buttons.
 
-**The voltages are measured, and the schematic's resistor values do not
-produce them** (05/11/2026, `test_adc()`, 16-bit conversions on
-`ADC1_INP1`):
+**The voltages are measured, and they are what the schematic's resistor
+values produce** (20/11/2026, with `adc_init()` writing `SYSCFG_PMCR` so
+`PA1`'s analog switch is open; 16-bit conversions on `ADC1_INP1`, read off
+the display loop's `buttons:` line):
 
 | | `ENC_BUT` measured | counts | what 47k/68k/22k predicts |
 |---|---|---|---|
-| idle | 3.300 V | 65503–65535 | 3.30 V |
-| **big knob** (ENC1) | **2.498 V** | 49599–49712 | 1.95 V |
-| **small knob** (ENC2) | **1.656 V** | 32809–32917 | 1.05 V |
-| both | **1.423 V** | 28246–28359 | 0.86 V |
+| idle | 3.300 V | 65535 | 65535 |
+| **big knob** (ENC1) | **1.960 V** | 38887–38944 | 38751 (+0.4 %) |
+| **small knob** (ENC2) | **1.050 V** | 20824–20898 | 20895 (−0.2 %) |
+| both | **0.861 V** | 17064–17120 | 17122 (−0.2 %) |
 
-Every press reads high against the arithmetic, so R18/R19 are not the
-68 kΩ and 22 kΩ read off page 3. Working backwards, the two branches are
-about **3.11 and 0.99 times the top resistor** — 146 kΩ and 47 kΩ if the
-top one is really 47 kΩ.
+So R18/R19 **are** the 68 kΩ and 22 kΩ on page 3, and the big knob is the
+68 kΩ branch.
+
+> **This table replaces one from 05/11/2026 that said the opposite** —
+> 2.498 / 1.656 / 1.423 V, every press high, "R18/R19 are not what is
+> fitted". It was measured through the **closed** `PA1` analog switch
+> the factory firmware leaves behind (see below and `WORKING.md` trap 23):
+> the switch hung the digital pad on the ladder and its load moved every
+> plateau. The resistors were right; the configuration was somebody
+> else's. The thresholds set from it would have taken the big knob for
+> the small one and the small one for both.
 
 > **Why these three plateaus are certainly the three button states.** The
 > third one predicts itself: if "both" is the two branches in parallel,
-> its voltage follows from the other two with **no resistor value and no
+> its reading follows from the other two with **no resistor value and no
 > reference voltage anywhere in the arithmetic** — the scale cancels. That
-> gives 1.418 V against 1.423 V measured, a fifth of a per cent. So the
-> identification rests on neither the schematic nor `VREF+`.
+> gives 17129 counts against 17091 measured, 0.2 %. It held through the
+> closed switch too, which is why the old table was believed: a
+> self-consistent ladder proves which state is which, not that nothing is
+> loading it.
 >
 > **Which knob is which** was settled by the hand: big pressed first,
-> small second, both third, and the plateaus arrived in that order.
+> small second, three times over, then both together; the plateaus
+> arrived in that order.
 
-Each class holds to within about 113 counts, against gaps of 4592
-between neighbours, so the classification has nearly two orders of
+Each class holds to within about 60 counts, against a narrowest gap of
+3764 (small to both), so the classification has well over an order of
 magnitude of margin. `src/adc.c` puts its thresholds at the midpoints
 with a dead band, and keeps them as **fractions of full scale**: the
 ladder's top goes to the same 3.3 V rail that feeds `VREF+`, so a sagging
 rail moves the ladder and the full scale together and the ratio does not
 move at all.
 
-On a 3.3 V input `VIL` is 0.99 V and `VIH` is 2.31 V, so **the big knob's
-press at 2.498 V is above `VIH` and the small one's at 1.656 V is in the
-undefined band** — which is the measured version of the same conclusion
-the predicted voltages reached: two buttons on one pin can only be told
-apart by measuring, and this one cannot be read as a GPIO at all. The
-first attempt here did read it as a GPIO, got the idle level, and
-announced it as a press.
+On a 3.3 V input `VIL` is 0.99 V and `VIH` is 2.31 V, so **both presses,
+1.96 V and 1.05 V, sit in the undefined band** — two buttons on one pin
+can only be told apart by measuring, and this one cannot be read as a
+GPIO at all. The first attempt here did read it as a GPIO, got the idle
+level, and announced it as a press.
 
 `SYSCFG_PMCR`, as the factory firmware leaves it, is **`0x01000000`**
 (measured 05/11/2026, and printed by `test_adc()` on every run): `PA0SO`

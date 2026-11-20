@@ -872,12 +872,23 @@ fresh within 2 ms against a 20 ms debounce. 32 369 conversions, **zero
 timeouts**.
 
 The three press plateaus measured 2.498 V, 1.656 V and 1.423 V where the
-schematic's resistor values predict 1.95, 1.05 and 0.86 — so those
-resistors are not what is fitted. What makes the identification solid
-anyway is that **the third plateau predicts itself**: "both buttons" is
-the two branches in parallel, and that voltage follows from the other two
-with no resistor value and no reference voltage in the arithmetic. 1.418 V
-predicted against 1.423 V measured. `BOARD.md` §6 has the table, and
+schematic's resistor values predict 1.95, 1.05 and 0.86 — and were
+written down as "those resistors are not what is fitted". **They are**:
+remeasured 20/11/2026 with `adc_init()` writing `PMCR`, the plateaus are
+1.960, 1.050 and 0.861 V, within half a per cent of the schematic. The
+05/11 figures were taken through the closed `PA1` analog switch the
+factory firmware leaves behind — trap 23, which this measurement had
+already been the victim of once, and was again for two weeks after the
+trap was written, because its thresholds were never retaken. They would
+have read the big knob as the small one and the small one as both.
+
+What makes the identification solid either way is that **the third
+plateau predicts itself**: "both buttons" is the two branches in
+parallel, and that reading follows from the other two with no resistor
+value and no reference voltage in the arithmetic — 17 129 counts
+predicted against 17 091 measured. It held through the closed switch
+too, which is the warning: a self-consistent ladder proves which state is
+which, not that nothing is loading it. `BOARD.md` §6 has the table, and
 `adc.c` keeps its thresholds as fractions of full scale because the
 ladder's top and `VREF+` are the same rail — a sagging rail moves both
 and the ratio not at all.
