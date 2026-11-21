@@ -4,7 +4,24 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 22/11/2026, just after midnight: step 9 done and IN FLASH
+## START HERE — 22/11/2026, ~01:00: steps 37-39 IN FLASH, pushed
+
+**In flash: `e71764d`** (steps 37-39 - touch-tuning on the spectrum,
+the memory channels in the FRAM, brightness - on top of `22c50fe`
+below) - `build_flash/bringup.bin`, 186 672 bytes, sha256 `2d5c4173…`,
+SELFTEST 0, clean build; written over DFU without `:leave`, read back
+identical byte for byte, left with the 4-byte `:leave` upload. **Cold
+boot**: record v4 (slot 1, seq 204), 104.3 MHz WFM with the tuner on the
+dial, "Memories: 2 in use, MEM.CSV from the FRAM", screen and audio
+2100 ms after SysTick, SAI DMA err 0. **Pushed**: `origin/malahit` has
+everything through this commit.
+
+To be confirmed by the owner's hand: the brightness by eye, and the
+backlight going dark at once under a held power button (boot.c now puts
+PB8 back to an output first). **Next, the owner's order: decoders one by
+one, RDS first.** Also open: upstream's SCAN cell on the memory screen.
+
+## 22/11/2026, just after midnight: step 9 done and in flash (22c50fe)
 
 **In flash: `22c50fe`** (steps 33-36 on top of the `df61818` below) -
 `build_flash/bringup.bin`, 179 440 bytes, sha256 `0ca7feb9…`, SELFTEST
