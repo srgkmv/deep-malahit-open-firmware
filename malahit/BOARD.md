@@ -1862,6 +1862,26 @@ Two details that make this an experiment rather than a reading:
 > line is **half the gap between the two candidates**, which is what it
 > uses now.
 
+### It needs 20-25 ms after Vext_ON before the 595 takes a write **[measured]**
+
+Writes to the 74HC595 sooner than that after `Vext_ON` rises are simply
+lost - no error, nothing to read back - and the filter switches sit on
+whatever they powered up with, which is NO signal. Swept 21/11/2026 by
+`test_addon_cold()` in `main.c`, MCU warm, the board powered down and up
+each cycle, boot order (attenuator, filter, relay pulse):
+
+| wait after Vext_ON | 10 | 15 | 20 | 25 | 30 | 50 | 100 | 200 ms |
+|---|---|---|---|---|---|---|---|---|
+| deaf | 6/6 | 6/6 | 6/6 | 0/6 | 0/6 | 0/6 | 0/6 | 0/6 |
+
+Not the relay: the same writes with no relay pulse at all were deaf 12
+in 12. The LD3985 itself is up in well under a millisecond, so something
+else on the board holds it off - an RC power-on reset on the 595 would
+do it; not checked against the schematic. `addon_init()` now waits
+`ADDON_RAIL_MS` = 200 ms when it finds the board unpowered. At 10 ms it
+made some cold starts deaf, intermittently, because the boot's console
+lines happened to push the writes to 15-25 ms, right on the threshold.
+
 ### What is still open
 - **What PD14 does.** It is driven, it is on this header, and it is not
   one of the six.

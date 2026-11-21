@@ -43,6 +43,14 @@
 void addon_init(void);
 
 /*
+ * How long addon_init() waits after powering the board up, before the
+ * first write - measured, see addon.c. A variable only so that
+ * test_addon_cold() can sweep it; nothing else should touch it.
+ */
+#define ADDON_RAIL_MS   200U
+extern uint32_t addon_rail_ms;
+
+/*
  * ONE COIL, ONE PULSE, TEN MILLISECONDS - the factory firmware's own
  * timing, read out of its code: set one line, clear the other, delay
  * 10, clear the first.

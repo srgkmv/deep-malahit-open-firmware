@@ -2723,6 +2723,113 @@ static void test_addon_atten(void)
     addon_set_att_halfdb(0U);
 }
 
+/* ================================================================== */
+/* THE ADD-ON BOARD FROM COLD, OVER AND OVER                          */
+/* ================================================================== */
+
+/*
+ * WHY THIS EXISTS - 21/11/2026. Some cold starts came up deaf: the
+ * oscillator's leakage normal, the audio running, and no carrier at all.
+ * Caught live one morning and cured on the spot by ONE call over SWD,
+ * addon_set_filter(HPF) (tools/swd-call.sh): the add-on board's 74HC595
+ * had lost the filter code the boot wrote, or never got it - and a wrong
+ * code joins one filter's input to another's output, which is no signal.
+ * Nothing writes it again until the dial changes band.
+ *
+ * Why it was lost, MEASURED with this test, MCU warm, 12 cycles each:
+ *
+ *   boot order: 10 ms, attenuator, filter, relay pulse   12 deaf
+ *   the same without the relay pulse                    12 deaf
+ *   10 ms, relay pulse (15 ms), attenuator, filter        0 deaf
+ *   200 ms, attenuator, filter, relay pulse               0 deaf
+ *
+ * So not the relay: TIME. The board is not ready 10 ms after its
+ * Vext_ON, and the boot's real writes, pushed later by console lines,
+ * sat near the threshold - hence a fault that came and went.
+ *
+ * What it does now is sweep that time - addon_rail_ms - in the boot's
+ * own order, n cycles per value, interleaved so that a drift on the
+ * bench lands on every value alike, and check after each cycle whether
+ * the carrier is back. Off is Vext_ON low with every other control
+ * line in analogue, as after a reset: a line driven high into an
+ * unpowered 74HC595 feeds it through its input protection, which is
+ * not a cold start at all.
+ *
+ * ADDON_COLD_TEST is the number of cycles per value; 0 leaves it out.
+ * It needs the generator on the dial and takes ~1.2 s a cycle.
+ */
+#ifndef ADDON_COLD_TEST
+#define ADDON_COLD_TEST 0
+#endif
+
+static void addon_power_down(void)
+{
+    static const uint32_t k_lines[] = {
+        ADDON_PIN_LE, ADDON_PIN_DIN, ADDON_PIN_CLK,
+        ADDON_PIN_REL_50R, ADDON_PIN_REL_HIZ
+    };
+
+    GPIOD->BSRR = (1UL << (ADDON_PIN_VEXT + 16U));
+    for (uint32_t k = 0; k < sizeof k_lines / sizeof k_lines[0]; k++) {
+        GPIOD->MODER |= (3UL << (k_lines[k] * 2U));     /* analogue */
+    }
+}
+
+static void test_addon_cold(uint32_t n)
+{
+    static const uint32_t k_ms[] = { 10U, 15U, 20U, 25U, 30U, 50U, 100U, 200U };
+    enum { NV = sizeof k_ms / sizeof k_ms[0] };
+    uint32_t deaf[NV] = { 0U };
+    uint32_t keep = addon_rail_ms;
+    int32_t  want = (int32_t)GEN_HZ - (int32_t)msi001_last_plan()->f_actual;
+
+    console_printf("\nTest - the add-on board from cold: %u cycles per "
+                   "rail time, carrier expected at %+d Hz\n", n, want);
+    console_printf("=========================================="
+                   "===========================\n");
+
+    for (uint32_t i = 0; i < n * NV; i++) {
+        uint32_t v = i % NV;
+        iq_peak_t pk;
+
+        board_watchdog_feed();
+        addon_power_down();
+        board_delay_ms(1000);
+
+        addon_rail_ms = k_ms[v];
+        addon_init();                       /* waits addon_rail_ms */
+        addon_set_att_halfdb(0U);
+        addon_set_filter(ADDON_F_HPF_4M5);
+        addon_input_50r();
+        board_delay_ms(30);
+
+        if (capture() == 0U) { console_printf("  capture failed\n"); continue; }
+        deinterleave(PAN_BINS);
+        fft_compute_db_iq(s_i, s_q, s_db);
+        iq_peak(s_db, PAN_BINS, 192000U, &pk);
+        float fl = spec_floor_db(s_db, PAN_BINS);
+        int32_t off = pk.offset_hz - want;
+        int ok = (off > -400 && off < 400) && (pk.db - fl) > 30.0f;
+
+        if (!ok) { deaf[v]++; }
+        console_printf("  %2u  rail %3u ms | peak %+7d Hz %4d dB | snr %3d dB"
+                       "  %s\n", i / NV, k_ms[v], pk.offset_hz,
+                       (int32_t)pk.db, (int32_t)(pk.db - fl),
+                       ok ? "ok" : "*** DEAF ***");
+    }
+
+    console_printf("\n  deaf, of %u each:", n);
+    for (uint32_t v = 0; v < NV; v++) {
+        console_printf("  %u ms: %u", k_ms[v], deaf[v]);
+    }
+    console_printf("\n\n");
+
+    /* Back as the boot leaves it, whatever the last cycle did. */
+    addon_rail_ms = keep;
+    addon_set_filter(addon_filter_for(GEN_HZ));
+    addon_input_50r();
+}
+
 static void test_addon_filters(void)
 {
     static const addon_filter_t k_order[4] = {
@@ -6855,6 +6962,10 @@ int main(void)
      * The boot stays polled on purpose: it is where runs hang, and a
      * hang keeps whatever is still queued. console.c has the rest.
      */
+    if (ADDON_COLD_TEST) {
+        test_addon_cold(ADDON_COLD_TEST);
+    }
+
     console_async(1);
 
     /*

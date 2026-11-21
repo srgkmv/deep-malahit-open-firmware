@@ -62,24 +62,46 @@ void addon_init(void)
     pin_output(ADDON_PIN_CLK);
 
     /*
-     * AND IF IT WAS OFF, LET ITS SUPPLY COME UP before anybody writes to
-     * it. The 595 and the PE4312 run off the board's own LDO, enabled by
-     * the pin just raised, and a byte clocked into an unpowered register
-     * is simply gone - with nothing to say so, because neither part can
-     * be read back.
+     * AND IF IT WAS OFF, LET IT COME UP before anybody writes to it - for
+     * addon_rail_ms, which is MEASURED, see below. A byte clocked into the
+     * 595 too early is simply gone, with nothing to say so: neither part
+     * on this board can be read back.
      *
-     * Every boot before 20/11/2026 got this by accident: the first write
-     * came after a console line, ~5 ms, and the tests wrote everything
-     * again seconds later. With SELFTEST 0 the console line is still the
-     * only thing in between and nothing writes again, so the margin is
-     * made explicit. The LDO needs well under a millisecond; 10 ms costs
-     * nothing, and only on a power-up - a RAM load over a running image
-     * finds the board already on and skips it.
+     * Only on a power-up: a RAM load over a running image finds the board
+     * already on and skips it.
      */
     if (!was_on) {
-        board_delay_ms(10U);
+        board_delay_ms(addon_rail_ms);
     }
 }
+
+/*
+ * HOW LONG THE BOARD NEEDS AFTER Vext_ON - and getting it wrong made the
+ * radio deaf on cold starts, 20-21/11/2026.
+ *
+ * This was 10 ms, chosen from "the LDO needs well under a millisecond".
+ * The board needs more than the LDO: test_addon_cold() in main.c powers
+ * it down and up with the MCU warm and sweeps this wait, boot order,
+ * 21/11/2026, room temperature:
+ *
+ *   wait     10   15   20   25   30   50  100  200 ms
+ *   deaf    6/6  6/6  6/6  0/6  0/6  0/6  0/6  0/6
+ *
+ * - a threshold between 20 and 25 ms, sharp and repeatable, and not the
+ * relay pulse (the same test without it was deaf 12 times in 12). It
+ * looks like a power-on reset held by an RC on the board; that is a
+ * guess, not checked against the add-on board's schematic. A lost code is no
+ * signal at all, and nothing writes it again until the dial changes
+ * band. The boot got away with it whenever its console lines happened
+ * to push the writes past the threshold - intermittent, and a cold
+ * morning found it.
+ *
+ * 200 ms: eight times the threshold, for a colder morning than the one
+ * measured, and it costs a fifth of a second at power-on only.
+ *
+ * A variable, not a constant, only so that the test can sweep it.
+ */
+uint32_t addon_rail_ms = ADDON_RAIL_MS;
 
 static void relay_pulse(uint32_t coil, uint32_t other)
 {

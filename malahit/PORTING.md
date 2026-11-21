@@ -875,6 +875,22 @@ Each step should end with something visible on the radio.
    and a load over a parked crash ran the new image's SysTick handler on
    the old image's memory, which switched the radio off - `core_clean`
    now clears it. `WORKING.md` has all three.
+20. **The deaf cold start, found and fixed.** *21/11/2026* — some cold
+   starts came up with no carrier at all until anything re-ran the init.
+   Caught live without a reload, and cured by one call over SWD
+   (`tools/swd-call.sh`, `addon_set_filter`): the add-on board's 74HC595
+   had lost its filter code. A test that power-cycles the add-on board
+   96 times with the MCU warm (`test_addon_cold()`) put the cause in
+   numbers: writes 10-20 ms after `Vext_ON` are lost every time, from
+   25 ms never - the relay pulse was innocent. `addon_init()` waited
+   10 ms; it waits 200 ms now. The boot's writes had sat at ~15-25 ms,
+   on the threshold, which is why the fault came and went. `BOARD.md`
+   section 7 has the table.
+
+   The method is worth more than the fix: **when an intermittent fault
+   shows itself, keep the radio in that state** - a snapshot to compare,
+   then one init step at a time called into the running image - instead
+   of reloading, which cures it and destroys the evidence.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

@@ -1,13 +1,13 @@
 # Where to pick this up
 
-Rewritten 19/11/2026, updated 20/11/2026 (late at night). `WORKING.md` is still the file
+Rewritten 19/11/2026, updated 21/11/2026. `WORKING.md` is still the file
 to read first; this one only says what the next session should do and
 what it must not trust.
 
-## 20/11/2026, night: fast boot, buffered console, a crash that can be switched off — none of it in flash yet
+## 21/11/2026: in flash and verified — fast boot, buffered console, a crash that can be switched off, no more deaf cold starts
 
-**In git:** the fast boot (`SELFTEST`, `PORTING.md` step 18, commit
-`77142f4`) and, after it, step 19: the buffered console (frame ~113 ms
+**In git and in flash:** the fast boot (`SELFTEST`, `PORTING.md` step
+18), step 20 - the deaf cold start, below - and step 19: the buffered console (frame ~113 ms
 -> **~80 ms, 12.5 fps**), the first-capture-after-arm fix, and the crash
 path - `fault_park()` flushes the console and polls the power button,
 `boot_standby()` clears pending exceptions so it really sleeps, and
@@ -25,63 +25,51 @@ answer at 0x38 ***`), and the boot spent 6 s scanning the bus for it
 mid-transfer with the FT6236; it did not happen on any load over the new
 image. If it shows up after a cold boot of the new image, it is real.
 
-**IN FLASH since 21/11/2026, ~00:15**: `build_flash/bringup.bin`,
-`SELFTEST=0`, 96 960 bytes, sha256 `7b870abd…bcbd189`, written over DFU
-WITHOUT `:leave`, read back (`-U`, same length) and identical byte for
+**How the flash is written now** (first on 21/11/2026, ~00:15; the
+current image is in the next section): over DFU WITHOUT `:leave`, read back (`-U`, same length) and identical byte for
 byte, THEN left with a 4-byte `-s 0x08000000:4:leave -U` (its "get_status"
-error is the device leaving, normal). It boots cold in ~2.3 s, touch
-works. That write-verify-leave sequence is the one to repeat;
+error is the device leaving, normal). It boots cold in ~2.7 s (2.3 s
+before the add-on board's 200 ms), touch works. That write-verify-leave sequence is the one to repeat;
 `tools/flash-dfu.sh` still writes with `:leave` and verifies nothing.
 
-**OPEN, AND FIRST: AFTER SOME COLD STARTS THE RADIO RECEIVES NOTHING.**
-Two cold starts out of three tonight, one with each firmware: `leak DC`
-normal (~1 700), interrupts counting, audio running - and no carrier at
-all: `station` 3-8, the peak wandering over noise, SNR 10-12 dB, ADC 7 %.
-It is decided in the first second - `rf_autorange()` already sees no
-carrier (`28 dB ... ADC at 31%` against `44 dB ... 41%` on a good start;
-the boot log is otherwise identical) - and it lasts for minutes. **Any
-re-run of the init cures it at once**: a RAM load, or the same flash
-image started warm from the debugger.
+**FOUND AND FIXED 21/11/2026, IN FLASH AND VERIFIED: the deaf cold
+start.** Some cold starts came up with no carrier at all (`leak DC`
+normal, interrupts counting, `station` 3-8, ADC ~7 %) until anything
+re-ran the init. Caught live the morning after - the owner switched on
+cold, it was deaf, and nobody reloaded:
 
-| cold start, 20-21/11 | preceded by | off for | carrier |
-|---|---|---|---|
-| old flash image | the radio switching itself off (crash test) | minutes | **none** |
-| new flash image | the image's own power-off right after DFU `:leave` | 1-2 min | **none** |
-| new flash image | the owner's normal 3 s hold | seconds | yes |
-| new flash image, several more | the owner's normal 3 s hold | various | yes, every time |
+1. A snapshot of GPIO, SPI1 and the clocks matched a good start exactly
+   (PA15 differed: it is the panel's CS, caught mid-transfer).
+2. ONE call over SWD, `tools/swd-call.sh build_flash/bringup.elf
+   addon_set_filter 2`, and the carrier was back - console, screen and
+   the owner's ear. The add-on board's 74HC595 had lost the filter code.
+3. `test_addon_cold()` (`main.c`, `ADDON_COLD_TEST`) then powered the
+   add-on board down and up 96 times with the MCU warm. The relay is
+   innocent; it is TIME: writes 10-20 ms after `Vext_ON` are lost every
+   time, from 25 ms never. `BOARD.md` section 7 has the table.
 
-**A pattern, not a proof:** both deaf starts followed a power-off the
-radio did BY ITSELF - the crash test's, and the image's own one straight
-after DFU `:leave` - and none of the owner's ordinary 3 s holds has been
-followed by one. If it is real, what differs is what the board looked
-like at the moment the power went: a crashed or barely-started image
-leaves the add-on board and the tuner in states an ordinary run never
-does. The cheap test of that is a DFU `:leave` followed by a cold start,
-twice - with the console recording from power-on.
+`addon_init()` waited 10 ms; it now waits `ADDON_RAIL_MS` = 200 ms when
+it finds the board unpowered. The boot's real writes had landed at
+~15-25 ms - pushed there by console lines - which is why it came and
+went, and why a cold morning found it.
 
-**Ruled out:** the flash build (the same image started warm receives);
-the add-on board powering up cold (simulated warm, once - but the fault
-is intermittent, so once is weak); relay pulses on a warm board (three
-injected, no effect). **Not ruled out:** the add-on's 595 losing the
-filter code on a freshly powered board (a wrong code is NO signal, which
-is what this looks like), the MSi001, the BPF/preamp GPIOs. The old
-image also failed although its tests rewrite the tuner and the filter
-dozens of times - which points at something written ONCE, early.
+**Verified from flash, 21/11/2026 ~11:20**: `build_flash/bringup.bin`,
+96 968 bytes, sha256 `5b7cb243…`, written, read back identical, left.
+Four cold starts in the console log (the owner counted about five, with
+pauses between them), the first straight after DFU `:leave` - the very
+case that had come up deaf the night before - and every one with the
+carrier at full level: autorange 44 dB at 41-44 % ADC, peak +12 000 Hz
+124-125 dB. Boot 2.68-2.70 s, the 0.2 s of the new wait included. A
+deaf start from here on would mean a second cause. The old flash
+image's deafness, which this does not obviously explain (its tests
+rewrote the filter seconds after power-up), is moot with that image
+gone.
 
-**How to catch it, prepared and tried:** when a cold start comes up
-deaf, do NOT reload - that cures it and destroys the evidence. Instead:
-1. Snapshot the state (GPIOE/GPIOD/GPIOA, SPI1, the `s_shadow` arrays of
-   `msi001.c` and `nau8822.c` - `nm -l` tells the two apart) and compare
-   with a good start. The good start's values, read tonight:
-   `GPIOE_ODR 00005003`, `GPIOD_ODR 00000603`, msi001 shadow
-   `000023e1 0000042c 00019d0d 00000852 00000000 00028fff 0 0`.
-2. Then `tools/swd-call.sh build_flash/bringup.elf <step> [args]`, one
-   init step at a time, reading the `baseband:` line after each:
-   `msi001_retune 9988000`, `msi001_tune 9988000 0`, `addon_set_filter 2`
-   (the highpass), `addon_set_att_halfdb 0`, `msi001_set_am_port 1`,
-   `msi001_preamp 1`, `msi001_bpf <code>`. The first one after which the
-   carrier appears is the step that does not take after power-up. The
-   tool calls into the running image and it carries on - tried tonight.
+The same log is a reminder about `baseband:`'s verdict: two of the four
+starts read `station` ~200-260, under its 400 threshold, so no
+`<- carrier on the dial`, with the carrier at full level and heard. A
+±12 Hz probe follows the generator's drift; `peak`, `adc` and the
+autorange are the reception test.
 
 **The OLD flash image did not receive the generator after a power-on,
 20/11/2026 late.** `leak DC` normal (~1 680) and the block interrupt
@@ -111,16 +99,14 @@ shows `irq 0/0`, or the radio dies on a load, start there.**
 
 **Next, in order of what the radio gains:**
 
-1. **The deaf cold start**, above - with the procedure ready, it needs
-   only the next time it happens, and the console recording from power-on.
-2. **The panel on SPI DMA** - "THE NEXT THING TO DO" in `WORKING.md`.
+1. **The panel on SPI DMA** - "THE NEXT THING TO DO" in `WORKING.md`.
    Measured tonight: waterfall 48 ms and trace 17-26 ms of an ~80 ms
    frame - now nearly all of it.
-3. **Remember the dial and the volume** across power-offs. Every boot
+2. **Remember the dial and the volume** across power-offs. Every boot
    starts on 10.000 MHz at -24 dB; there is an FM25W256 FRAM on the
    board (`BOARD.md` section 6) and no driver for it yet. The same FRAM
    could keep the crash record, which a power-off now loses.
-4. The 100 kHz-step test for the 10 MHz digital noise (below), when the
+3. The 100 kHz-step test for the 10 MHz digital noise (below), when the
    owner has the radio in hand.
 
 ## THE RADIO RUNS OUR FIRMWARE FROM FLASH — read this first
