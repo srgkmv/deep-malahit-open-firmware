@@ -134,7 +134,9 @@ typedef enum {
  * works. */
 typedef struct {
     uint32_t    f_target;       /* asked for, Hz                      */
-    uint32_t    f_actual;       /* what the dividers really give, Hz  */
+    uint32_t    f_actual;       /* what the dividers really give, Hz,
+                                   rounded to the nearest (not
+                                   truncated - see msi001_plan()) */
     int32_t     err_hz;         /* actual - target                    */
     msi_band_t  band;
     uint32_t    lodiv;

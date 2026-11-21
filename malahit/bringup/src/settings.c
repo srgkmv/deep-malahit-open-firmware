@@ -4,13 +4,19 @@
 #include "fram.h"
 
 /*
- * One slot: 20 bytes of record, padded to 32 so the slot boundaries are
+ * One slot: a 24-byte record, padded to 32 so the slot boundaries are
  * round numbers in a hex dump. Little-endian, as the core stores it -
  * nothing but this firmware reads it.
+ *
+ * VERSION 1 (21/11/2026, b2534c3) was 20 bytes: the same first 16, and
+ * its CRC at offset 16 - where version 2 keeps rf_gr and preamp. Both
+ * are read: a radio that has only a version-1 record comes back on its
+ * dial, volume and step, with the RF front end measured as before, and
+ * its first save writes version 2.
  */
 #define SLOT_BYTES      32U
 #define REC_MAGIC       0x31484C4DU     /* "MLH1" */
-#define REC_VERSION     1U
+#define REC_VERSION     2U
 
 typedef struct {
     uint32_t magic;
@@ -20,14 +26,20 @@ typedef struct {
     uint8_t  step_idx;
     uint8_t  version;
     uint8_t  rsv;
-    uint32_t crc;           /* CRC-32 of everything above */
+    uint8_t  rf_gr;         /* v2; v1's CRC started here */
+    uint8_t  preamp;        /* v2 */
+    uint8_t  rsv2[2];
+    uint32_t crc;           /* v2: CRC-32 of the 20 bytes above */
 } rec_t;
 
-_Static_assert(sizeof(rec_t) == 20U, "the record is 20 bytes on the FRAM");
+_Static_assert(sizeof(rec_t) == 24U, "the record is 24 bytes on the FRAM");
 
 static int      s_slot = -1;            /* where the newest record is */
 static uint32_t s_seq;
+static uint32_t s_version;
 static uint32_t s_save_errors;
+
+uint32_t settings_version(void)     { return s_version; }
 
 int      settings_slot(void)        { return s_slot; }
 uint32_t settings_seq(void)         { return s_seq; }
@@ -48,9 +60,19 @@ static uint32_t crc32_of(const uint8_t *p, uint32_t n)
 
 static int rec_ok(const rec_t *r)
 {
-    return r->magic == REC_MAGIC
-        && r->version == REC_VERSION
-        && r->crc == crc32_of((const uint8_t *)r, sizeof *r - 4U);
+    if (r->magic != REC_MAGIC) { return 0; }
+
+    if (r->version == 2U) {
+        return r->crc == crc32_of((const uint8_t *)r, 20U);
+    }
+    if (r->version == 1U) {
+        const uint8_t *b = (const uint8_t *)r;
+        uint32_t crc1 = (uint32_t)b[16] | ((uint32_t)b[17] << 8)
+                      | ((uint32_t)b[18] << 16) | ((uint32_t)b[19] << 24);
+
+        return crc1 == crc32_of(b, 16U);
+    }
+    return 0;
 }
 
 static uint32_t slot_addr(int slot)
@@ -73,8 +95,9 @@ int settings_load(settings_t *out)
     int ok1 = rec_ok(&r[1]);
 
     if (!ok0 && !ok1) {
-        s_slot = -1;
-        s_seq  = 0U;
+        s_slot    = -1;
+        s_seq     = 0U;
+        s_version = 0U;
         return 0;
     }
 
@@ -83,12 +106,16 @@ int settings_load(settings_t *out)
              : (!ok1) ? 0
              : ((int32_t)(r[1].seq - r[0].seq) > 0) ? 1 : 0;
 
-    s_slot = pick;
-    s_seq  = r[pick].seq;
+    s_slot    = pick;
+    s_seq     = r[pick].seq;
+    s_version = r[pick].version;
 
     out->dial_hz  = r[pick].dial_hz;
     out->vol_db   = r[pick].vol_db;
     out->step_idx = r[pick].step_idx;
+    out->has_rf   = (r[pick].version >= 2U);
+    out->rf_gr    = out->has_rf ? r[pick].rf_gr  : 0U;
+    out->preamp   = out->has_rf ? r[pick].preamp : 0U;
     return 1;
 }
 
@@ -104,7 +131,9 @@ int settings_save(const settings_t *s)
     w.vol_db   = s->vol_db;
     w.step_idx = s->step_idx;
     w.version  = REC_VERSION;
-    w.crc      = crc32_of((const uint8_t *)&w, sizeof w - 4U);
+    w.rf_gr    = s->rf_gr;
+    w.preamp   = s->preamp;
+    w.crc      = crc32_of((const uint8_t *)&w, 20U);
 
     fram_write(slot_addr(slot), (const uint8_t *)&w, sizeof w);
     fram_read(slot_addr(slot), (uint8_t *)&back, sizeof back);
@@ -116,7 +145,8 @@ int settings_save(const settings_t *s)
         return 0;
     }
 
-    s_slot = slot;
-    s_seq  = w.seq;
+    s_slot    = slot;
+    s_seq     = w.seq;
+    s_version = REC_VERSION;
     return 1;
 }

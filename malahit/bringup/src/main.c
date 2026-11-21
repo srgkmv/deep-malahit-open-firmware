@@ -5821,7 +5821,8 @@ static void ui_prompt(const char *title, const char *a, const char *b,
 }
 
 /*
- * REMEMBERING THE DIAL, THE VOLUME AND THE STEP - 21/11/2026.
+ * REMEMBERING THE DIAL, THE VOLUME, THE STEP - 21/11/2026 - AND, SINCE
+ * THE SAME EVENING, THE ATT AND THE PREAMP.
  *
  * settings.c keeps them in the FRAM; this decides when. Once per frame
  * settings_tick() compares the three with the last values it saw: a
@@ -5838,10 +5839,14 @@ static settings_t s_set_saved;      /* what the FRAM holds, or the boot's */
 static settings_t s_set_seen;       /* the values a frame ago */
 static uint32_t   s_set_changed_at;
 
+static settings_t s_boot_set;       /* read once at boot, before the RF */
+static int        s_boot_have;
+
 static int settings_same(const settings_t *a, const settings_t *b)
 {
     return a->dial_hz == b->dial_hz && a->vol_db == b->vol_db
-        && a->step_idx == b->step_idx;
+        && a->step_idx == b->step_idx && a->rf_gr == b->rf_gr
+        && a->preamp == b->preamp;
 }
 
 static void settings_now(settings_t *out)
@@ -5849,6 +5854,9 @@ static void settings_now(settings_t *out)
     out->dial_hz  = s_tuned_hz;
     out->vol_db   = (int8_t)s_vol_db;
     out->step_idx = s_step_idx;
+    out->rf_gr    = s_rf_gr;
+    out->preamp   = (uint8_t)(s_rf_preamp ? 1U : 0U);
+    out->has_rf   = 1U;
 }
 
 static void settings_tick(void)
@@ -5867,10 +5875,12 @@ static void settings_tick(void)
 
     if (settings_save(&s_set_seen)) {
         s_set_saved = s_set_seen;
-        console_printf("  saved: dial %u Hz, volume %d dB, step %u Hz "
-                       "(FRAM slot %d, seq %u)\n", s_set_saved.dial_hz,
-                       (int32_t)s_set_saved.vol_db,
+        console_printf("  saved: dial %u Hz, volume %d dB, step %u Hz, "
+                       "ATT %u dB, preamp %s (FRAM slot %d, seq %u)\n",
+                       s_set_saved.dial_hz, (int32_t)s_set_saved.vol_db,
                        k_tune_steps[s_set_saved.step_idx],
+                       (uint32_t)s_set_saved.rf_gr,
+                       s_set_saved.preamp ? "ON" : "OFF",
                        settings_slot(), settings_seq());
     } else {
         /* The other slot still holds the last good record. Try again
@@ -5880,6 +5890,76 @@ static void settings_tick(void)
                        "far) ***\n", settings_save_errors());
     }
 }
+
+/*
+ * THE DIAL LOST UP TO 1 Hz A RETUNE - 21/11/2026.
+ *
+ * Seen in the FRAM saves: 10 000 000 Hz walked in 1 kHz steps came to
+ * 9 990 997, then in 100 Hz steps to 9 990 093. dial_tune() takes the
+ * next dial from s_tuned_hz, which is msi001_plan()'s f_actual plus the
+ * IF, and f_actual was the synthesiser's true frequency TRUNCATED: the
+ * synthesiser lands within half its ~0.33 Hz step of the request, and
+ * every time it landed below, the dial lost a hertz.
+ *
+ * MSI_ROUND_TEST runs the planner - arithmetic only, the synthesiser is
+ * not touched - over ~30 000 dials across 100 kHz..30 MHz, and walks
+ * the dial the way the knob does: 1 000 detents each of 1 kHz, 100 Hz
+ * and 10 Hz from 10 MHz, up and back down. Every walk should end where
+ * it started; every f_actual should equal its request.
+ */
+#ifndef MSI_ROUND_TEST
+#define MSI_ROUND_TEST 0
+#endif
+
+#if MSI_ROUND_TEST
+static uint32_t msi_walk(msi_band_t band, uint32_t dial, int32_t step,
+                         uint32_t n)
+{
+    msi_plan_t p;
+
+    for (uint32_t i = 0; i < n; i++) {
+        msi001_plan((uint32_t)((int32_t)dial + step) - AM_IF_HZ, band, &p);
+        if (!p.ok) { return 0U; }
+        dial = p.f_actual + AM_IF_HZ;
+    }
+    return dial;
+}
+
+static void test_msi_round(void)
+{
+    msi_band_t band = msi001_last_plan()->band;
+    msi_plan_t p;
+    uint32_t   n = 0U, off = 0U, refused = 0U;
+    int32_t    emin = 0, emax = 0;
+
+    console_printf("\nTest - the dial's arithmetic (MSI_ROUND_TEST), band "
+                   "%u\n", (uint32_t)band);
+    console_printf("============================================\n");
+
+    for (uint32_t f = 100000U; f <= 30000000U; f += 997U) {
+        msi001_plan(f, band, &p);
+        if (!p.ok) { refused++; continue; }
+        n++;
+        int32_t e = (int32_t)(p.f_actual - f);
+        if (e != 0) { off++; }
+        if (e < emin) { emin = e; }
+        if (e > emax) { emax = e; }
+    }
+    console_printf("  %u dials: f_actual != request on %u, error %d..%d Hz"
+                   "; refused %u; synth step %u uHz\n", n, off, emin, emax,
+                   refused, p.step_mhz_e6);
+
+    static const int32_t k_step[] = { 1000, 100, 10 };
+    for (uint32_t k = 0; k < 3U; k++) {
+        uint32_t up   = msi_walk(band, 10000000U, k_step[k], 1000U);
+        uint32_t back = msi_walk(band, up, -k_step[k], 1000U);
+        console_printf("  1000 x %+5d Hz from 10000000: %u (want %u), "
+                       "and back: %u\n", k_step[k], up,
+                       (uint32_t)(10000000 + 1000 * k_step[k]), back);
+    }
+    console_printf("\n");
+}
+#endif
 
 /*
  * THE ONE WAY TO MOVE THE DIAL - the knob and the retune test both come
@@ -6982,8 +7062,43 @@ int main(void)
      * put the converter at 100 % the day the level changed.
      */
     msi001_set_am_port(1);              /* port 2, the 75 ohm one */
-    msi001_preamp(1);
-    {
+
+    /*
+     * WHAT THE LAST SESSION LEFT is read HERE, not where the dial is
+     * set: the RF front end is set up first, and since record version 2
+     * the FRAM holds the person's ATT and preamp. The dial, volume and
+     * step wait in s_boot_set for PHASE(20).
+     */
+    s_boot_have = settings_load(&s_boot_set);
+
+    if (s_boot_have && s_boot_set.has_rf
+        && s_boot_set.rf_gr <= RF_GR_MAX && s_boot_set.preamp <= 1U) {
+        /*
+         * AS THE HAND LEFT THEM, and rf_autorange() does not run: a
+         * gain the person set is not second-guessed by one measured on
+         * whatever happens to be on the dial at power-on. The small
+         * knob is one press away if the band has changed since.
+         */
+        s_rf_preamp = s_boot_set.preamp;
+        s_rf_gr     = s_boot_set.rf_gr;
+        msi001_preamp(s_rf_preamp);
+        msi001_set_gain(s_rf_gr, 0, 0, 0);
+
+        console_printf("RF level   : %u dB of baseband gain reduction, "
+                       "preamp %s - from the FRAM,\n", s_rf_gr,
+                       s_rf_preamp ? "ON" : "OFF");
+        console_printf("             as the knob left them; "
+                       "rf_autorange() not run.\n\n");
+    } else {
+        if (s_boot_have && s_boot_set.has_rf) {
+            console_printf("Settings  : stored ATT %u dB / preamp %u not "
+                           "usable - measuring instead\n",
+                           (uint32_t)s_boot_set.rf_gr,
+                           (uint32_t)s_boot_set.preamp);
+        }
+        s_rf_preamp = 1;
+        msi001_preamp(1);
+
         /* KEPT, not just printed: the small knob adjusts from here, so
          * the starting point has to be the measured one rather than a
          * number this code assumed. */
@@ -7087,6 +7202,9 @@ int main(void)
     }
 #if FRAM_TEST
     test_fram(FRAM_TEST);
+#endif
+#if MSI_ROUND_TEST
+    test_msi_round();
 #endif
     if (touch_init()) {
         console_printf("Touch     : FT6236 at 0x38, cipher 0x%02x "
@@ -7257,12 +7375,29 @@ int main(void)
      */
     uint32_t boot_dial = GEN_HZ;
     {
-        settings_t st;
-        int        have = settings_load(&st);
+        const settings_t st   = s_boot_set;
+        const int        have = s_boot_have;
 
         if (have) {
             if (st.dial_hz >= TUNE_MIN_HZ && st.dial_hz <= TUNE_MAX_HZ) {
-                boot_dial = st.dial_hz;
+                /*
+                 * ONTO THE FINEST STEP'S GRID. Until 21/11/2026 the dial
+                 * lost up to 1 Hz a retune (msi001_plan()'s f_actual,
+                 * truncated), and the FRAM kept dials like 9 000 003 -
+                 * which no step of 10 Hz or more can ever bring back to
+                 * a round number. Every dial reached since the fix is on
+                 * this grid already, so this only touches what the bug
+                 * left behind.
+                 */
+                uint32_t g = k_tune_steps[0];
+                uint32_t d = ((st.dial_hz + g / 2U) / g) * g;
+
+                if (d != st.dial_hz) {
+                    console_printf("Settings  : stored dial %u Hz is off "
+                                   "the %u Hz grid (the old 1 Hz-a-retune "
+                                   "loss) - %u\n", st.dial_hz, g, d);
+                }
+                boot_dial = d;
             } else {
                 console_printf("Settings  : stored dial %u Hz is outside "
                                "%u..%u - not used\n", st.dial_hz,
@@ -7287,8 +7422,9 @@ int main(void)
                        "the FRAM yet, defaults", boot_dial, s_vol_db,
                        k_tune_steps[s_step_idx]);
         if (have) {
-            console_printf("            (slot %d, seq %u, at 0x%04x)\n",
-                           settings_slot(), settings_seq(),
+            console_printf("            (slot %d, seq %u, record version "
+                           "%u, at 0x%04x)\n", settings_slot(),
+                           settings_seq(), settings_version(),
                            SETTINGS_ADDR);
         }
 

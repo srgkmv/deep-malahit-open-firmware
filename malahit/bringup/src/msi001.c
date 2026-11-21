@@ -149,8 +149,22 @@ void msi001_plan(uint32_t freq_hz, msi_band_t band, msi_plan_t *out)
      * rate: a divider chain should be asked what it did, not told what
      * it was meant to do.
      */
+    /*
+     * ROUNDED TO THE NEAREST HERTZ, NOT TRUNCATED - 21/11/2026.
+     *
+     * The synthesiser lands within half its step (~0.33 Hz) of the
+     * request, on either side. Truncating that to an integer made every
+     * landing below the request read one hertz low, and dial_tune()
+     * builds the next dial on this figure, so the dial walked down: 1 000
+     * detents of 1 kHz from 10 MHz ended at 10 999 541, and half of
+     * ~30 000 dials across HF read 1 Hz under their request
+     * (MSI_ROUND_TEST in main.c). Rounded, a request the synthesiser can
+     * reach within half a hertz reads back as itself - which on this
+     * band, with a step of a third of a hertz, is every request.
+     */
     uint64_t num = (uint64_t)divint * scale + total;
-    uint64_t flo_act = ((uint64_t)MSI_FCOMP_HZ * num) / (scale * b->lodiv);
+    uint64_t den = scale * b->lodiv;
+    uint64_t flo_act = ((uint64_t)MSI_FCOMP_HZ * num + den / 2U) / den;
 
     uint64_t f_act = flo_act;
     if (b->up_convert) { f_act -= MSI_FIF1_HZ; }

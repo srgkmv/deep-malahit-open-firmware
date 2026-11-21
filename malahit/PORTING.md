@@ -952,6 +952,17 @@ Each step should end with something visible on the radio.
    changed volume and step, switched off and on; the next image came up
    on 9 990 093 Hz, -31 dB, 100 Hz, exactly the last save - and so did
    the first cold boot of the flashed image.
+24. **ATT and preamp remembered, and the dial keeps its hertz.** *Done,
+   21/11/2026, in flash* — the settings record grew to version 2 with
+   the ATT pill's gain reduction and the preamp; restored, they replace
+   `rf_autorange()` at boot (1.98 s instead of ~2.65), and version-1
+   records still load. And the dial no longer walks down: `msi001_plan()`
+   truncated `f_actual`, the synthesiser lands within a sixth of a hertz
+   either side of a request, and `dial_tune()` built the next dial on
+   the truncated figure - half of all dials read 1 Hz low, 1 000 detents
+   of 1 kHz lost 459 Hz. Rounded, none do (`MSI_ROUND_TEST`, ~30 000
+   dials and three walks, on the radio). A stored dial the bug left off
+   the 10 Hz grid is rounded onto it at load.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

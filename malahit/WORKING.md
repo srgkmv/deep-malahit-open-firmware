@@ -27,9 +27,9 @@ the radio. The value is kept in `build*/flags.txt`, so changing it
 rebuilds everything and repeating it rebuilds nothing.
 
 **A one-off test image** - `ADDON_COLD_TEST`, `TOUCH_WAKE_TEST`,
-`FRAM_TEST`, each 0 by default in `main.c` - goes into a build directory
-of its own, so it can never end up in `build/` or `build_flash/` by
-accident:
+`FRAM_TEST`, `MSI_ROUND_TEST`, each 0 by default in `main.c` - goes into
+a build directory of its own, so it can never end up in `build/` or
+`build_flash/` by accident:
 
     make BUILD_DIR=/some/scratch/dir OPT="-O2 -g3 -DFRAM_TEST=1"
     ADAPTER=ft2232d ../tools/swd.sh ram /some/scratch/dir/bringup.elf

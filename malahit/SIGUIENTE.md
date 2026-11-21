@@ -4,6 +4,33 @@ Rewritten 19/11/2026, updated 21/11/2026 (twice). `WORKING.md` is still the file
 to read first; this one only says what the next session should do and
 what it must not trust.
 
+## 21/11/2026, late: ATT and preamp remembered too, and the dial keeps its hertz — in git and in flash
+
+**In git and in flash.** `build_flash/bringup.bin`, 103 728 bytes,
+sha256 `b9f9e4da…`, written over DFU, read back identical, left.
+`PORTING.md` step 24.
+
+- **ATT and preamp in the FRAM** (the owner asked): the settings record
+  is version 2, 24 bytes - the gain reduction the ATT pill shows and
+  the preamp added. When a record has them, the boot restores them and
+  `rf_autorange()` does not run; it runs only with nothing to restore.
+  Version-1 records still load (dial, volume, step) - checked on the
+  radio before the first v2 save.
+- **The dial no longer loses a hertz a retune.** `msi001_plan()` now
+  rounds `f_actual` instead of truncating it. `MSI_ROUND_TEST`, on the
+  radio, arithmetic only: before, 14 993 of 29 990 dials across HF read
+  1 Hz under their request and 1 000 detents of +1 kHz from 10 MHz ended
+  at 10 999 541; after, 0 of 29 990, and every walk - 1 kHz, 100 Hz,
+  10 Hz, up and back - ends exactly where it should.
+- **What the bug left in the FRAM is cleaned at load**: a stored dial
+  off the 10 Hz grid (the finest step) is rounded onto it, with a line
+  on the console. The owner's 9 000 003 came back as 9 000 000.
+
+**Cold boot from flash**: ATT 59 dB, preamp OFF "from the FRAM ...
+rf_autorange() not run"; dial 9 000 000 (rounded from 9 000 003),
+-29 dB, 10 kHz step; record v2, seq 30. Boot **1 978 ms** - the
+autorange's captures were most of the difference from ~2.65 s.
+
 ## 21/11/2026, evening: the radio remembers the dial, the volume and the step — in git and in flash
 
 **In git and in flash.** `build_flash/bringup.bin`, 102 912 bytes,
@@ -25,7 +52,8 @@ first cold boot from it came up on the stored 9 990 093 Hz, -31 dB,
   1..10), held power off, switched on; the next RAM load came up on
   9 990 093 Hz, -31 dB, 100 Hz - the last save, exactly.
 
-**Found on the way, not fixed: the dial loses up to 1 Hz per retune.**
+**Found on the way - FIXED later the same evening (section above): the
+dial lost up to 1 Hz per retune.**
 The saves show it: 10 000 000 Hz in 1 kHz steps became 9 990 997, then
 in 100 Hz steps 9 990 093. `msi001_plan()` reports `f_actual` by
 integer division - truncated - and `dial_tune()` takes the next dial
@@ -135,8 +163,7 @@ and that console line, say whether it is every cold start or some.
    top section. (Was:) across power-offs - FM25W256
    FRAM on SPI2, `BOARD.md` section 6, no driver yet. The same FRAM
    could keep the crash record.
-3. **The dial's 1 Hz per retune** - the top section; one line in
-   `msi001_plan()` and a check across the generator.
+3. ~~**The dial's 1 Hz per retune**~~ - fixed, see the top section.
 4. The 100 kHz-step test for the 10 MHz digital noise (below).
 5. The frame is now near the bus: one waterfall alone is 32.4 ms of
    wire. Going faster means fewer bytes (the waterfall shorter, or

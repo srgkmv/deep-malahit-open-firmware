@@ -1278,7 +1278,9 @@ SWD twice, identical, CRC-32 `0x6dee620e` as the firmware computed it,
 into `Deep-Malahit/backups/fram_a.bin` and `fram_b.bin` - outside this
 repository, like the flash backup. **Our settings live at 0x4000-0x403F**
 (`settings.h`), two 32-byte slots; a later full read differed from the
-backup in exactly those 40 bytes and nowhere else.
+backup in exactly those 40 bytes and nowhere else. (Two 20-byte records
+then; version 2 of the record, the same evening, is 24 bytes - the same
+two slots.)
 
 ### Controls **[measured]**
 
