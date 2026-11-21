@@ -26,6 +26,19 @@ the 37 s of bring-up tests in the boot; the default boots straight to
 the radio. The value is kept in `build*/flags.txt`, so changing it
 rebuilds everything and repeating it rebuilds nothing.
 
+**A one-off test image** - `ADDON_COLD_TEST`, `TOUCH_WAKE_TEST`,
+`FRAM_TEST`, each 0 by default in `main.c` - goes into a build directory
+of its own, so it can never end up in `build/` or `build_flash/` by
+accident:
+
+    make BUILD_DIR=/some/scratch/dir OPT="-O2 -g3 -DFRAM_TEST=1"
+    ADAPTER=ft2232d ../tools/swd.sh ram /some/scratch/dir/bringup.elf
+
+`flags.txt` does not track these, which is the other reason for the
+separate directory. A buffer a test leaves in RAM can be read over SWD
+while the radio runs: `swd.sh -c init -c "dump_image f.bin <addr> <n>"`
+with the address from `arm-none-eabi-nm` on the same ELF.
+
 Console: UART7 at 115200 on package pins 37 (PE7, RX) and 38 (PE8, TX).
 There is no J6 header on this unit; the leads go to the pins.
 

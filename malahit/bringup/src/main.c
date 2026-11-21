@@ -4934,6 +4934,217 @@ static uint8_t rf_autorange(void)
 #include "i2c3.h"
 #include "touch.h"
 
+#include "fram.h"
+#include "settings.h"
+
+/*
+ * WHAT IS SOLDERED AT D11 - 21/11/2026.
+ *
+ * The schematic says FM25W256, and the FM25W256 has no ID command: its
+ * whole vocabulary is WREN, WRDI, RDSR, WRSR, READ and WRITE. So the
+ * part is identified by what it DOES, against the thing most likely to
+ * be in the same SO-8 footprint instead - an SPI EEPROM (25LC256,
+ * AT25256, M95256: same pins, same six opcodes):
+ *
+ *   - an EEPROM is busy for ~5 ms after a write, and says so in bit 0
+ *     of the status register (WIP); on this FRAM bit 0 is fixed at 0;
+ *   - an EEPROM writes in 64-byte pages, and a write that runs past a
+ *     page's end wraps to that page's start; FRAM has no pages;
+ *   - other FRAMs (MB85RS256, FM25V02) answer RDID, 0x9F, with a JEDEC
+ *     ID; this one should leave MISO alone - read as 0xFF through the
+ *     pull-up.
+ *
+ * FRAM_TEST 1 only reads: the status register, RDID, all 32 kB into
+ * g_fram_image - for a backup over SWD before anything is written - and
+ * a sequential read across the end, which wraps at 32 kB on a 32 kB
+ * part. FRAM_TEST 2 adds the write: 96 bytes across the page line at
+ * 0x3FC0 - in the middle of the 25 kB the factory firmware leaves
+ * blank, 0x0D00-0x6FFF, so none of its data is touched even for a
+ * moment - then the 128 bytes around it put back from g_fram_image, in
+ * page-aligned 32-byte pieces with the busy bit waited out - correct on
+ * an EEPROM too, which is the case it is for.
+ *
+ * Slow on purpose: 3.75 MHz, inside every candidate's rating.
+ */
+#ifndef FRAM_TEST
+#define FRAM_TEST 0
+#endif
+
+#if FRAM_TEST
+uint8_t g_fram_image[FRAM_SIZE];
+
+static uint32_t crc32_of(const uint8_t *p, uint32_t n)
+{
+    uint32_t c = 0xFFFFFFFFU;
+
+    for (uint32_t i = 0; i < n; i++) {
+        c ^= p[i];
+        for (uint32_t k = 0; k < 8U; k++) {
+            c = (c >> 1) ^ (0xEDB88320U & (0U - (c & 1U)));
+        }
+    }
+    return ~c;
+}
+
+/* Microseconds until bit 0 of the status register reads 0, polled;
+ * 20 000 if it never does. */
+static uint32_t fram_wip_us(void)
+{
+    uint64_t t0 = board_cycles();
+
+    for (;;) {
+        uint32_t us = (uint32_t)(((board_cycles() - t0) * 1000000U)
+                                 / clock_sysclk_hz);
+
+        if ((fram_rdsr() & FRAM_SR_WIP) == 0U) { return us; }
+        if (us >= 20000U) { return 20000U; }
+    }
+}
+
+static void test_fram(uint32_t mode)
+{
+    static uint8_t buf[4096];
+    uint8_t  id[9];
+    uint32_t n00 = 0U, nff = 0U, seen[8] = { 0U }, distinct = 0U;
+
+    fram_init(5U);                                  /* 3.75 MHz */
+
+    console_printf("\nTest - what is soldered at D11 (FRAM_TEST %u), "
+                   "SPI2 at 3750000 Hz\n", mode);
+    console_printf("=================================================="
+                   "==========\n");
+
+    uint8_t sr = fram_rdsr();
+
+    console_printf("  RDSR        0x%02x   WPEN %u  BP %u  WEL %u  bit0 "
+                   "(WIP on an EEPROM) %u\n", (uint32_t)sr,
+                   (uint32_t)(sr >> 7), (uint32_t)((sr >> 2) & 3U),
+                   (uint32_t)((sr >> 1) & 1U), (uint32_t)(sr & 1U));
+
+    fram_cmd_read(0x9FU, id, sizeof id);
+    console_printf("  RDID (0x9F) ");
+    for (uint32_t i = 0; i < sizeof id; i++) {
+        console_printf(" %02x", (uint32_t)id[i]);
+    }
+    console_printf("   (all ff: no such command)\n");
+
+    uint64_t t0 = board_cycles();
+    fram_read(0U, g_fram_image, FRAM_SIZE);
+    uint32_t us = (uint32_t)(((board_cycles() - t0) * 1000000U)
+                             / clock_sysclk_hz);
+
+    for (uint32_t i = 0; i < FRAM_SIZE; i++) {
+        uint8_t b = g_fram_image[i];
+
+        if (b == 0x00U) { n00++; }
+        if (b == 0xFFU) { nff++; }
+        if (!(seen[b >> 5] & (1UL << (b & 31U)))) {
+            seen[b >> 5] |= (1UL << (b & 31U));
+            distinct++;
+        }
+    }
+    console_printf("  read 32768 bytes in %u us: crc32 0x%08x, 0x00 x%u, "
+                   "0xff x%u, %u distinct values, at 0x%08x\n", us,
+                   crc32_of(g_fram_image, FRAM_SIZE), n00, nff, distinct,
+                   (uint32_t)(uintptr_t)g_fram_image);
+
+    /* The same bytes twice: a read that is noise does not repeat. */
+    fram_read(0U, buf, sizeof buf);
+    uint32_t same = 0U;
+    for (uint32_t i = 0; i < sizeof buf; i++) {
+        if (buf[i] == g_fram_image[i]) { same++; }
+    }
+    console_printf("  first 4096 read again: %u identical\n", same);
+
+    /* Across the end: 2 kB before it and 2 kB after. A 32 kB part wraps
+     * to 0; a bigger one would go on into bytes of its own. */
+    fram_read(0x7800U, buf, sizeof buf);
+    uint32_t tail = 0U, wrap = 0U;
+    for (uint32_t i = 0; i < 2048U; i++) {
+        if (buf[i] == g_fram_image[0x7800U + i]) { tail++; }
+        if (buf[2048U + i] == g_fram_image[i]) { wrap++; }
+    }
+    console_printf("  read across the end: 0x7800.. %u/2048 match, and "
+                   "the next 2048 match 0x0000.. %u/2048\n", tail, wrap);
+
+    console_printf("  first 256 bytes:\n");
+    for (uint32_t r = 0; r < 256U; r += 16U) {
+        console_printf("    %04x:", r);
+        for (uint32_t i = 0; i < 16U; i++) {
+            console_printf(" %02x", (uint32_t)g_fram_image[r + i]);
+        }
+        console_printf("\n");
+    }
+
+    if (mode < 2U) {
+        console_printf("  (FRAM_TEST 1: nothing written)\n\n");
+        return;
+    }
+
+    /*
+     * THE WRITE. 96 bytes from 0x3FA0, so 32 before the 64-byte page
+     * line at 0x3FC0 and 64 after it. Every byte position-unique and
+     * different from what is there, so a wrap shows wherever it lands.
+     */
+    enum { A = 0x3FA0, N = 96, LO = 0x3F80, HI = 0x4000 };
+    uint8_t pat[N], back[N];
+    uint32_t imm = 0U, later = 0U, outside = 0U;
+
+    for (uint32_t i = 0; i < (uint32_t)N; i++) {
+        pat[i] = (uint8_t)(0x5AU + i * 13U);
+        if (pat[i] == g_fram_image[A + i]) { pat[i] ^= 0x01U; }
+    }
+
+    fram_write((uint32_t)A, pat, (uint32_t)N);
+    uint8_t sr_after = fram_rdsr();
+    fram_read((uint32_t)A, back, (uint32_t)N);       /* at once */
+    for (uint32_t i = 0; i < (uint32_t)N; i++) {
+        if (back[i] == pat[i]) { imm++; }
+    }
+    uint32_t wip = fram_wip_us();
+    board_delay_ms(20);
+    fram_read((uint32_t)LO, buf, (uint32_t)(HI - LO));
+    for (uint32_t i = 0; i < (uint32_t)N; i++) {
+        if (buf[(A - LO) + i] == pat[i]) { later++; }
+    }
+    for (uint32_t i = 0; i < (uint32_t)(A - LO); i++) {
+        if (buf[i] != g_fram_image[LO + i]) { outside++; }
+    }
+
+    console_printf("  write 96 B at 0x%04x, across the page line at 0x%04x:\n",
+                   (uint32_t)A, (uint32_t)(A + 32));
+    console_printf("    status right after   0x%02x (bit0 %u, WEL %u)\n",
+                   (uint32_t)sr_after, (uint32_t)(sr_after & 1U),
+                   (uint32_t)((sr_after >> 1) & 1U));
+    console_printf("    read back at once    %u/96 match\n", imm);
+    console_printf("    busy (bit0) for      %u us\n", wip);
+    console_printf("    read back after 20ms %u/96 match, and %u of the 32 "
+                   "bytes BEFORE it changed\n", later, outside);
+
+    /* Back as it was, in pieces no write can wrap inside. */
+    for (uint32_t a = LO; a < (uint32_t)HI; a += 32U) {
+        fram_write(a, &g_fram_image[a], 32U);
+        (void)fram_wip_us();
+    }
+    fram_read((uint32_t)LO, buf, (uint32_t)(HI - LO));
+    uint32_t restored = 0U;
+    for (uint32_t i = 0; i < (uint32_t)(HI - LO); i++) {
+        if (buf[i] == g_fram_image[LO + i]) { restored++; }
+    }
+    console_printf("    restored 0x%04x..0x%04x: %u/128 as before; "
+                   "status 0x%02x, SPI timeouts %u\n",
+                   (uint32_t)LO, (uint32_t)(HI - 1), restored,
+                   (uint32_t)fram_rdsr(), fram_timeouts());
+
+    int fram = (imm == (uint32_t)N) && (later == (uint32_t)N)
+            && (wip == 0U) && (outside == 0U) && ((sr_after & 1U) == 0U);
+    console_printf("  VERDICT: %s\n\n", fram
+                   ? "behaves as FRAM - written at once, no busy bit, "
+                     "no page wrap"
+                   : "*** NOT FRAM-LIKE - see the lines above ***");
+}
+#endif
+
 /*
  * THE TOUCH CONTROLLER'S WAKE-UP, MEASURED - 21/11/2026.
  *
@@ -5607,6 +5818,67 @@ static void ui_prompt(const char *title, const char *a, const char *b,
     s_prompt[3] = c;
 
     gfx2_render_screen(ui_prompt_draw, 0);
+}
+
+/*
+ * REMEMBERING THE DIAL, THE VOLUME AND THE STEP - 21/11/2026.
+ *
+ * settings.c keeps them in the FRAM; this decides when. Once per frame
+ * settings_tick() compares the three with the last values it saw: a
+ * change restarts a one-second clock, and when the clock runs out with
+ * the values differing from what the FRAM holds, they are saved. So a
+ * knob being turned is saved once, when the hand stops, and the power
+ * button - held 3 s to switch off - gives any last change time to land.
+ * The FRAM would take a write every frame without noticing; the second
+ * is for the console, which prints each save.
+ */
+#define SETTINGS_SAVE_MS    1000U
+
+static settings_t s_set_saved;      /* what the FRAM holds, or the boot's */
+static settings_t s_set_seen;       /* the values a frame ago */
+static uint32_t   s_set_changed_at;
+
+static int settings_same(const settings_t *a, const settings_t *b)
+{
+    return a->dial_hz == b->dial_hz && a->vol_db == b->vol_db
+        && a->step_idx == b->step_idx;
+}
+
+static void settings_now(settings_t *out)
+{
+    out->dial_hz  = s_tuned_hz;
+    out->vol_db   = (int8_t)s_vol_db;
+    out->step_idx = s_step_idx;
+}
+
+static void settings_tick(void)
+{
+    settings_t cur;
+
+    settings_now(&cur);
+    if (!settings_same(&cur, &s_set_seen)) {
+        s_set_seen       = cur;
+        s_set_changed_at = board_millis();
+    }
+    if (settings_same(&s_set_seen, &s_set_saved)
+        || (board_millis() - s_set_changed_at) < SETTINGS_SAVE_MS) {
+        return;
+    }
+
+    if (settings_save(&s_set_seen)) {
+        s_set_saved = s_set_seen;
+        console_printf("  saved: dial %u Hz, volume %d dB, step %u Hz "
+                       "(FRAM slot %d, seq %u)\n", s_set_saved.dial_hz,
+                       (int32_t)s_set_saved.vol_db,
+                       k_tune_steps[s_set_saved.step_idx],
+                       settings_slot(), settings_seq());
+    } else {
+        /* The other slot still holds the last good record. Try again
+         * in a second rather than every frame. */
+        s_set_changed_at = board_millis();
+        console_printf("  *** settings save did not read back (%u so "
+                       "far) ***\n", settings_save_errors());
+    }
 }
 
 /*
@@ -6813,6 +7085,9 @@ int main(void)
     if (TOUCH_WAKE_TEST) {
         test_touch_wake(TOUCH_WAKE_TEST);
     }
+#if FRAM_TEST
+    test_fram(FRAM_TEST);
+#endif
     if (touch_init()) {
         console_printf("Touch     : FT6236 at 0x38, cipher 0x%02x "
                        "vendor 0x%02x\n",
@@ -6974,6 +7249,57 @@ int main(void)
     PHASE(20);
 
     /*
+     * WHAT THE LAST SESSION LEFT, out of the FRAM - see settings_tick().
+     * A stored value this image cannot use - a dial outside TUNE_MIN_HZ..
+     * TUNE_MAX_HZ, a volume outside the knob's range, a step past the
+     * table - is replaced by its default and said so; the record is not
+     * thrown away for one bad field.
+     */
+    uint32_t boot_dial = GEN_HZ;
+    {
+        settings_t st;
+        int        have = settings_load(&st);
+
+        if (have) {
+            if (st.dial_hz >= TUNE_MIN_HZ && st.dial_hz <= TUNE_MAX_HZ) {
+                boot_dial = st.dial_hz;
+            } else {
+                console_printf("Settings  : stored dial %u Hz is outside "
+                               "%u..%u - not used\n", st.dial_hz,
+                               TUNE_MIN_HZ, TUNE_MAX_HZ);
+            }
+            if (st.vol_db >= VOL_MIN_DB && st.vol_db <= VOL_MAX_DB) {
+                s_vol_db = st.vol_db;
+            } else {
+                console_printf("Settings  : stored volume %d dB is outside "
+                               "%d..%d - not used\n", (int32_t)st.vol_db,
+                               VOL_MIN_DB, VOL_MAX_DB);
+            }
+            if (st.step_idx < TUNE_STEP_N) {
+                s_step_idx = st.step_idx;
+            } else {
+                console_printf("Settings  : stored step %u is past the "
+                               "table - not used\n", (uint32_t)st.step_idx);
+            }
+        }
+        console_printf("Settings  : %s - dial %u Hz, volume %d dB, step "
+                       "%u Hz\n", have ? "from the FRAM" : "nothing in "
+                       "the FRAM yet, defaults", boot_dial, s_vol_db,
+                       k_tune_steps[s_step_idx]);
+        if (have) {
+            console_printf("            (slot %d, seq %u, at 0x%04x)\n",
+                           settings_slot(), settings_seq(),
+                           SETTINGS_ADDR);
+        }
+
+        /* The band filters for THAT dial: everything above set them for
+         * the generator, and dial_tune() only rewrites them when the
+         * band changes, which from here it would not know. */
+        msi001_bpf(msi001_bpf_for(boot_dial));
+        addon_set_filter(addon_filter_for(boot_dial));
+    }
+
+    /*
      * ONTO THE CARRIER, NOT 3 kHz BELOW IT.
      *
      * Every RF step above runs at TUNE_HZ = GEN_HZ - 3000, and that
@@ -6989,7 +7315,7 @@ int main(void)
      * back to zero. The DIAL is the number on the screen; the TUNER is
      * always 12 kHz under it from here on.
      */
-    if (msi001_retune(GEN_HZ - AM_IF_HZ) == MSI_OK) {
+    if (msi001_retune(boot_dial - AM_IF_HZ) == MSI_OK) {
         const msi_plan_t *cp = msi001_last_plan();
 
         console_printf("Tuning    : dial %u Hz, tuner %u Hz - %u Hz below, "
@@ -7004,6 +7330,11 @@ int main(void)
          * is 12 kHz above THAT - the same relation, on whatever it has. */
         ui_init_state(sp->f_actual + AM_IF_HZ);
     }
+
+    /* What the FRAM holds is now the starting point: nothing is saved
+     * until something changes from it. */
+    settings_now(&s_set_saved);
+    s_set_seen = s_set_saved;
 
     {
         uint64_t p0 = board_cycles();
@@ -7059,8 +7390,8 @@ int main(void)
 
     console_printf("Audio     : AM by envelope, in the block interrupt. "
                    "Speaker and\n");
-    console_printf("            headphones unmuted at -18 dB. Channel "
-                   "filter 4 kHz,\n");
+    console_printf("            headphones unmuted at %d dB. Channel "
+                   "filter 4 kHz,\n", s_vol_db);
     console_printf("            audio 200 Hz - 4 kHz, upstream's AGC and "
                    "filter design.\n\n");
 
@@ -7275,6 +7606,8 @@ int main(void)
         if (encoder_take_long_press()) {
             console_printf("  long press (nothing bound to it yet)\n");
         }
+
+        settings_tick();
 
         /*
          * THE LIVE RING, NOT A FRESH POLL. capture_live() is a memcpy

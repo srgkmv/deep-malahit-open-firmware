@@ -932,6 +932,26 @@ Each step should end with something visible on the radio.
    "bus recovered, -1 clocks" printed on four cold boots of four.
    Three cold boots of the fix: no such line, touch found on the first
    read, boot 2 753 ms each.
+23. **The radio remembers the dial, the volume and the step.**
+   *Done, 21/11/2026, in flash* — in the FM25W256 FRAM on SPI2 (`fram.c`,
+   `settings.c`), at 0x4000, clear of the factory firmware's two areas.
+   Two slots with a sequence number and a CRC-32: a save goes to the
+   older one, a load takes the newest that checks, so a write cut by
+   the power leaves the previous record whole. Saved one second after
+   the last change; the 3 s hold that switches the radio off gives a
+   last change time to land. The RF gain is deliberately not kept -
+   `rf_autorange()` measures it at every boot.
+
+   Before a byte was written the part was identified by behaviour, not
+   trusted from the schematic: no busy bit and no page wrap on a write
+   across a 64-byte page line, which rules out the SPI EEPROM that fits
+   the same footprint (`BOARD.md`, FM25W256). And its 32 kB - the
+   factory's settings in it - went to `backups/` first.
+
+   Checked on the radio: blank FRAM boots on defaults; the owner tuned,
+   changed volume and step, switched off and on; the next image came up
+   on 9 990 093 Hz, -31 dB, 100 Hz, exactly the last save - and so did
+   the first cold boot of the flashed image.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

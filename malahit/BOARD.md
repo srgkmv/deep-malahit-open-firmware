@@ -1255,6 +1255,31 @@ handled.
 FRAM is a better home for settings than flash — no wear levelling, no erase
 blocks, no write-cycle budget.
 
+**It is FRAM — checked on this unit, 21/11/2026 [measured].** D11 on the
+schematic; /WP and /HOLD tied to 3.3V, CS pulled up by R37 (10k). The
+FM25W256 has no ID command, so it was identified by behaviour, against
+the part most likely to sit in the same SO-8 instead, an SPI EEPROM
+(`main.c`, `test_fram()`, `FRAM_TEST` 1 or 2, at 3.75 MHz):
+
+| test | an SPI EEPROM | this part |
+|---|---|---|
+| RDSR | bit 0 = WIP | `0x00` |
+| RDID (0x9F) | none | none - all `ff` (MB85RS256 and FM25V02 would answer) |
+| sequential read past 0x7FFF | - | wraps to 0x0000: 32 kB |
+| 96-byte write across the 64-byte page line at 0x3FC0, read at once | busy ~5 ms, then wrapped inside the page | 96/96 at once, never busy, nothing outside changed |
+
+FM25W256 or its 3 V sibling FM25L256 - nothing electrical tells those
+two apart, and nothing here depends on which.
+
+**What is in it.** The factory firmware's settings - e.g. `68 9a 98 00`
+at 0x007C, 10 001 000 Hz - in **0x0000-0x0CFF and 0x7000-0x7FFF**; the
+rest, 0x0D00-0x6FFF, read blank (`ff`). The whole 32 kB was dumped over
+SWD twice, identical, CRC-32 `0x6dee620e` as the firmware computed it,
+into `Deep-Malahit/backups/fram_a.bin` and `fram_b.bin` - outside this
+repository, like the flash backup. **Our settings live at 0x4000-0x403F**
+(`settings.h`), two 32-byte slots; a later full read differed from the
+backup in exactly those 40 bytes and nowhere else.
+
 ### Controls **[measured]**
 
 Two rotary encoders — `RENC1` on `PC0`/`PC1`, `RENC2` on `PC2_C`/`PC3_C` —

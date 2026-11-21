@@ -4,6 +4,37 @@ Rewritten 19/11/2026, updated 21/11/2026 (twice). `WORKING.md` is still the file
 to read first; this one only says what the next session should do and
 what it must not trust.
 
+## 21/11/2026, evening: the radio remembers the dial, the volume and the step — in git and in flash
+
+**In git and in flash.** `build_flash/bringup.bin`, 102 912 bytes,
+sha256 `b74abb2c…`, written over DFU, read back identical, left. The
+first cold boot from it came up on the stored 9 990 093 Hz, -31 dB,
+100 Hz (slot 1, seq 10); touch found, no I2C3 line, boot 2 763 ms.
+`PORTING.md` step 23, `BOARD.md` "FM25W256 — FRAM", `settings.h`.
+
+- **D11 is FRAM**, identified by behaviour before anything was written
+  (the owner asked for that first): no busy bit and no page wrap on a
+  96-byte write across a 64-byte page line, no RDID, 32 kB. Test image
+  `FRAM_TEST=1|2`, built into a scratch `BUILD_DIR`, never `build/`.
+- **Its 32 kB went to `Deep-Malahit/backups/fram_a.bin`/`fram_b.bin`
+  first** - it holds the factory firmware's settings (0x0000-0x0CFF,
+  0x7000-0x7FFF). Ours are at 0x4000-0x403F; a full read afterwards
+  differed from the backup in those 40 bytes only.
+- **On the radio:** blank FRAM -> defaults; the owner tuned, changed
+  volume and step (each saved a second later, slots alternating, seq
+  1..10), held power off, switched on; the next RAM load came up on
+  9 990 093 Hz, -31 dB, 100 Hz - the last save, exactly.
+
+**Found on the way, not fixed: the dial loses up to 1 Hz per retune.**
+The saves show it: 10 000 000 Hz in 1 kHz steps became 9 990 997, then
+in 100 Hz steps 9 990 093. `msi001_plan()` reports `f_actual` by
+integer division - truncated - and `dial_tune()` takes the next dial
+from `s_tuned_hz`, which is that truncated figure plus the IF. The
+synthesiser's step is ~0.33 Hz, so rounding `f_actual` to the nearest
+hertz instead (half the divisor added before the division) should make
+round dials stay round. One line, but in the tuner's arithmetic: check
+`err_hz` and the 10 Hz step across the generator after changing it.
+
 ## 21/11/2026, later: the touch at power-on — measured, fixed, in git and in flash
 
 **In git and in flash.** `build_flash/bringup.bin`, 100 576 bytes,
@@ -100,11 +131,14 @@ and that console line, say whether it is every cold start or some.
 **Next, in order of what the radio gains:**
 1. ~~**The touch at power-on**~~ - measured, fixed and cold-booted, see
    the section above.
-2. **Remember the dial and the volume** across power-offs - FM25W256
+2. ~~**Remember the dial and the volume**~~ - done that evening, see the
+   top section. (Was:) across power-offs - FM25W256
    FRAM on SPI2, `BOARD.md` section 6, no driver yet. The same FRAM
    could keep the crash record.
-3. The 100 kHz-step test for the 10 MHz digital noise (below).
-4. The frame is now near the bus: one waterfall alone is 32.4 ms of
+3. **The dial's 1 Hz per retune** - the top section; one line in
+   `msi001_plan()` and a check across the generator.
+4. The 100 kHz-step test for the 10 MHz digital noise (below).
+5. The frame is now near the bus: one waterfall alone is 32.4 ms of
    wire. Going faster means fewer bytes (the waterfall shorter, or
    redrawn less often than the trace) or a faster SPI clock than 30 MHz
    - and 30 MHz is already 1.5 times the datasheet's (ILI9488 17.4.3,
