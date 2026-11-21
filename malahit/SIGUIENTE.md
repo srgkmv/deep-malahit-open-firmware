@@ -4,7 +4,25 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — end of the 21/11/2026 night session; next: the rest of step 9
+## START HERE — 22/11/2026, just after midnight: step 9 done and IN FLASH
+
+**In flash: `22c50fe`** (steps 33-36 on top of the `df61818` below) -
+`build_flash/bringup.bin`, 179 440 bytes, sha256 `0ca7feb9…`, SELFTEST
+0, clean build; written over DFU without `:leave`, read back identical
+byte for byte, left with the 4-byte `:leave` upload. **Cold boot**, from
+the power button: record version 4 read (slot 0, seq 171, at 0x4100),
+the owner's 104.3 MHz in WFM with the tuner on the dial, English, screen
+and audio 2097 ms after SysTick, SAI DMA err 0. Not pushed.
+
+The owner's state on the radio: 104.3 MHz, WFM, 100 kHz step, -46 dB,
+ATT 59, theme Dark, AGC Medium, WFM low-pass 15 k, smoothing 25 %,
+language English.
+
+**Next: the owner picks** - step 9 has nothing left. Open small things:
+the WFM low-pass surviving a reboot was not checked on the radio (same
+FRAM path as the rest); WFM is mono, as upstream's is.
+
+## 21/11/2026, late night: steps 33-36 from RAM (now in flash, above)
 
 **Since, from RAM - NOT in flash, flash is still `df61818` below:**
 
