@@ -77,6 +77,32 @@ void     am_init(float fs_hz);
 #define AM_HOLD_FROM    0           /* the modulation is out from here   */
 #define AM_HOLD_TO      320         /* ... to here, samples from the write */
 
+/*
+ * PREDICTED, NOT FADED - 21/11/2026.
+ *
+ * The hold above took the spike away and left a hole: 3.7 ms with the
+ * modulation faded out, which on a steady tone is a dull click - the
+ * owner heard it on every retune with a signal on the dial, 10 Hz steps
+ * included, and never on noise. Over the whole audio band the hold left
+ * a residual from the tone of -7 dB rms, WORSE than no repair (-15 dB):
+ * clickmodel.py's >2 kHz metric had been built to see the spike, and a
+ * hole in a 1 kHz tone lives below 2 kHz.
+ *
+ * So the same window is now filled with the modulation's own
+ * continuation: the envelope's period, found in the 21 ms before the
+ * window, repeated - what speech codecs do with a lost packet. On eight
+ * raw captures of the bench tone (tools/clickpredict.py): -47 dB rms
+ * and -51 dB above 2 kHz, against the hold's -7 and -20. Where no
+ * period is found - noise - the window falls back to the hold.
+ *
+ * am_pred_set(0) is the hold alone, for comparison; am_pred_stats()
+ * counts windows of each kind and says the last period and its r.
+ */
+void am_pred_set(int on);
+int  am_pred_get(void);
+void am_pred_stats(uint32_t *pred, uint32_t *held, uint32_t *period,
+                   float *r);
+
 void     am_retune_note(void);
 /* True when the DMA is far enough into its half for the fade to start
  * in the same block as the write. */
@@ -216,9 +242,18 @@ const am_fine_t *am_fine_get(uint32_t *first, uint32_t *at);
  * `n` says how many frames were captured and `rel0` where the first
  * one sits relative to the write.
  */
-#define AM_RAW_N        ((RETUNE_TEST >= 2) ? 2048U : 1U)
-#define AM_RAW_PRE      256U
+/* 4 096 from 1 536 before since 21/11/2026 (was 2 048 from 256): a
+ * repair that PREDICTS the modulation across the hold has to be judged
+ * on real history, and 1.3 ms of it is barely one period of the bench's
+ * 1 kHz tone. main.c's retune test waits for a DMA position that lets
+ * the whole capture fit in the write's block. */
+#define AM_RAW_N        ((RETUNE_TEST >= 2) ? 4096U : 1U)
+#define AM_RAW_PRE      1536U
 
 const int16_t   *am_raw_get(uint32_t *n, int32_t *rel0);
+
+/* The codec's audio over the same frames as the raw capture, after the
+ * AGC - one channel. RETUNE_TEST 2 only; n = 0 before the first. */
+const int16_t   *am_aud_get(uint32_t *n);
 
 #endif /* MALAHIT_AM_H */

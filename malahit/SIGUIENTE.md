@@ -4,6 +4,34 @@ Rewritten 19/11/2026, updated 21/11/2026 (twice). `WORKING.md` is still the file
 to read first; this one only says what the next session should do and
 what it must not trust.
 
+## 21/11/2026, night: the retune click — predicted, not faded — in git and in flash
+
+**In git and in flash.** `build_flash/bringup.bin`, 104 960 bytes,
+sha256 `214e3e8b…`, written over DFU, read back identical, left.
+`PORTING.md` step 25, `WORKING.md` "The retune click, part two".
+
+The dull click on every retune with a signal on the dial was the 19/11
+hold's own hole in the modulation. The window is now filled with the
+envelope's last period (`am.c`, `pred_period()`); measured on the
+codec's output, A/B interleaved in one run: -7.0 -> -47.9 dB rms re the
+tone, >2 kHz -20 -> -50 dB. The owner listened to the RAM image: "Всё
+хорошо".
+
+**The 10 MHz digital noise is the owner's, and parked.** The owner, the
+same day: the SMA socket sits loose in the home-made aluminium case, not
+fixed with its nuts, so its ground does not reach the case - the bond
+SIGUIENTE already said makes the noise go. A hardware fix, the owner's
+to make, later. Nothing in the firmware to chase until then.
+
+**Open from this:**
+- The prediction was measured on a pure 1 kHz tone, its best case. On
+  speech and music it was only listened to - no numbers. If a retune on
+  the air ever sounds like a stutter, `RETUNE_TEST` 2 and
+  `tools/clickaudio.py` on a broadcast station are the instrument.
+- `SELFTEST=1` in RAM is at 98 % of AXI SRAM. The next buffer that
+  grows wants the 128 kB of DTCM - CPU-only memory, and the envelope
+  history is CPU-only - rather than another squeeze.
+
 ## 21/11/2026, late: ATT and preamp remembered too, and the dial keeps its hertz — in git and in flash
 
 **In git and in flash.** `build_flash/bringup.bin`, 103 728 bytes,
@@ -534,7 +562,8 @@ So, as of 19/11/2026:
   any change on the four captured glitches before it goes near the
   radio: shorter windows trade gap for click (the model: [16, 224) with
   a 96-sample ramp gives -16 dB). Filling the gap with a prediction of
-  the modulation, rather than fading it, is the step after that.
+  the modulation, rather than fading it, is the step after that. (DONE
+  21/11/2026 - the top of this file.)
 - **Still there: tuning ONTO a carrier**, 2 dB for 90 ms. That is the DC
   blocker meeting a carrier that just appeared, not the synthesiser,
   and the click repair does not touch it. Seeding the blocker with the

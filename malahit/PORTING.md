@@ -963,6 +963,15 @@ Each step should end with something visible on the radio.
    of 1 kHz lost 459 Hz. Rounded, none do (`MSI_ROUND_TEST`, ~30 000
    dials and three walks, on the radio). A stored dial the bug left off
    the 10 Hz grid is rounded onto it at load.
+25. **The retune click, predicted instead of faded.** *Done,
+   21/11/2026, in flash* — the 19/11 repair held the carrier and faded
+   the modulation for 3.7 ms around every synthesiser write; on a tone
+   that hole was the dull click the owner still heard. The window is now
+   filled with the envelope's own last period, found by autocorrelation
+   in the 21 ms before it, and falls back to the hold only where there
+   is no period. On the radio, the codec's own output, A/B in one run:
+   residual from the tone -7.0 dB rms with the hold, -47.9 dB
+   predicted; by ear, gone. `WORKING.md`, "The retune click, part two".
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

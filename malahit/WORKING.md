@@ -1658,8 +1658,68 @@ rather than their verdicts:
   it replaced. Above 2 kHz is where a click lives and a fade does not.
 
 `RETUNE_TEST` (now in `am.h`) brings all of it back: 1 for the table,
-2 for the fine and raw dumps. At 0 the three buffers shrink to one entry
+2 for the fine and raw dumps (and, since 21/11/2026, the codec's output
+and an interleaved predict/hold A/B - "part two" below). At 0 the three buffers shrink to one entry
 each and give back about 35 kB.
+
+### The retune click, part two: predicted, not faded — 21/11/2026
+
+Two days on, the owner: on a signal, **every retune still gives a dull
+click, 10 Hz steps included; on noise, none.** That is the repair above
+working as designed - it held the carrier and FADED the modulation for
+3.7 ms - and the click is the fade itself: on a steady tone, a hole.
+
+**Its metric could not see it.** `clickmodel.py` scored the residual
+above 2 kHz, built to catch the spike; a 3.7 ms hole in a 1 kHz tone
+puts its energy around 1 kHz. Over the WHOLE audio band
+(`tools/clickpredict.py`), the hold leaves -7 dB rms re the tone -
+worse than no repair at all, -15 dB.
+
+**The repair now fills the window with the modulation's own
+continuation**: the envelope's period found by autocorrelation in the
+21 ms before the window, and the last period repeated - packet-loss
+concealment, as speech codecs do it. The fade's gain now crossfades the
+live envelope with the repetition. No period worth trusting (r < 0.5:
+noise) and it falls back to the hold. `am.h`, "PREDICTED, NOT FADED".
+
+**Measured on the radio, A/B in one run**, the codec's own output after
+the AGC (`RETUNE_TEST` 2 now dumps it - `AUD n` blocks - and interleaves
+the two repairs P H H P over ±10 Hz and ±1 kHz moves;
+`tools/clickaudio.py`):
+
+| repair | residual from the tone, rms | >2 kHz | floor before the write |
+|---|---|---|---|
+| hold (19/11) | -7.0 dB | -20.2 dB | -35.8 dB |
+| **predicted** | **-47.9 dB** | **-50.4 dB** | -45.1 dB |
+
+±10 Hz moves -57..-60 dB, ±1 kHz -38 dB - each at its own capture's
+floor. The period was found as 192 samples, r 0.999, every time. The
+model had said -47.4 / -51.0 on eight other captures. **By ear, the
+owner, the same evening: "Всё хорошо"** - the click gone on the
+generator, nothing new on the air.
+
+The cost: `s_hist`, 16 kB of envelope history (the RAM image with
+`SELFTEST=1` is now at 98 % of AXI SRAM, the 8 kB stack reservation
+included - tight, still linking), ~70 k cycles a block to keep it, and
+one period search per retune - the worst block went from 5.0 to 6.6
+million cycles of the 20.5 a block allows.
+
+**Three things about the instruments, again found by reading their
+output rather than their verdicts:**
+
+- **"The first lag within 90 % of the best" is not a pitch detector.**
+  Near its top a sinusoid's autocorrelation falls off as a cosine -
+  0.91 at 179 samples for a 192-sample period - so the rule lands on
+  the leading slope of the right peak. The model first found 1 073 Hz
+  in a 1 000 Hz tone, and prediction looked useless. Only peaks count.
+- **A tiled lead-in is not history.** `clickmodel.py` builds 40 ms in
+  front of each capture by repeating its first 192 samples - exact for
+  a carrier exactly on or 1 kHz off the dial, and with seams for one a
+  few hertz off, which a pitch search finds instead of the tone. The
+  raw capture now holds 1 536 real samples before the write (4 096 in
+  all), and the test waits for a DMA position that fits it in one block.
+- **Captures shorter than the tone fit** (the write near a block's end)
+  broke the old model outright; both tools now skip them.
 
 ### What runs on the radio
 

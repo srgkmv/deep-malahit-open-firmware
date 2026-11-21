@@ -21,6 +21,12 @@ What it reports per retune:
 
   python3 clickmodel.py <console log> [--png out.png]
           [--win A B]   bridge samples [A, B) relative to the write
+
+WHAT THIS DOES NOT SEE (21/11/2026): its audible metric is the residual
+ABOVE 2 kHz, built to catch the spike - and blind to the hole the hold
+then left in the modulation, whose energy sits around the tone. The
+hole was the dull click still heard; clickpredict.py measures the whole
+band, and clickaudio.py the codec's real output.
 """
 import sys
 
@@ -302,6 +308,10 @@ def main():
         win = (int(sys.argv[k + 1]), int(sys.argv[k + 2]))
     out = []
     for idx, d in raws(sys.argv[1]):
+        if d[:, 0].max() < 1700:
+            print(f"retune {idx}: only {int(d[:, 0].max())} samples after "
+                  f"the write - too short for the tone fit, skipped")
+            continue
         rel, z = front(d)
         a = np.abs(z)
         ph = np.unwrap(np.angle(z))

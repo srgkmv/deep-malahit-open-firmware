@@ -5835,6 +5835,15 @@ static void ui_prompt(const char *title, const char *a, const char *b,
  */
 #define SETTINGS_SAVE_MS    1000U
 
+/*
+ * NOT IN A RETUNE TEST BUILD. The test needs the generator on the dial
+ * and a measured gain, and it moves the dial by itself for a minute -
+ * restoring the person's dial and ATT would aim it at the wrong thing,
+ * and saving its moves would overwrite what the person left in the
+ * FRAM. So such an image neither reads nor writes the settings.
+ */
+#define SETTINGS_LIVE       (RETUNE_TEST == 0)
+
 static settings_t s_set_saved;      /* what the FRAM holds, or the boot's */
 static settings_t s_set_seen;       /* the values a frame ago */
 static uint32_t   s_set_changed_at;
@@ -5862,6 +5871,8 @@ static void settings_now(settings_t *out)
 static void settings_tick(void)
 {
     settings_t cur;
+
+    if (!SETTINGS_LIVE) { return; }
 
     settings_now(&cur);
     if (!settings_same(&cur, &s_set_seen)) {
@@ -6057,6 +6068,8 @@ static int dial_tune(int64_t dial_hz)
  * by itself, a few seconds apart, with am.c's trace recording two
  * seconds around each move (am.h, am_trace_*).
  *
+ *   +/-10 Hz   the smallest step the knob has, and the owner hears
+ *              the click on it too (21/11/2026)
  *   +/-1 kHz   the carrier stays inside the 4 kHz channel: whatever
  *              the AGC does here is the retune itself - the PLL, the
  *              tuner's DC trim, the leakage estimate re-settling
@@ -6083,6 +6096,7 @@ static int dial_tune(int64_t dial_hz)
  * it sizes; WORKING.md has the tables to compare against.
  */
 static const int32_t k_rt[] = {
+    +10, -10, +10, -10,
     +1000, -1000, +1000, -1000, +20000, -20000, +20000, -20000,
 };
 #define RT_N            (sizeof k_rt / sizeof k_rt[0])
@@ -6265,6 +6279,22 @@ static void retune_test_print_fine(uint32_t idx)
                        (int32_t)r[k * 2U], (int32_t)r[k * 2U + 1U]);
     }
     console_printf("  RAW %u end\n", idx + 1U);
+
+    /* What the codec got over the same frames, and which repair made it. */
+    uint32_t       an;
+    const int16_t *au = am_aud_get(&an);
+    uint32_t       pn, hn, pp;
+    float          pr;
+
+    am_pred_stats(&pn, &hn, &pp, &pr);
+    console_printf("  AUD %u begin: %u frames from %d, repair %s, period %u, "
+                   "r %d/1000\n", idx + 1U, an, rel0,
+                   am_pred_get() ? "PREDICT" : "HOLD", pp,
+                   (int32_t)(pr * 1000.0f));
+    for (uint32_t k = 0; k < an; k++) {
+        console_printf("A %d %d\n", rel0 + (int32_t)k, (int32_t)au[k]);
+    }
+    console_printf("  AUD %u end\n", idx + 1U);
 }
 
 static void retune_test_step(void)
@@ -6286,8 +6316,11 @@ static void retune_test_step(void)
     if (!s_rt_busy) {
         if ((int32_t)(now - s_rt_at) < 0) { return; }
 
-        int fine = (RETUNE_TEST >= 2) && (k_rt[s_rt_i] == 1000
-                                          || k_rt[s_rt_i] == -1000);
+        /* The fine trace and the raw capture for every move that stays
+         * inside the channel: +-1 kHz, and since 21/11/2026 +-10 Hz -
+         * the owner hears the click on a 10 Hz step too. */
+        int fine = (RETUNE_TEST >= 2) && (k_rt[s_rt_i] >= -1000
+                                          && k_rt[s_rt_i] <= 1000);
 
         am_trace_arm();
         if (fine) { am_fine_arm(); }
@@ -6309,6 +6342,37 @@ static void retune_test_step(void)
          */
         am_trace_mark();
         s_rt_fine = (uint8_t)fine;
+
+        /*
+         * THE A/B, INTERLEAVED: predicted fill or the plain hold, in the
+         * pattern P H H P over each group of four, so +10/-10 and
+         * +1k/-1k each get both and a direction never stands in for a
+         * repair (am.h, "PREDICTED, NOT FADED").
+         */
+        if (fine) {
+            uint32_t q = s_rt_i % 4U;
+
+            am_pred_set(q == 0U || q == 3U);
+        }
+
+        /*
+         * A RAW CAPTURE IS ONLY AS GOOD AS ITS PLACE IN THE BLOCK: it is
+         * cut at the edges of the receive half the write lands in. So a
+         * move that captures waits - 50 ms at most, a block is 42.7 -
+         * for a DMA position with AM_RAW_PRE frames behind it and the
+         * rest of AM_RAW_N ahead.
+         */
+        if (fine) {
+            uint32_t lo = AM_RAW_PRE + 64U;
+            uint32_t hi = CAP_FRAMES - (AM_RAW_N - AM_RAW_PRE) - 64U;
+            uint32_t t0 = board_millis();
+
+            while ((board_millis() - t0) < 50U) {
+                uint32_t pos = sai1_rx_frame_pos();
+
+                if (pos >= lo && pos <= hi) { break; }
+            }
+        }
 
         if (!dial_tune((int64_t)s_tuned_hz + k_rt[s_rt_i])) {
             console_printf("  retune %u: the tuner refused %d Hz\n",
@@ -6332,6 +6396,7 @@ static void retune_test_step(void)
     s_rt_at = board_millis() + RT_GAP_MS;
 
     if (s_rt_i >= RT_N) {
+        am_pred_set(1);
         console_printf("\n  RETUNE TEST done - the knob is yours again\n\n");
     }
 }
@@ -7069,7 +7134,11 @@ int main(void)
      * the FRAM holds the person's ATT and preamp. The dial, volume and
      * step wait in s_boot_set for PHASE(20).
      */
-    s_boot_have = settings_load(&s_boot_set);
+    s_boot_have = SETTINGS_LIVE ? settings_load(&s_boot_set) : 0;
+    if (!SETTINGS_LIVE) {
+        console_printf("Settings  : not read or written - a RETUNE_TEST "
+                       "build (SETTINGS_LIVE)\n");
+    }
 
     if (s_boot_have && s_boot_set.has_rf
         && s_boot_set.rf_gr <= RF_GR_MAX && s_boot_set.preamp <= 1U) {
@@ -7900,6 +7969,27 @@ int main(void)
                            encoder_button_down(), encoder2_button_down(),
                            s_press_n, s_press2_n,
                            (uint32_t)boot_power_key());
+            /*
+             * THE RETUNE REPAIR, when there has been a retune since the
+             * last line: how many windows were filled by prediction and
+             * how many fell back to the hold, and the last period found
+             * (am.h, "PREDICTED, NOT FADED").
+             */
+            {
+                static uint32_t was = UINT32_MAX;
+                uint32_t pn, hn, pp;
+                float    pr;
+
+                am_pred_stats(&pn, &hn, &pp, &pr);
+                if (pn + hn != was) {
+                    was = pn + hn;
+                    console_printf("  retune repair: predicted %u, held %u; "
+                                   "last period %u samples (%u Hz), r %d/1000"
+                                   "\n", pn, hn, pp,
+                                   (pp != 0U) ? 192000U / pp : 0U,
+                                   (int32_t)(pr * 1000.0f));
+                }
+            }
             /*
              * THE PANEL'S DMA, once a second: blocks sent since boot, how
              * many of them ended with FEIF up (spi3_dma_counts() says why

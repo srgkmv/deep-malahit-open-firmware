@@ -345,7 +345,160 @@ static float hold_gain(int32_t d)
     return 1.0f - k_hold_ramp[d - AM_HOLD_TO];
 }
 
+/*
+ * AND WHAT FILLS THE WINDOW: THE MODULATION'S OWN CONTINUATION -
+ * 21/11/2026. See am.h, "PREDICTED, NOT FADED".
+ *
+ * s_hist keeps the envelope as it went INTO the DC blocker - after any
+ * repair, so a second retune soon after the first finds clean history -
+ * one float a sample, PRED_HIST of them (21.3 ms). At the first sample
+ * of a window pred_period() looks for the envelope's period in that
+ * history, and the window is filled by repeating the last period; the
+ * gain that used to fade the modulation now crossfades the live
+ * envelope with the repetition. No period worth trusting (r below
+ * PRED_R_MIN: noise, or programme without one) and the window is the
+ * old hold instead, which on noise nobody hears.
+ *
+ * The search, as tools/clickpredict.py models it ("FIRMWARE"): a coarse
+ * pass on every PRED_DEC-th sample - the envelope is band-limited far
+ * below 24 kHz, so sub-sampling finds a period well enough - over lags
+ * of 2 kHz down to 80 Hz; then a full-rate pass within +-PRED_DEC of the
+ * coarse answer. Only autocorrelation PEAKS count: near its top a
+ * sinusoid's autocorrelation falls off as a cosine, and "the first lag
+ * within 90 % of the best" lands on the leading slope of the right peak
+ * - 179 samples for a 192-sample period, which the model first did.
+ *
+ * ~90 000 multiply-adds, once a retune, inside the hook.
+ */
+#define PRED_HIST   4096U       /* power of two */
+#define PRED_DEC    8U
+#define PRED_CWIN   96U         /* coarse window, decimated: 4 ms */
+#define PRED_CLO    12U         /* coarse lags 12..300 = 2 kHz..80 Hz */
+#define PRED_CHI    300U
+#define PRED_FWIN   512U        /* fine window, full rate: 2.7 ms */
+#define PRED_R_MIN  0.5f
+
+_Static_assert(PRED_CHI * PRED_DEC + PRED_DEC + (HOLD_HI - HOLD_LO)
+               + PRED_FWIN < PRED_HIST,
+               "the repeated period must outlive the window in the ring");
+
+static float    s_hist[PRED_HIST];
+static float    s_pr[PRED_CHI + 1U];
+static uint8_t  s_pred_on = 1U;
+static uint32_t s_pred_p;               /* this window's period, 0 = hold */
+static uint32_t s_pred_t0;              /* the window's first sample */
+static uint32_t s_pred_n, s_hold_n;     /* windows of each kind */
+static uint32_t s_pred_last_p;
+static float    s_pred_last_r;
+
+static inline float hist_at(uint32_t t)
+{
+    return s_hist[t & (PRED_HIST - 1U)];
+}
+
+static float ncorr(float xy, float xx, float yy)
+{
+    float d = xx * yy;
+
+    return (d > 0.0f) ? xy / sqrtf(d) : 0.0f;
+}
+
+/* The period of the history that ends just before sample t0, in
+ * samples, or 0 if there is none worth repeating. */
+static uint32_t pred_period(uint32_t t0, float *r_out)
+{
+    float m = 0.0f;
+
+    for (uint32_t i = 1U; i <= PRED_FWIN; i++) { m += hist_at(t0 - i); }
+    m /= (float)PRED_FWIN;
+
+    /* Coarse: hd(j) = hist(t0 - 1 - j*DEC) - m, j = 0 the newest. */
+    float xx = 0.0f, best = -2.0f;
+
+    for (uint32_t j = 0; j < PRED_CWIN; j++) {
+        float x = hist_at(t0 - 1U - j * PRED_DEC) - m;
+        xx += x * x;
+    }
+    for (uint32_t L = PRED_CLO; L <= PRED_CHI; L++) {
+        float xy = 0.0f, yy = 0.0f;
+
+        for (uint32_t j = 0; j < PRED_CWIN; j++) {
+            float x = hist_at(t0 - 1U - j * PRED_DEC) - m;
+            float y = hist_at(t0 - 1U - (j + L) * PRED_DEC) - m;
+            xy += x * y;
+            yy += y * y;
+        }
+        s_pr[L] = ncorr(xy, xx, yy);
+        if (s_pr[L] > best) { best = s_pr[L]; }
+    }
+
+    uint32_t L = PRED_CLO;
+    float    top = -2.0f;
+
+    for (uint32_t k = PRED_CLO; k <= PRED_CHI; k++) {      /* argmax */
+        if (s_pr[k] > top) { top = s_pr[k]; L = k; }
+    }
+    for (uint32_t k = PRED_CLO + 1U; k < PRED_CHI; k++) {  /* first peak */
+        if (s_pr[k] >= s_pr[k - 1U] && s_pr[k] >= s_pr[k + 1U]
+            && s_pr[k] >= 0.9f * best) {
+            L = k;
+            break;
+        }
+    }
+
+    /* Fine, at full rate, around L * DEC. */
+    float    fxx = 0.0f, br = -2.0f;
+    uint32_t bp  = 0U;
+
+    for (uint32_t i = 0; i < PRED_FWIN; i++) {
+        float x = hist_at(t0 - 1U - i) - m;
+        fxx += x * x;
+    }
+    for (uint32_t p = L * PRED_DEC - PRED_DEC; p <= L * PRED_DEC + PRED_DEC;
+         p++) {
+        float xy = 0.0f, yy = 0.0f;
+
+        for (uint32_t i = 0; i < PRED_FWIN; i++) {
+            float x = hist_at(t0 - 1U - i) - m;
+            float y = hist_at(t0 - 1U - i - p) - m;
+            xy += x * y;
+            yy += y * y;
+        }
+        float r = ncorr(xy, fxx, yy);
+        if (r > br) { br = r; bp = p; }
+    }
+
+    *r_out = br;
+    return (br >= PRED_R_MIN) ? bp : 0U;
+}
+
+void am_pred_set(int on) { s_pred_on = (uint8_t)(on ? 1U : 0U); }
+int  am_pred_get(void)   { return s_pred_on; }
+
+void am_pred_stats(uint32_t *pred, uint32_t *held, uint32_t *period,
+                   float *r)
+{
+    *pred   = s_pred_n;
+    *held   = s_hold_n;
+    *period = s_pred_last_p;
+    *r      = s_pred_last_r;
+}
+
 int am_fine_done(void) { return s_ft_done; }
+
+/*
+ * And the audio as it leaves for the codec, over the same frames as the
+ * raw capture - after the AGC, what the ear gets. RETUNE_TEST 2 only.
+ */
+static int16_t  s_aud[AM_RAW_N];
+static uint32_t s_aud_n;
+static uint32_t s_aud_from = UINT32_MAX;    /* pending: block offset */
+
+const int16_t *am_aud_get(uint32_t *n)
+{
+    *n = s_aud_n;
+    return s_aud;
+}
 
 static int16_t  s_raw[AM_RAW_N * 2U];
 static uint32_t s_raw_n;
@@ -373,6 +526,7 @@ static void raw_capture(const int16_t *rx, uint32_t frames, uint32_t pos)
     }
     s_raw_n    = to - from;
     s_raw_rel0 = (int32_t)from - (int32_t)pos;
+    s_aud_from = from;          /* the end of this block copies the audio */
 }
 
 const am_fine_t *am_fine_get(uint32_t *first, uint32_t *at)
@@ -668,21 +822,44 @@ void am_block(const int16_t *rx, int16_t *tx, uint32_t frames)
          * dips smoothly, and the glitch never becomes a spike.
          */
         for (uint32_t k = 0; k < n; k++) {
-            float x = s_env[k];
+            float    x = s_env[k];
+            uint32_t t = s_samp + off + k;
 
             if (s_ev_on) {
-                int32_t d = (int32_t)(s_samp + off + k - s_ev_abs);
+                int32_t d = (int32_t)(t - s_ev_abs);
 
                 if (d >= HOLD_HI) {
                     s_ev_on = 0U;
                 } else if (d >= HOLD_LO) {
                     if (!s_ev_frozen) {
+                        float r = 0.0f;
+
                         s_ev_c      = s_dc_x1 - s_dc_y1;
                         s_ev_frozen = 1U;
+                        s_pred_t0   = t;
+                        s_pred_p    = s_pred_on ? pred_period(t, &r) : 0U;
+                        s_pred_last_p = s_pred_p;
+                        s_pred_last_r = r;
+                        if (s_pred_p != 0U) { s_pred_n++; } else { s_hold_n++; }
                     }
-                    x = s_ev_c + hold_gain(d) * (x - s_ev_c);
+
+                    float g = hold_gain(d);
+
+                    if (s_pred_p != 0U) {
+                        /* The last period before the window, repeated:
+                         * always samples from before s_pred_t0, which
+                         * the ring still holds (the assertion above). */
+                        uint32_t j  = (t - s_pred_t0) % s_pred_p;
+                        float    xp = hist_at(s_pred_t0 - s_pred_p + j);
+
+                        x = xp + g * (x - xp);
+                    } else {
+                        x = s_ev_c + g * (x - s_ev_c);
+                    }
                 }
             }
+
+            s_hist[t & (PRED_HIST - 1U)] = x;
 
             s_dc_y1   = x - s_dc_x1 + 0.9995f * s_dc_y1;
             s_dc_x1   = x;
@@ -739,6 +916,17 @@ void am_block(const int16_t *rx, int16_t *tx, uint32_t frames)
         s_ft_end  = s_ft_e;
         s_ft_on   = 0U;
         s_ft_done = 1U;
+    }
+
+    if (AM_RAW_N > 1U && s_aud_from != UINT32_MAX) {
+        uint32_t m = frames - s_aud_from;
+
+        if (m > AM_RAW_N) { m = AM_RAW_N; }
+        for (uint32_t k = 0; k < m; k++) {
+            s_aud[k] = tx[(s_aud_from + k) * 2U];
+        }
+        s_aud_n    = m;
+        s_aud_from = UINT32_MAX;
     }
 
     s_samp += frames;
