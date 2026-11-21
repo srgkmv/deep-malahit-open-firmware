@@ -436,7 +436,7 @@ TEMAS_GEN    = ../../deepsdr-ui/tools/gen_temas.py
 # and found again here by compiling it on this port's flags. agc.c and
 # audiofil.c, the other two of the bench's set, are already above.
 #
-#   demod_am.c   AM, SAM, USB, LSB, NFM (and WFM, not wired yet)
+#   demod_am.c   AM, SAM, USB, LSB, NFM and WFM (its own hook, step 35)
 #   semibanda.c  the half-band pair: 192 -> 96 kHz in, 96 -> 192 out
 #   nco.c, nco_tabla.c   the digital mix, for any offset that is not Fs/4
 #   nb.c         noise blanker        anotch.c  automatic notch

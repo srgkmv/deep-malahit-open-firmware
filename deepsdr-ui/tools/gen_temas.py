@@ -18,11 +18,16 @@ def main(fw, destino):
     fin = src.index('\n};', ini)
     cuerpo = src[ini:fin]
     # 30/09/2026: k_temas[] lleva los dos idiomas, T("es", "en"). Aqui se
-    # coge el espanol: este banco solo necesita un nombre para el fichero
-    # .ppm que escribe, no mide anchos.
+    # cogia solo el espanol: este banco solo necesitaba un nombre para el
+    # fichero .ppm que escribe.
+    #
+    # 21/11/2026: y el ingles tambien, AL FINAL de la estructura para no
+    # mover nada de lo que ya habia (igual que lo, hi y paso en
+    # bandas_tabla.h). El port del Malahit genera esta misma tabla para
+    # su pantalla de Ajustes, y desde hoy habla los dos idiomas.
     filas = re.findall(
-        r'\{\s*T\(\s*"([^"]*)"\s*,\s*"[^"]*"\s*\)\s*,\s*'
-        r'T\(\s*"([^"]*)"\s*,\s*"[^"]*"\s*\)\s*,\s*&(\w+)\s*,\s*(\w+)\s*\}', cuerpo)
+        r'\{\s*T\(\s*"([^"]*)"\s*,\s*"([^"]*)"\s*\)\s*,\s*'
+        r'T\(\s*"([^"]*)"\s*,\s*"([^"]*)"\s*\)\s*,\s*&(\w+)\s*,\s*(\w+)\s*\}', cuerpo)
     if not filas:
         print('  no se ha podido leer k_temas[] de main.c  MAL')
         return 1
@@ -31,10 +36,12 @@ def main(fw, destino):
         f.write('#ifndef TEMAS_TABLA_H\n#define TEMAS_TABLA_H\n')
         f.write('#include "palette.h"\n#include "spectrum.h"\n\n')
         f.write('typedef struct { const char *nombre; const char *desc;\n'
-                '                 const palette_t *pal; spectrum_palette_t wf; } sim_tema_t;\n\n')
+                '                 const palette_t *pal; spectrum_palette_t wf;\n'
+                '                 const char *nombre_en; const char *desc_en; } sim_tema_t;\n\n')
         f.write('static const sim_tema_t k_sim_temas[] = {\n')
-        for nom, desc, pal, wf in filas:
-            f.write('    { "%s", "%s", &%s, %s },\n' % (nom, desc, pal, wf))
+        for nom, nom_en, desc, desc_en, pal, wf in filas:
+            f.write('    { "%s", "%s", &%s, %s, "%s", "%s" },\n'
+                    % (nom, desc, pal, wf, nom_en, desc_en))
         f.write('};\n#define SIM_TEMA_COUNT (int)(sizeof(k_sim_temas)/sizeof(k_sim_temas[0]))\n')
         f.write('#endif\n')
     print('  %d temas -> %s' % (len(filas), destino))

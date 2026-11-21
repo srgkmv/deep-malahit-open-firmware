@@ -129,6 +129,7 @@ int         radio_att_set(int db);
 int         radio_suav_pct(void);       /* the trace's smoothing, 0-95 % */
 int         radio_suav_set(int pct);    /* clamps, 5 % steps; returns it */
 void        radio_repaint_all(void);
+void        radio_idioma(uint8_t v);    /* IDIOMA_ES / IDIOMA_EN, idioma.h */
 
 /* The filter of each family as upstream's quick preset it equals, 2 bits
  * a family (3 = none of them, leave it); and back. */

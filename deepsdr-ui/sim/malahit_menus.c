@@ -337,6 +337,140 @@ static void teclado(void)
     escribe("teclado_vacio");
 }
 
+/*
+ * EN INGLES - 21/11/2026: el port habla los dos idiomas de upstream
+ * (idioma.c), y el ingles es mas largo justo donde menos sitio hay. Se
+ * miden los textos ingleses de src/menus.c y src/main.c contra los mismos
+ * huecos que los espanoles de arriba, y se pintan dos pantallas en ingles
+ * para mirarlas. Las cadenas son las de esos dos ficheros, copiadas: si
+ * se cambia una alli, se cambia aqui.
+ */
+#include "idioma.h"
+extern const gfx2_font_t font_ui_10b;
+
+/* src/menus.c, paso_l2(): upstream's English for the 10 kHz step, "CB and
+ * MW in the Americas", is 136 px in a 114 px cell, so the port says it
+ * shorter. Same rule as AM's "Envolvente". */
+static const char *paso_en(int k)
+{
+    return paso_tabla[k].hz == 10000UL ? "CB, MW Americas" : paso_tabla[k].desc_en;
+}
+
+static void ingles(void)
+{
+    static const char *const modos_en[] = {
+        "Envelope", "Synchronous AM", "Upper sideband", "Lower sideband",
+        "Narrow FM", "Wide FM" };
+    static const char *const paginas_en[] = { "Radio", "Display", "Spectrum", "Device" };
+    static const char *const nombres_en[] = {
+        "AGC", "Bandwidth", "Notch", "Squelch", "Noise red.", "Blanker", "Preamp",
+        "Attenuator", "Theme", "Palette", "Style", "Volume", "Smoothing", "Bridge",
+        "Trace", "Language" };
+    static const char *const valores_en[] = {
+        "No AGC", "Slow", "Medium", "Fast", "Gentle", "Normal", "Strong", "Maximum",
+        "Off", "On", "Filled", "Line", "Outline", "Joined", "Loose", "White",
+        "Palette", "English", "Español", "-60 dB", "0-4,0k", "15 k", "95 %" };
+    static const char *const titulos_en[] = {
+        "Squelch", "Noise reduction", "Volume", "Attenuator", "Smoothing" };
+    static const char *const pies_en[] = {
+        "at the bottom: always open", "on (Noise button)",
+        "off: the Noise button turns it on", "the tuner's gain reduction",
+        "% averaged between frames" };
+    static const char *const teclas_en[] = { "Delete", "Clear", "Back", "kHz", "MHz" };
+    static const char *const barra_en[] = {
+        "Bands", "Mode", "Step", "Volume", "Noise", "Settings", "on", "off" };
+    int16_t hueco_aj  = (int16_t)(UIC_CELL_W - UIC_NOM_X - 4);
+    int16_t hueco_cat = (int16_t)(UIC_SIDE_W - UIC_CAT_TXT_X - UIC_CAT_TXT_R);
+    int16_t hueco_det = (int16_t)(UID_BTN_X1 - UID_VAL_GAP
+                                  - (UID_BTN_X0 + UID_BTN_W + UID_VAL_GAP));
+    ui_cfg_state_t st;
+    unsigned i;
+    int k;
+
+    idioma_pon(IDIOMA_EN);
+
+    for (i = 0; i < sizeof modos_en / sizeof modos_en[0]; i++) {
+        cabe("desc en", modos_en[i], &font_ui_10, UIC_DCELL_W - 2);
+    }
+    cabe("categ en", "Analogue", &font_ui_11, hueco_cat);
+    for (i = 0; i < sizeof familia_nombre_en / sizeof familia_nombre_en[0]; i++) {
+        cabe("categ en", familia_nombre_en[i], &font_ui_11, hueco_cat);
+    }
+    for (k = 0; k < N_BANDAS; k++) {
+        if (!sintoniza(k)) { continue; }
+        cabe("banda en", banda[k].nombre_en, &font_ui_11, UIC_DCELL_W - 2);
+    }
+    for (i = 0; i < sizeof paginas_en / sizeof paginas_en[0]; i++) {
+        cabe("pagina en", paginas_en[i], &font_ui_11, hueco_cat);
+    }
+    for (i = 0; i < sizeof nombres_en / sizeof nombres_en[0]; i++) {
+        cabe("ajuste en", nombres_en[i], &font_ui_10, hueco_aj);
+    }
+    for (i = 0; i < sizeof valores_en / sizeof valores_en[0]; i++) {
+        cabe("valor en", valores_en[i], &font_ui_11, hueco_aj);
+    }
+    for (k = 0; k < SIM_TEMA_COUNT; k++) {
+        cabe("tema en", k_sim_temas[k].nombre_en, &font_ui_11, hueco_aj);
+    }
+    for (k = 0; k < spectrum_palette_count(); k++) {
+        cabe("paleta en", spectrum_palette_nombre((uint8_t)k), &font_ui_11, hueco_aj);
+    }
+    for (i = 0; i < sizeof titulos_en / sizeof titulos_en[0]; i++) {
+        cabe("titulo en", titulos_en[i], &font_ui_11, GFX2_W);
+    }
+    for (i = 0; i < sizeof pies_en / sizeof pies_en[0]; i++) {
+        cabe("pie en", pies_en[i], &font_ui_10, hueco_det);
+    }
+    for (i = 0; i < sizeof teclas_en / sizeof teclas_en[0]; i++) {
+        cabe("tecla en", teclas_en[i], &font_ui_11, (int16_t)(UIK_CELL_W - 8));
+    }
+    {
+        int16_t izq = gfx2_text_w("type it and pick the unit", &font_ui_10);
+
+        cabe("lectura en", "999999999,", &font_num_31,
+             (int16_t)(GFX2_W - 2 * (UIK_MARGIN + UIK_TXT_PAD) - izq - 8));
+    }
+    for (i = 0; i < sizeof barra_en / sizeof barra_en[0]; i++) {
+        cabe("barra en", barra_en[i], &font_ui_11, (int16_t)(UI_ACT_BTN_W - 4));
+    }
+
+    /* Los pasos en ingles: ui_grid cuenta sus propios recortes, una vez
+     * por franja de dibujo; aqui se dice cual. */
+    for (k = 0; k < N_PASOS; k++) {
+        cabe("paso en", paso_en(k), &font_ui_10b, UIG_CELL_W);
+    }
+    {
+        ui_grid_state_t g;
+
+        memset(&g, 0, sizeof g);
+        g.titulo = "Tuning step";
+        g.pagina = 0; g.paginas = 1;
+        g.n = (uint8_t)N_PASOS;
+        for (i = 0; i < g.n; i++) {
+            g.cel[i].l1 = paso_tabla[i].rotulo;
+            g.cel[i].l2 = paso_en((int)i);
+        }
+        g.pressed = -1; g.cursor = -1; g.marcada = 3;
+        g.nav[0] = "Previous"; g.nav[1] = "Next";
+        fondo_principal();
+        ui_grid_draw(&g);
+        escribe("pasos_en");
+    }
+
+    /* Ajustes, la pagina nueva - Device, con Language - para mirarla. */
+    memset(&st, 0, sizeof st);
+    for (i = 0; i < 4; i++) { st.cat[i] = paginas_en[i]; }
+    st.cats = 4; st.cat_sel = 3; st.denso = 0;
+    st.marcada = 0xFF; st.cursor = -1; st.pressed = -1;
+    st.n = 1;
+    st.cel[0].nombre = "Language"; st.cel[0].valor = "English";
+    fondo_principal();
+    ui_cfg_draw(&st);
+    escribe("ajustes_en");
+
+    idioma_pon(IDIOMA_ES);
+}
+
 int main(void)
 {
     printf("menus del Malahit, 480 x 320\n");
@@ -346,6 +480,7 @@ int main(void)
     ajustes();
     detalle();
     teclado();
+    ingles();
     if (ui_grid_recortes()) {
         printf("  ui_grid: %u renglones recortados\n",
                (unsigned)ui_grid_recortes());

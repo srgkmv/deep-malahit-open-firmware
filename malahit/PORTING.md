@@ -1183,6 +1183,30 @@ Each step should end with something visible on the radio.
      filter 0x2B; back to 10 MHz AM - the generator's carrier at 94 dB,
      as before any of it. Then the owner put an antenna on it and
      listened: WFM plays fine, mono.
+36. **English - upstream's two languages.** *21/11/2026, from RAM, seen
+   on the glass* - the owner asked how to switch the language and found
+   no switch: upstream's idioma.c was in the image all along (ui_top.c
+   and spectrum.c call its tr()), but its switch lives on a settings
+   page the port had not taken, and every string the port draws itself
+   was a Spanish literal. Now: **Idioma / Language** on upstream's own
+   page for it, Equipo / Device, a tap toggling it and repainting
+   everything as a theme does; every string in `src/menus.c` and the
+   ones `src/main.c` draws (the bar, the AGC names, the band pill) as
+   T(es, en) / tr(), with UPSTREAM'S English wherever upstream has the
+   string - k_ajustes[], k_modos[], k_act_slots[], k_kbd_freq_rot[] -
+   and the band, family, step and theme tables' own English columns
+   (gen_temas.py now emits the themes' - PROCEDENCIA.md). The port's own
+   few written in the same style. Kept in the FRAM, record v4 byte 28.
+   Measured on the PC first, every English string against the hole the
+   Spanish one is measured in: one did not fit, upstream's "CB and MW in
+   the Americas" for the 10 kHz step, 136 px in 114, said "CB, MW
+   Americas" here as AM's "Envolvente" is. Then on the glass: the main
+   screen, Mode, Bands, Settings, the keypad, all in English, nothing
+   clipped; and a cold boot came back in English from the FRAM. Numbers
+   keep upstream's format in both ("104.300,00"), as upstream decided.
+   Found on the way: a full repaint draws the action bar as `s_act`
+   holds it, and the names were set only when the bar was refreshed -
+   the first try left the bar in Spanish under an English header.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

@@ -32,6 +32,10 @@ by design - demod_am.h, its WFM note). Not checked on the radio: that
 the WFM low-pass (BW chip 15/8/4 k) survives a reboot - same FRAM path
 as the rest, byte 27 of record v4.
 
+- **English** (step 36) - Settings > Device > Language, upstream's
+  idioma.c; everything the port draws in both languages, in the FRAM
+  (record v4 byte 28). The owner's radio is in English now.
+
 Step 9 is done. Next: write all this to flash (the owner's
 DFU), then step 10 or whatever the owner picks.
 

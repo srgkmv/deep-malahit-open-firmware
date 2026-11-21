@@ -16,6 +16,7 @@
 #include "settings.h"      /* src/ - the FRAM record, not upstream's */
 #include "ui_det.h"        /* ../../User - upstream: one continuous setting */
 #include "ui_kbd.h"        /* ../../User - upstream: the frequency keypad */
+#include "idioma.h"        /* ../../User - upstream: tr(), T(), idioma() */
 
 /* What ui_cfg.c draws the range line in, defined once in fonts_menu.c. */
 extern const gfx2_font_t font_ui_10;
@@ -39,13 +40,13 @@ static int8_t          s_pressed = -1;   /* the hit index under the finger */
  * "Amplitud modulada" is 91 px in a 92 px cell, measured by the host
  * render (deepsdr-ui `make malahit-menus`).
  */
-static const struct { int mode; const char *n; const char *d; } k_modos[] = {
-    { DEMOD_MODE_AM,  "AM",  "Envolvente" },
-    { DEMOD_MODE_SAM, "SAM", "AM síncrona" },
-    { DEMOD_MODE_USB, "USB", "Banda lateral alta" },
-    { DEMOD_MODE_LSB, "LSB", "Banda lateral baja" },
-    { DEMOD_MODE_NFM, "NFM", "FM estrecha" },
-    { DEMOD_MODE_WFM, "WFM", "FM ancha" },
+static const struct { int mode; const char *n; texto_t d; } k_modos[] = {
+    { DEMOD_MODE_AM,  "AM",  T("Envolvente", "Envelope") },
+    { DEMOD_MODE_SAM, "SAM", T("AM síncrona", "Synchronous AM") },
+    { DEMOD_MODE_USB, "USB", T("Banda lateral alta", "Upper sideband") },
+    { DEMOD_MODE_LSB, "LSB", T("Banda lateral baja", "Lower sideband") },
+    { DEMOD_MODE_NFM, "NFM", T("FM estrecha", "Narrow FM") },
+    { DEMOD_MODE_WFM, "WFM", T("FM ancha", "Wide FM") },
 };
 #define N_MODOS ((uint8_t)(sizeof k_modos / sizeof k_modos[0]))
 
@@ -55,7 +56,7 @@ static void modos_rellena(void)
     int     m = radio_mode_get();
 
     memset(&s_cfg, 0, sizeof s_cfg);
-    s_cfg.cat[0]  = "Analógico";
+    s_cfg.cat[0]  = tr("Analógico", "Analogue");
     s_cfg.cats    = 1U;
     s_cfg.cat_sel = 0U;
     s_cfg.denso   = 1U;
@@ -65,7 +66,7 @@ static void modos_rellena(void)
     s_cfg.pressed = -1;
     for (i = 0U; i < N_MODOS; i++) {
         s_cfg.cel[i].nombre = k_modos[i].n;
-        s_cfg.cel[i].valor  = k_modos[i].d;
+        s_cfg.cel[i].valor  = k_modos[i].d[idioma()];
         s_cfg.cel[i].extra  = "";
         if (k_modos[i].mode == m) { s_cfg.marcada = i; }
     }
@@ -120,7 +121,8 @@ int menu_band_at(uint32_t hz)
 
 const char *menu_band_name(int k)
 {
-    return (k >= 0 && k < N_BANDAS) ? banda[k].nombre : (const char *)0;
+    if (k < 0 || k >= N_BANDAS) { return (const char *)0; }
+    return idioma() == IDIOMA_EN ? banda[k].nombre_en : banda[k].nombre;
 }
 
 static int modo_de(const char *s)
@@ -170,7 +172,8 @@ static void bandas_rellena(void)
         }
         if (k == N_BANDAS) { continue; }        /* nothing tunable in it */
         s_fam_of_cat[c] = f;
-        s_cfg.cat[c]    = familia_nombre[f];
+        s_cfg.cat[c]    = idioma() == IDIOMA_EN ? familia_nombre_en[f]
+                                                : familia_nombre[f];
         if (f == s_fam_sel) { s_cfg.cat_sel = c; }
         c++;
     }
@@ -183,7 +186,7 @@ static void bandas_rellena(void)
 
     for (k = 0; k < N_BANDAS && n < UIC_CELLS; k++) {
         if (banda[k].familia != s_fam_sel || !banda_ok(k)) { continue; }
-        s_cfg.cel[n].nombre = banda[k].nombre;
+        s_cfg.cel[n].nombre = menu_band_name(k);
         s_cfg.cel[n].valor  = rango_cabe(n, banda[k].rango);
         s_cfg.cel[n].extra  = banda[k].modo;
         s_band_of_cel[n]    = (uint8_t)k;
@@ -223,24 +226,37 @@ static void bandas_familia_inicial(void)
 /* The steps are upstream's TUNE_STEPS_LISTA, generated into
  * bandas_tabla.h with the bands: value, label and what each is for. */
 
+/*
+ * A step's second line, in the language in force. Upstream's English for
+ * 10 kHz, "CB and MW in the Americas", is 136 px in a 114 px cell here
+ * (deepsdr-ui `make malahit-menus` measures every one), so it is said
+ * shorter - the same rule as AM's "Envolvente" on the mode screen.
+ */
+static const char *paso_l2(uint32_t i)
+{
+    if (idioma() != IDIOMA_EN) { return paso_tabla[i].desc; }
+    if (paso_tabla[i].hz == 10000UL) { return "CB, MW Americas"; }
+    return paso_tabla[i].desc_en;
+}
+
 static void pasos_rellena(void)
 {
     uint32_t i, n = radio_step_count();
 
     memset(&s_grid, 0, sizeof s_grid);
     if (n > UIG_CELLS) { n = UIG_CELLS; }
-    s_grid.titulo  = "Paso de sintonía";
+    s_grid.titulo  = tr("Paso de sintonía", "Tuning step");
     s_grid.pagina  = 0U;
     s_grid.paginas = 1U;
     s_grid.n       = (uint8_t)n;
     s_grid.pressed = -1;
     s_grid.cursor  = -1;
     s_grid.marcada = 0xFFU;
-    s_grid.nav[0]  = "Anterior";
-    s_grid.nav[1]  = "Siguiente";
+    s_grid.nav[0]  = tr("Anterior", "Previous");
+    s_grid.nav[1]  = tr("Siguiente", "Next");
     for (i = 0U; i < n; i++) {
         s_grid.cel[i].l1 = paso_tabla[i].rotulo;
-        s_grid.cel[i].l2 = paso_tabla[i].desc;
+        s_grid.cel[i].l2 = paso_l2(i);
         if (i == radio_step_get()) { s_grid.marcada = (uint8_t)i; }
     }
 }
@@ -262,35 +278,56 @@ static void pasos_rellena(void)
 typedef enum {
     AJ_AGC, AJ_BW, AJ_NOTCH, AJ_SQL, AJ_NR, AJ_NB, AJ_PRE, AJ_ATT,
     AJ_TEMA, AJ_PALETA, AJ_ESTILO, AJ_VOL,
-    AJ_SUAV, AJ_PUENTE, AJ_TRAZA
+    AJ_SUAV, AJ_PUENTE, AJ_TRAZA,
+    AJ_IDIOMA
 } aj_id_t;
 
-enum { AJ_PAG_RADIO = 0, AJ_PAG_PANTALLA, AJ_PAG_ESPECTRO, AJ_PAGS };
+/*
+ * BOTH LANGUAGES, 21/11/2026 - upstream's idioma.c, which was in the
+ * image all along (ui_top.c and spectrum.c already ask it), and its T()
+ * and tr(): the English beside the Spanish, in the same place. The
+ * English is UPSTREAM'S wherever upstream has the string - k_ajustes[],
+ * k_modos[], k_temas[], the band table; the few that are this port's
+ * own (Preamplif., Envolvente, the detail pages' lines) are written here
+ * in the same style. Numbers keep upstream's format in both, as upstream
+ * decided (idioma.h: "14.090,00" either way).
+ *
+ * Idioma goes where upstream has it: its own page, Equipo / Device.
+ */
+enum { AJ_PAG_RADIO = 0, AJ_PAG_PANTALLA, AJ_PAG_ESPECTRO, AJ_PAG_EQUIPO, AJ_PAGS };
 
-static const char *const k_aj_pags[AJ_PAGS] = { "Radio", "Pantalla", "Espectro" };
+static const texto_t k_aj_pags[AJ_PAGS] = {
+    T("Radio", "Radio"), T("Pantalla", "Display"), T("Espectro", "Spectrum"),
+    T("Equipo", "Device")
+};
 
-static const struct { const char *nombre; uint8_t pag; uint8_t id; } k_aj[] = {
-    { "AGC",         AJ_PAG_RADIO,    AJ_AGC    },
-    { "Ancho (BW)",  AJ_PAG_RADIO,    AJ_BW     },
-    { "Notch",       AJ_PAG_RADIO,    AJ_NOTCH  },
-    { "Silenciador", AJ_PAG_RADIO,    AJ_SQL    },
-    { "Reducción",   AJ_PAG_RADIO,    AJ_NR     },
-    { "Blanker",     AJ_PAG_RADIO,    AJ_NB     },
-    { "Preamplif.",  AJ_PAG_RADIO,    AJ_PRE    },
-    { "Atenuador",   AJ_PAG_RADIO,    AJ_ATT    },
-    { "Tema",        AJ_PAG_PANTALLA, AJ_TEMA   },
-    { "Paleta",      AJ_PAG_PANTALLA, AJ_PALETA },
-    { "Estilo",      AJ_PAG_PANTALLA, AJ_ESTILO },
-    { "Volumen",     AJ_PAG_PANTALLA, AJ_VOL    },
-    { "Suavizado",   AJ_PAG_ESPECTRO, AJ_SUAV   },   /* upstream's place: before Puente */
-    { "Puente",      AJ_PAG_ESPECTRO, AJ_PUENTE },
-    { "Traza",       AJ_PAG_ESPECTRO, AJ_TRAZA  },
+static const struct { texto_t nombre; uint8_t pag; uint8_t id; } k_aj[] = {
+    { T("AGC", "AGC"),                 AJ_PAG_RADIO,    AJ_AGC    },
+    { T("Ancho (BW)", "Bandwidth"),    AJ_PAG_RADIO,    AJ_BW     },
+    { T("Notch", "Notch"),             AJ_PAG_RADIO,    AJ_NOTCH  },
+    { T("Silenciador", "Squelch"),     AJ_PAG_RADIO,    AJ_SQL    },
+    { T("Reducción", "Noise red."),    AJ_PAG_RADIO,    AJ_NR     },
+    { T("Blanker", "Blanker"),         AJ_PAG_RADIO,    AJ_NB     },
+    { T("Preamplif.", "Preamp"),       AJ_PAG_RADIO,    AJ_PRE    },
+    { T("Atenuador", "Attenuator"),    AJ_PAG_RADIO,    AJ_ATT    },
+    { T("Tema", "Theme"),              AJ_PAG_PANTALLA, AJ_TEMA   },
+    { T("Paleta", "Palette"),          AJ_PAG_PANTALLA, AJ_PALETA },
+    { T("Estilo", "Style"),            AJ_PAG_PANTALLA, AJ_ESTILO },
+    { T("Volumen", "Volume"),          AJ_PAG_PANTALLA, AJ_VOL    },
+    { T("Suavizado", "Smoothing"),     AJ_PAG_ESPECTRO, AJ_SUAV   },   /* upstream's place: before Puente */
+    { T("Puente", "Bridge"),           AJ_PAG_ESPECTRO, AJ_PUENTE },
+    { T("Traza", "Trace"),             AJ_PAG_ESPECTRO, AJ_TRAZA  },
+    { T("Idioma", "Language"),         AJ_PAG_EQUIPO,   AJ_IDIOMA },
 };
 #define N_AJ ((uint8_t)(sizeof k_aj / sizeof k_aj[0]))
 
 /* Upstream's k_notch_nombres[] and k_nb_nombres[] (User/main.c). */
-static const char *const k_notch_nom[4] = { "Suave", "Normal", "Fuerte", "A saco" };
-static const char *const k_nb_nom[4]    = { "Apagado", "Suave", "Medio", "Fuerte" };
+static const texto_t k_notch_nom[4] = {
+    T("Suave", "Gentle"), T("Normal", "Normal"), T("Fuerte", "Strong"), T("A saco", "Maximum")
+};
+static const texto_t k_nb_nom[4] = {
+    T("Apagado", "Off"), T("Suave", "Gentle"), T("Medio", "Medium"), T("Fuerte", "Strong")
+};
 
 /*
  * THE DETAIL PAGE - upstream's ui_det.c, for the five continuous ones:
@@ -349,27 +386,29 @@ static const char *aj_valor(uint8_t id)
     case AJ_SQL:    return num_txt(s_aj_buf, (int32_t)demod_am_get_squelch_db(), " dB");
     case AJ_AGC:    return radio_agc_text();
     case AJ_BW:     return radio_bw_text();
-    case AJ_NOTCH:  return anotch_activo() ? k_notch_nom[anotch_fuerza() & 3U]
-                                           : "Apagado";
+    case AJ_NOTCH:  return anotch_activo() ? k_notch_nom[anotch_fuerza() & 3U][idioma()]
+                                           : tr("Apagado", "Off");
     case AJ_NR:     return num_txt(s_aj_buf + 8, (int32_t)s_nr_strength, 0);
-    case AJ_NB:     return k_nb_nom[nb_get_nivel() & 3U];
-    case AJ_PRE:    return radio_preamp() ? "Activo" : "Apagado";
+    case AJ_NB:     return k_nb_nom[nb_get_nivel() & 3U][idioma()];
+    case AJ_PRE:    return radio_preamp() ? tr("Activo", "On") : tr("Apagado", "Off");
     case AJ_ATT:    return radio_att_text();
-    case AJ_TEMA:   return k_sim_temas[s_tema].nombre;
+    case AJ_TEMA:   return menu_tema_nombre();
     case AJ_PALETA: return spectrum_palette_nombre((uint8_t)spectrum_get_palette());
     case AJ_ESTILO:
         switch (spectrum_get_style()) {
-        case SPECTRUM_STYLE_HEATMAP: return "Relleno";
-        case SPECTRUM_STYLE_LINE:    return "Línea";
-        default:                     return "Contorno";
+        case SPECTRUM_STYLE_HEATMAP: return tr("Relleno", "Filled");
+        case SPECTRUM_STYLE_LINE:    return tr("Línea", "Line");
+        default:                     return tr("Contorno", "Outline");
         }
     case AJ_VOL:    return radio_vol_text();
     case AJ_SUAV: {
         static char b[8];               /* its own: a page's values all live at once */
         return num_txt(b, (int32_t)radio_suav_pct(), " %");
     }
-    case AJ_PUENTE: return spectrum_get_bridge() ? "Unido" : "Suelto";
-    case AJ_TRAZA:  return spectrum_get_heatmap_trace_white() ? "Blanca" : "Del color";
+    case AJ_PUENTE: return spectrum_get_bridge() ? tr("Unido", "Joined") : tr("Suelto", "Loose");
+    case AJ_TRAZA:  return spectrum_get_heatmap_trace_white() ? tr("Blanca", "White")
+                                                              : tr("Del color", "Palette");
+    case AJ_IDIOMA: return idioma_nombre();       /* each in its own: "English" */
     default:        return "";
     }
 }
@@ -379,7 +418,7 @@ static void ajustes_rellena(void)
     uint8_t i, n = 0U;
 
     memset(&s_cfg, 0, sizeof s_cfg);
-    for (i = 0U; i < AJ_PAGS; i++) { s_cfg.cat[i] = k_aj_pags[i]; }
+    for (i = 0U; i < AJ_PAGS; i++) { s_cfg.cat[i] = k_aj_pags[i][idioma()]; }
     s_cfg.cats    = AJ_PAGS;
     s_cfg.cat_sel = s_aj_pag;
     s_cfg.denso   = 0U;                 /* 3 x 3: name small, value big */
@@ -388,7 +427,7 @@ static void ajustes_rellena(void)
     s_cfg.pressed = -1;
     for (i = 0U; i < N_AJ && n < (uint8_t)(UIC_COLS * UIC_ROWS); i++) {
         if (k_aj[i].pag != s_aj_pag) { continue; }
-        s_cfg.cel[n].nombre = k_aj[i].nombre;
+        s_cfg.cel[n].nombre = k_aj[i].nombre[idioma()];
         s_cfg.cel[n].valor  = aj_valor(k_aj[i].id);
         s_cfg.cel[n].extra  = 0;
         s_aj_of_cel[n]      = i;
@@ -404,34 +443,35 @@ static void det_fmt(void)
     s_dst.pie = 0;
     switch (s_det) {
     case DET_SQL:
-        s_dst.titulo = "Silenciador";
+        s_dst.titulo = tr("Silenciador", "Squelch");
         s_dst.valor  = num_txt(s_det_val, (int32_t)demod_am_get_squelch_db(), " dB");
         if ((int32_t)demod_am_get_squelch_db() <= SQL_FLOOR_DB) {
-            s_dst.pie = "abajo del todo: abierto siempre";
+            s_dst.pie = tr("abajo del todo: abierto siempre", "at the bottom: always open");
         }
         break;
     case DET_NR:
-        s_dst.titulo = "Reducción de ruido";
+        s_dst.titulo = tr("Reducción de ruido", "Noise reduction");
         s_dst.valor  = num_txt(s_det_val, (int32_t)s_nr_strength, 0);
-        s_dst.pie    = nr_ss_get_enabled() ? "encendida (botón Ruido)"
-                                           : "apagada: se enciende con Ruido";
+        s_dst.pie    = nr_ss_get_enabled() ? tr("encendida (botón Ruido)", "on (Noise button)")
+                                           : tr("apagada: se enciende con Ruido",
+                                                "off: the Noise button turns it on");
         break;
     case DET_VOL:
-        s_dst.titulo = "Volumen";
+        s_dst.titulo = tr("Volumen", "Volume");
         s_dst.valor  = num_txt(s_det_val, (int32_t)radio_vol_db(), " dB");
         break;
     case DET_ATT:
-        s_dst.titulo = "Atenuador";
+        s_dst.titulo = tr("Atenuador", "Attenuator");
         s_dst.valor  = num_txt(s_det_val, -(int32_t)radio_att_db(), " dB");
-        s_dst.pie    = "reducción de ganancia del sintonizador";
+        s_dst.pie    = tr("reducción de ganancia del sintonizador", "the tuner's gain reduction");
         break;
     case DET_SUAV:
         /* The number alone: font_num_31 has no '%' (nor has upstream's
          * font_num_44, so upstream's own page draws "25 " here), so the
          * unit goes to the line under it. */
-        s_dst.titulo = "Suavizado";
+        s_dst.titulo = tr("Suavizado", "Smoothing");
         s_dst.valor  = num_txt(s_det_val, (int32_t)radio_suav_pct(), 0);
-        s_dst.pie    = "% promediado entre fotogramas";
+        s_dst.pie    = tr("% promediado entre fotogramas", "% averaged between frames");
         break;
     default:
         break;
@@ -511,6 +551,15 @@ static void aj_toca(uint8_t id)
     case AJ_ATT:   det_open(DET_ATT); return;
     case AJ_VOL:   det_open(DET_VOL); return;
     case AJ_SUAV:  det_open(DET_SUAV); return;
+    case AJ_IDIOMA:
+        /* As upstream's idioma_cambiar(): the other one, and everything
+         * painted again in it - this screen included. */
+        radio_idioma((uint8_t)(idioma() == IDIOMA_ES ? IDIOMA_EN : IDIOMA_ES));
+        console_printf("  idioma -> %s\n", idioma_nombre());
+        radio_repaint_all();
+        ajustes_rellena();
+        menu_dibuja();
+        return;
     case AJ_TEMA:
         s_tema = (uint8_t)((s_tema + 1U) % (uint8_t)SIM_TEMA_COUNT);
         g_pal  = k_sim_temas[s_tema].pal;
@@ -567,6 +616,7 @@ void menu_ajustes_get(settings_t *s)
     s->aj_suav   = (uint8_t)radio_suav_pct();
     s->has_suav  = 1U;
     s->aj_wfm_bw = (uint8_t)(demod_am_get_audio_bw() + 1U);
+    s->aj_idioma = (uint8_t)(idioma() + 1U);
 }
 
 /* What the screen shows - before the first paint, so a stored theme is
@@ -586,6 +636,9 @@ void menu_ajustes_apply_pantalla(const settings_t *s)
     }
     if (s->aj_estilo < 3U) { spectrum_set_style((spectrum_style_t)s->aj_estilo); }
     if (s->has_suav) { (void)radio_suav_set((int)s->aj_suav); }   /* clamps */
+    if (s->aj_idioma >= 1U && s->aj_idioma <= IDIOMA_N) {
+        radio_idioma((uint8_t)(s->aj_idioma - 1U));
+    }
     spectrum_set_bridge((s->aj_flags & SET_AJ_PUENTE) ? 1U : 0U);
     spectrum_set_heatmap_trace_white((s->aj_flags & SET_AJ_TRAZA_W) ? 1U : 0U);
 }
@@ -623,7 +676,10 @@ void menu_ajustes_apply_radio(const settings_t *s)
     }
 }
 
-const char *menu_tema_nombre(void) { return k_sim_temas[s_tema].nombre; }
+const char *menu_tema_nombre(void)
+{
+    return idioma() == IDIOMA_EN ? k_sim_temas[s_tema].nombre_en : k_sim_temas[s_tema].nombre;
+}
 uint32_t    menu_nr_strength(void) { return s_nr_strength; }
 
 /* ------------------------------------------------------------------ */
@@ -660,11 +716,11 @@ static uint8_t        s_fe_digits;
 static uint8_t        s_fe_point = FE_NO_POINT;  /* digits before the comma */
 static char           s_kbd_lectura[16];
 
-static const char *const k_kbd_rot[UIK_KEYS] = {
-    "1", "2", "3", "Borrar",
-    "4", "5", "6", "Vaciar",
-    "7", "8", "9", "Volver",
-    ",", "0", "kHz", "MHz",
+static const texto_t k_kbd_rot[UIK_KEYS] = {        /* upstream's k_kbd_freq_rot[] */
+    T("1","1"), T("2","2"), T("3","3"), T("Borrar","Delete"),
+    T("4","4"), T("5","5"), T("6","6"), T("Vaciar","Clear"),
+    T("7","7"), T("8","8"), T("9","9"), T("Volver","Back"),
+    T(",",","), T("0","0"), T("kHz","kHz"), T("MHz","MHz"),
 };
 static const uint8_t k_kbd_tipo[UIK_KEYS] = {
     UIK_DIGITO, UIK_DIGITO, UIK_DIGITO, UIK_BORRA,
@@ -856,12 +912,12 @@ void menu_teclado_open(void)
     s_fe_digits = 0U;
     s_fe_point  = FE_NO_POINT;
     memset(&s_kbd, 0, sizeof s_kbd);
-    s_kbd.titulo  = "Frecuencia";
-    s_kbd.pista   = "teclea y elige la unidad";
+    s_kbd.titulo  = tr("Frecuencia", "Frequency");
+    s_kbd.pista   = tr("teclea y elige la unidad", "type it and pick the unit");
     s_kbd.pressed = -1;
     s_kbd.cursor  = -1;
     for (i = 0U; i < UIK_KEYS; i++) {
-        s_kbd.tecla[i] = k_kbd_rot[i];
+        s_kbd.tecla[i] = k_kbd_rot[i][idioma()];
         s_kbd.tipo[i]  = k_kbd_tipo[i];
     }
     kbd_lectura();
@@ -982,11 +1038,11 @@ static void elige(int8_t h)
         int8_t  cur = s_cfg.cursor;
 
         aj_toca(id);
-        if (id == AJ_TEMA || s_det != DET_NINGUNO) { return; }  /* drawn already */
+        if (id == AJ_TEMA || id == AJ_IDIOMA || s_det != DET_NINGUNO) { return; }  /* drawn already */
         s_cfg.cel[h].valor = aj_valor(id);
         s_cfg.cursor = cur;
         ui_cfg_draw_one(&s_cfg, h);
-        console_printf("  ajuste: %s -> %s\n", k_aj[s_aj_of_cel[h]].nombre,
+        console_printf("  ajuste: %s -> %s\n", k_aj[s_aj_of_cel[h]].nombre[IDIOMA_ES],
                        s_cfg.cel[h].valor);
         return;
     }

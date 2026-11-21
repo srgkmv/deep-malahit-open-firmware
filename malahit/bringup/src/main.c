@@ -52,6 +52,7 @@
 #include "demod.h"        /* upstream's demod_am.c, A/B against am.c */
 #include "grab.h"         /* screenshots off the panel, over SWD */
 #include "menus.h"        /* step 9: the mode, band and step screens */
+#include "idioma.h"       /* ../../User - upstream: tr(), T(), idioma() */
 #include "bandas_tabla.h" /* GENERATED from ../../User/main.c: the steps */
 #include "demod_am.h"     /* ../../User - upstream: DEMOD_MODE_*, for the menus */
 #include "nr_ss.h"        /* ../../User - upstream: the Ruido button */
@@ -5697,8 +5698,13 @@ static void ui_fmt_uptime(uint32_t ms, char *out)
  * that sim/principal.c lists. Nothing behind them yet: they are drawn
  * and they are hit-tested, which is what tells us the geometry at 480
  * px is reachable with a finger. */
-static const char *const k_act_names[UI_ACT_N] = {
-    "Bandas", "Modo", "Paso", "Volumen", "Ruido", "Ajustes"
+/* Upstream's k_act_slots[] names, T(es, en) - except the first: upstream
+ * has Func there, this bar has Bandas. Resolved in act_values(), on
+ * every draw of the bar, so a change of language needs no list of its
+ * own to refresh. */
+static const texto_t k_act_names[UI_ACT_N] = {
+    T("Bandas", "Bands"), T("Modo", "Mode"), T("Paso", "Step"),
+    T("Volumen", "Volume"), T("Ruido", "Noise"), T("Ajustes", "Settings")
 };
 
 static void ui_init_state(uint32_t tuned_hz)
@@ -5712,7 +5718,7 @@ static void ui_init_state(uint32_t tuned_hz)
     s_top.freq       = s_freq_txt;
     s_top.freq_digit = -1;          /* nothing is tuning: no cursor */
     s_top.mode       = "AM";
-    s_top.band       = "Bandas";    /* no band table in this image */
+    s_top.band       = tr("Bandas", "Bands");   /* band_pill_sync() sets it */
     s_top.en_banda   = 0U;
     s_top.clock      = s_clock_txt;
     /*
@@ -5748,7 +5754,7 @@ static void ui_init_state(uint32_t tuned_hz)
     s_top.knob_value = s_knob2_txt;
 
     for (i = 0U; i < (uint32_t)UI_ACT_N; i++) {
-        s_act.name[i]   = k_act_names[i];
+        s_act.name[i]   = k_act_names[i][idioma()];
         s_act.value[i]  = 0;
         s_act.active[i] = 0U;
     }
@@ -5904,7 +5910,8 @@ static int settings_same(const settings_t *a, const settings_t *b)
         && a->aj_flags == b->aj_flags && a->aj_tema == b->aj_tema
         && a->aj_paleta == b->aj_paleta && a->aj_bw == b->aj_bw
         && a->aj_sql == b->aj_sql && a->aj_nr == b->aj_nr
-        && a->aj_suav == b->aj_suav && a->aj_wfm_bw == b->aj_wfm_bw;
+        && a->aj_suav == b->aj_suav && a->aj_wfm_bw == b->aj_wfm_bw
+        && a->aj_idioma == b->aj_idioma;
 }
 
 static void settings_now(settings_t *out)
@@ -6699,7 +6706,7 @@ static void band_pill_sync(void)
 
     if (n == s_band_name) { return; }
     s_band_name    = n;
-    s_top.band     = n ? n : "Bandas";
+    s_top.band     = n ? n : tr("Bandas", "Bands");
     s_top.en_banda = (uint8_t)(n != (const char *)0);
     if (menu_open_id() == MENU_NONE) {
         ui_top_draw(&s_top);
@@ -6800,12 +6807,14 @@ void radio_step_set(uint32_t i)
  */
 static void act_values(void);
 
-static const char *const k_agc_long[4] = { "Sin AGC", "Lenta", "Media", "Rápida" };
+static const texto_t k_agc_long[4] = {         /* upstream's k_agc_nombres[] */
+    T("Sin AGC", "No AGC"), T("Lenta", "Slow"), T("Media", "Medium"), T("Rápida", "Fast")
+};
 
 const char *radio_agc_text(void)
 {
     agc_profile_t p = demod_am_get_agc_profile();
-    return k_agc_long[(p <= AGC_PROFILE_FAST) ? (uint32_t)p : 0U];
+    return k_agc_long[(p <= AGC_PROFILE_FAST) ? (uint32_t)p : 0U][idioma()];
 }
 void        radio_agc_cycle(void)  { agc_cycle(); }
 const char *radio_bw_text(void)    { top_sync_chips(); return s_top_bw; }
@@ -6902,6 +6911,23 @@ void radio_repaint_all(void)
     spectrum_invalida();
 }
 
+/*
+ * A NEW LANGUAGE - the settings screen's Idioma, and the FRAM at boot.
+ * What is resolved at draw time follows by itself (ui_top.c's and
+ * spectrum.c's own tr(), the bar's names in act_values()); the band pill
+ * holds a pointer to a name, so it is looked up again; then everything
+ * is painted, as for a theme. The caller redraws its menu on top.
+ */
+void radio_idioma(uint8_t v)
+{
+    idioma_pon(v);
+    s_band_name = (const char *)1;      /* force band_pill_sync() to set it */
+    band_pill_sync();
+    top_sync_chips();
+    s_top.mode = radio_mode_name(radio_mode_get());
+    act_values();       /* the bar's names: ui_paint_all() draws s_act as it is */
+}
+
 void radio_screen_restore(void)
 {
     /* The menu painted over the trace, the waterfall, the ruler and the
@@ -6959,7 +6985,8 @@ static void act_values(void)
     s_act.value[1]  = radio_mode_name(radio_mode_get());
     s_act.value[2]  = s_act_step;
     s_act.value[3]  = s_act_vol;
-    s_act.value[4]  = nr_ss_get_enabled() ? "activo" : "apagado";
+    s_act.value[4]  = nr_ss_get_enabled() ? tr("activo", "on") : tr("apagado", "off");
+    for (i = 0U; i < (uint32_t)UI_ACT_N; i++) { s_act.name[i] = k_act_names[i][idioma()]; }
     s_act.value[5]  = 0;
     s_act.active[0] = (uint8_t)(m == MENU_BANDAS);
     s_act.active[1] = (uint8_t)(m == MENU_MODO);
@@ -7178,7 +7205,7 @@ static void ui_touch(void)
              * runs every frame, stops short of the pill and so cannot
              * rub this out.
              */
-            s_top.knob_name  = que ? "Tocado" : "Sin asignar";
+            s_top.knob_name  = que ? tr("Tocado", "Touched") : tr("Sin asignar", "Unassigned");
             s_top.knob_value = que;
             ui_top_draw_status(&s_top);
         }

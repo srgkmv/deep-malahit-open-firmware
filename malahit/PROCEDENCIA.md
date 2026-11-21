@@ -152,6 +152,13 @@ and each is recorded here so the divergence is never a surprise:
   HEAD's file against the new one) identical, 544 lines.**
   `deepsdr-ui/gfx2/` copies synced, `copias_check.py` clean.
 
+- `deepsdr-ui/tools/gen_temas.py` — 21/11/2026, for the port's English:
+  it read k_temas[]'s `T("es", "en")` and kept only the Spanish; it now
+  emits the English name and description too, as two fields appended at
+  the END of `sim_tema_t`, so every existing user (`principal.c`,
+  `espectro_tema.c`, which name `.nombre`, `.desc`, `.pal`, `.wf`) is
+  untouched. `sim/temas_tabla.h` regenerated with it.
+
 `User/encoder.c` is also **compiled twice**, the second time with its
 public names renamed through `-D` so the board's second encoder gets its
 own copy of the file's statics. That is not a modification — the source

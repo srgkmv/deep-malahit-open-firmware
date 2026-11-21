@@ -125,7 +125,8 @@ _Static_assert(sizeof(slot_t) == SLOT_BYTES, "the extension fills the slot");
  *  20  SET_AJ_* flags  21 theme  22 waterfall palette  23 filter presets
  *  24  squelch (dB + 10) / 2   25 NR strength / 16   26 smoothing, %
  *  27  WFM audio low-pass: upstream's audio_bw_t + 1, 0 = not stored
- *  28..59  zero - room. A field added there reads 0 from a record
+ *  28  language: IDIOMA_ES / IDIOMA_EN + 1, 0 = not stored (Spanish)
+ *  29..59  zero - room. A field added there reads 0 from a record
  *          written before it, so it must mean "not stored" at 0, or
  *          the version goes to 5 (the owner's word allows it).
  *  60  CRC-32 of bytes 0-59
@@ -159,7 +160,8 @@ typedef struct {
     uint8_t  nr;
     uint8_t  suav;
     uint8_t  wfm_bw;        /* audio_bw_t + 1; 0 = written before it */
-    uint8_t  rsv[32];
+    uint8_t  idioma;        /* IDIOMA_* + 1; 0 = written before it */
+    uint8_t  rsv[31];
     uint32_t crc;
 } rec4_t;
 
@@ -338,6 +340,7 @@ int settings_load(settings_t *out)
     out->aj_nr     = p->nr;
     out->aj_suav   = p->suav;
     out->aj_wfm_bw = p->wfm_bw;
+    out->aj_idioma = p->idioma;
     out->has_rf = out->has_mode = out->has_aj = 1U;
     out->has_sqlnr = out->has_suav = 1U;
     return 1;
@@ -368,6 +371,7 @@ int settings_save(const settings_t *s)
     w.nr       = s->aj_nr;
     w.suav     = s->aj_suav;
     w.wfm_bw   = s->aj_wfm_bw;
+    w.idioma   = s->aj_idioma;
     w.crc      = crc32_of((const uint8_t *)&w, V4_BYTES - 4U);
 
     fram_write(v4_addr(slot), (const uint8_t *)&w, sizeof w);
