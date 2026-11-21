@@ -1014,6 +1014,16 @@ Each step should end with something visible on the radio.
    upstream's three quick filters, both reading the demodulator's real
    values; the band pill opens the band screen. Upstream's demodulator
    is now what boots.
+28. **The SAI rings in D2 SRAM.** *21/11/2026, from RAM* - the two
+   64 kB rings out of AXI SRAM into SRAM1 (`.d2sram`, NOLOAD, same
+   address in both images; `sai1_dma_start()` switches the SRAMs'
+   clocks on - they reset off, and the power-off turns them off again -
+   and zeroes the rings as it always did). The RAM image goes from 484
+   to 353 kB of AXI, the flash image's RAM from 331 to 200. Nothing got
+   slower: the block hook 11.8 ms in LSB (11.9 before), worst upstream
+   call 750 us, the loop's copy of a half 414 us (406), frame 42.7 ms,
+   no overrun. And the SAI DMA error count reads 0 where it had read 1
+   on every run since the panel DMA - not explained, recorded.
    Checked with nobody at the glass: `ui_tap` injects a finger over SWD
    and **`tools/grab.py` reads the panel's own GRAM back** (RAMRD over
    SPI3's MISO, one dummy byte, 9 s a screen) - every screen above was

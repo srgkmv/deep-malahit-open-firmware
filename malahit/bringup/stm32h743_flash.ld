@@ -39,6 +39,7 @@ MEMORY
     FLASH   (rx)  : ORIGIN = 0x08000000, LENGTH = 1024K     /* bank 1 only */
     AXISRAM (rwx) : ORIGIN = 0x24000000, LENGTH = 512K
     DTCM    (rw)  : ORIGIN = 0x20000000, LENGTH = 128K
+    D2SRAM  (rw)  : ORIGIN = 0x30000000, LENGTH = 288K    /* SRAM1-3 */
 }
 
 /*
@@ -134,6 +135,24 @@ SECTIONS
         . = ALIGN(4);
         _etcmram = .;
     } >DTCM
+
+    /*
+     * THE SAI RINGS IN D2 SRAM - 21/11/2026. 128 kB that DMA1 has to
+     * reach and nothing else needs to be fast, which is exactly what
+     * SRAM1-3 are for: in the DMA's own domain, and outside the 512 kB
+     * of AXI SRAM that the RAM image (code included) has to fit in.
+     * NOLOAD and not zeroed by the startup: sai1_dma_start() zeroes the
+     * rings itself, after switching the SRAMs' clocks on (they reset
+     * off). Same address in the RAM and the flash image, so a stream an
+     * old image left running writes into rings, not into the new image.
+     */
+    .d2sram (NOLOAD) :
+    {
+        . = ALIGN(32);
+        *(.d2sram)
+        *(.d2sram*)
+        . = ALIGN(4);
+    } >D2SRAM
 
     ._user_heap_stack (NOLOAD) :
     {

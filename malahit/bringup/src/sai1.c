@@ -894,8 +894,31 @@ void sai1_set_block_hook(sai1_block_hook_t fn)
     __set_PRIMASK(primask);
 }
 
-static int16_t  s_rx_ring[2U * SAI1_RX_HALF_MAX * 2U];
-static int16_t  s_tx_ring[2U * SAI1_TX_HALF_MAX * 2U];
+/*
+ * IN D2 SRAM SINCE 21/11/2026, not in .bss: 128 kB that AXI SRAM could
+ * no longer spare once upstream's menus and demodulator were in the RAM
+ * image (484 kB of 512). DMA1 lives in D2, so this is the shorter path
+ * for it anyway. The linker scripts place .d2sram; rings_clock_on()
+ * below is why the first touch is legal.
+ */
+#define RING __attribute__((section(".d2sram"), aligned(32)))
+static int16_t  s_rx_ring[2U * SAI1_RX_HALF_MAX * 2U] RING;
+static int16_t  s_tx_ring[2U * SAI1_TX_HALF_MAX * 2U] RING;
+
+/*
+ * SRAM1-3 come out of reset with their clocks OFF, and boot.c's power-off
+ * turns them off again (D2 cannot enter standby with an enable bit set).
+ * An access to an unclocked SRAM is a bus fault for the core and a
+ * transfer error for the DMA, so this goes before the first one. Read
+ * back for the same reason as every enable in this port: the posted
+ * write must land before the next access.
+ */
+static void rings_clock_on(void)
+{
+    RCC->AHB2ENR |= RCC_AHB2ENR_SRAM1EN | RCC_AHB2ENR_SRAM2EN
+                  | RCC_AHB2ENR_SRAM3EN;
+    (void)RCC->AHB2ENR;
+}
 
 static uint32_t s_rx_half;          /* frames per half, as armed */
 static uint32_t s_tx_half;
@@ -1198,6 +1221,7 @@ int sai1_dma_start(uint32_t rx_frames, uint32_t tx_frames)
      * a half before the stream has filled one gets zeros rather than a
      * convincing-looking measurement of the last run.
      */
+    rings_clock_on();
     for (uint32_t i = 0; i < (2U * tx_frames * 2U); i++) { s_tx_ring[i] = 0; }
     for (uint32_t i = 0; i < (2U * rx_frames * 2U); i++) { s_rx_ring[i] = 0; }
 

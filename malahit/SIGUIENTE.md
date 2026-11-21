@@ -26,11 +26,18 @@ checked from RAM on the radio, and NOT committed yet - the owner asks.
   `ui_grid.h/.c`, `ui_cfg.h/.c`; nine DEEPSDR renders byte-identical
   before/after (`PROCEDENCIA.md`).
 
-**Memory is the next wall: the RAM image is 484 / 512 kB of AXI.** The
-lever is known and not pulled: the SAI rings (128 kB, `sai1.c`) into D2
-SRAM1-2, which DMA1 reaches - needs the SRAM clock bits and a careful
-look at `dma_reachable()`. Also cheap: `ui_top.o` still carries its own
-static copies of font_ui_10/10b (8 kB) - `src/fonts_menu.c` shows how.
+**Memory: the SAI rings went to D2 SRAM** (`PORTING.md` step 28): RAM
+image 484 -> 353 kB of AXI, nothing slower, DMA errors 0. D2 still has
+160 kB free (SRAM2 half, SRAM3) and the DTCM 50 kB. Still cheap:
+`ui_top.o` carries its own static copies of font_ui_10/10b (8 kB) -
+`src/fonts_menu.c` shows how to drop them.
+
+**Flash is behind:** it holds `41a0523`, before steps 8-9 and the
+rings. A RAM image loaded over it inherits that image's DMA writing
+into AXI at the OLD ring addresses until our sai1 re-arms - harmless so
+far, and gone once the flash carries the D2 layout too (both images
+then put the rings at the same D2 address). Writing flash is the
+owner's DFU, two button presses.
 
 **Open in step 9:** Ajustes (no settings screen yet); the frequency
 keypad (`ui_kbd.c`, tap on the frequency); WFM (upstream's WFM wants the
