@@ -4,7 +4,53 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 21/11/2026, night: steps 8, 9 and 28 in git and IN FLASH
+## START HERE — end of the 21/11/2026 night session; next: the rest of step 9
+
+**In flash: `df61818`** - `build_flash/bringup.bin`, 169 248 bytes,
+sha256 `077fda85…`, SELFTEST 0, clean build; written over DFU without
+`:leave`, read back identical, left with the 4-byte `:leave` upload.
+Everything is pushed. The owner's state on the radio: 10.000 MHz, AM,
+1 kHz step, -46 dB, ATT 59, theme Oscura, AGC Media, BW 0-4,0k, notch
+and blanker off, squelch 0 dB, NR off with strength 48.
+
+**What the session did** (`PORTING.md` steps 26-32, each with its
+measurements):
+
+| step | what |
+|---|---|
+| 26 | upstream's demod_am.c + 9 modules beside am.c; .tcmram in the DTCM |
+| 27 | the action bar: Modo, Bandas, Paso on upstream's ui_cfg/ui_grid at 480x320; knob cursor; AGC/BW chips; upstream's demodulator boots |
+| 28 | the SAI rings in D2 SRAM: RAM image 484 -> 353 kB of AXI |
+| 29 | the mode in the FRAM (record v3); upstream's 11 steps GENERATED from its main.c; a band brings its step; band pill follows the dial |
+| 30-31 | Ajustes (13 settings, upstream's pages and names, 18 generated themes) kept in the FRAM as an extension older firmware does not see |
+| 32 | ui_det.c: Silenciador, Reducción (strength), Volumen, Atenuador; the NR strength was never set (0 = bypass) - 48 now |
+
+**Next session - what is left of step 9:**
+
+1. **The frequency keypad** - `ui_kbd.c`, opened by a tap on the
+   frequency (`ui_top_freq_hit()` already answers). Same job as ui_det:
+   its geometry is 800 px literals; `#ifndef` them with the old values,
+   prove the DEEPSDR renders identical (`out/kbd 0` and `out/kbd 1`:
+   render them before the edit, keep the PPMs, compare after), lay it
+   out in `deepsdr-ui make malahit-menus`,
+   then `src/menus.c` + `radio_band_go()`-style tuning.
+2. **WFM** - upstream's WFM hook takes 512 frames at 192 kHz, exactly
+   this port's chunk, but demodulates the station at 0 Hz while this
+   port parks the LO 12 kHz below the dial (am.h). Either tune WFM with
+   the LO on the dial, or mix it - decide first, with the owner.
+3. **Smoothing** (upstream's third continuous setting) - the port's
+   spectrum smoothing API first.
+
+**How this session worked, and it is worth keeping:** nobody needs to be
+at the bench to test the UI - `tools/grab.py` reads the panel's GRAM
+(9 s a screenshot) and `swd-call ... ui_tap x y` presses it; check each
+call printed `stopped at` (WORKING.md). Every upstream UI edit was
+proven with before/after renders of the DEEPSDR screens, byte for byte.
+Every FRAM format change was proven against the OLDER firmware too:
+build the flash's commit in a `git worktree`, load it over the new
+record, read its boot line, load the new one back.
+
+## 21/11/2026, night: steps 8, 9 and 28 in git and IN FLASH
 
 **In flash: `93eaba6` since later the same night - see below.** Before
 that, `4d9848a` - `build_flash/bringup.bin`, 153 544 bytes,
