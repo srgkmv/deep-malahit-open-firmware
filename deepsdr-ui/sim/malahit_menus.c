@@ -213,6 +213,45 @@ static void ajustes(void)
     escribe("ajustes");
 }
 
+/*
+ * DETALLE: ui_det.c, el "-" y el "+" a los lados del valor. El valor va en
+ * font_num_31 (la de la frecuencia: MALAHIT_FONTS_TOP la pone en lugar de
+ * font_num_44) y la linea de debajo en font_ui_10; se miden los textos que
+ * pone src/menus.c contra el hueco entre los dos botones.
+ */
+#include "ui_det.h"
+extern const gfx2_font_t font_num_31;
+
+static void detalle(void)
+{
+    static const char *const valores[] = { "-10 dB", "60 dB", "4080", "-60 dB" };
+    static const char *const pies[] = {
+        "abajo del todo: abierto siempre", "encendida (botón Ruido)",
+        "apagada: se enciende con Ruido",
+        "reducción de ganancia del sintonizador" };
+    int16_t hueco = (int16_t)(UID_BTN_X1 - UID_VAL_GAP
+                              - (UID_BTN_X0 + UID_BTN_W + UID_VAL_GAP));
+    ui_det_state_t st;
+    unsigned i;
+
+    for (i = 0; i < sizeof valores / sizeof valores[0]; i++) {
+        cabe("valor", valores[i], &font_num_31, hueco);
+    }
+    for (i = 0; i < sizeof pies / sizeof pies[0]; i++) {
+        cabe("pie", pies[i], &font_ui_10, hueco);
+    }
+    cabe("titulo", "Reducción de ruido", &font_ui_11, GFX2_W);
+
+    memset(&st, 0, sizeof st);
+    st.titulo = "Reducción de ruido";
+    st.valor  = "48";
+    st.pie    = pies[2];
+    st.pressed = -1; st.preset_on = -1;
+    fondo_principal();
+    ui_det_draw(&st);
+    escribe("detalle");
+}
+
 int main(void)
 {
     printf("menus del Malahit, 480 x 320\n");
@@ -220,6 +259,7 @@ int main(void)
     bandas();
     pasos();
     ajustes();
+    detalle();
     if (ui_grid_recortes()) {
         printf("  ui_grid: %u renglones recortados\n",
                (unsigned)ui_grid_recortes());

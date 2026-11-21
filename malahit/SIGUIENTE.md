@@ -73,9 +73,13 @@ generated from upstream, stored as an extension of the v3 record that
 the flash's older firmware does not see - checked on the radio by
 loading 93eaba6 over it.
 
-**Open in step 9:** ui_det.c for the continuous ones
-(squelch, NR strength, smoothing - its geometry is 800-px literals, the
-same #ifndef job as ui_cfg); the frequency keypad (`ui_kbd.c`, tap on
+**ui_det.c too** (`PORTING.md` step 32): Silenciador, Reducción
+(strength), Volumen and Atenuador on upstream's detail page, squelch and
+NR strength in the FRAM. The NR strength had never been set (0 = bypass)
+- the Ruido button did nothing until this; 48 now.
+
+**Open in step 9:** smoothing (the third continuous one upstream has -
+the port's waterfall/trace smoothing API first); the frequency keypad (`ui_kbd.c`, tap on
 the frequency); WFM (upstream's WFM wants the station at 0 Hz, this port
 keeps it 12 kHz off the LO).
 

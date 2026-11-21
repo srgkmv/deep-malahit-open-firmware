@@ -1068,6 +1068,28 @@ Each step should end with something visible on the radio.
    before the first paint, the demodulator after demod_am_init() (which
    resets the notch and the NR) - and then the baseline is taken, so a
    boot does not save back what it read.
+32. **ui_det.c: the continuous settings, and an NR that now does
+   something.** *21/11/2026, from RAM* - upstream's detail page ("-" and
+   "+" either side of the value, the knob turning it, "Volver" or the
+   knob's press back to the grid) at 480 x 320: its geometry and its
+   literals `#ifndef` upstream, DEEPSDR renders byte-identical
+   (`detalle`, and `detreal` with and without the preset row against
+   HEAD's ui_det.c), the value in font_num_31 (font_num_44's own
+   character set). Four settings open it: Silenciador (new - upstream's
+   -10..60 dB in 2 dB), Reducción (the strength; the Ruido button stays
+   on/off), Volumen and Atenuador - those two now through one setter in
+   main.c that the small knob uses too. **Found on the way: the port
+   never set the NR strength**, and nr_ss_init() leaves 0, which nr_ss.c
+   documents as a transparent bypass - so the Ruido button had switched
+   on an NR that did nothing. It boots with 48 now (upstream's 50 on the
+   16-step grid it is stored on). Squelch and strength are in the FRAM:
+   the base record's two spare bytes, trusted only under a flag bit in
+   the extension (an extension written before them covers them as
+   zeros, which is how 0 came back as a "stored" strength in the first
+   try). The extension's version stays 1 - 705749d accepts only 1 - and
+   that was checked on the radio: 705749d loaded over the new record
+   came up with its theme; the new image after it, with squelch 4 dB
+   and NR 80.
    Checked with nobody at the glass: `ui_tap` injects a finger over SWD
    and **`tools/grab.py` reads the panel's own GRAM back** (RAMRD over
    SPI3's MISO, one dummy byte, 9 s a screen) - every screen above was

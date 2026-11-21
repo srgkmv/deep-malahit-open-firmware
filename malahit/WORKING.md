@@ -67,7 +67,7 @@ Other useful commands, all taking `ADAPTER=ft2232d`:
 | `swd.sh clean` | quieten a crashed core |
 | `swd-call.sh <elf> <fn> [args]` | call one firmware function on the RUNNING radio, from the display loop, and let it carry on |
 | `tools/grab.py <elf> out.png` | **a screenshot of the panel itself**: its GRAM read back over SPI3's MISO (RAMRD, one leading dummy byte), 9 s a screen. What the glass holds, not what a PNG predicts |
-| `swd-call.sh <elf> ui_tap <x> <y>` | a finger on the glass for one poll, through the same `ui_touch()` as a real one: with `grab.py`, the UI can be checked with nobody at the bench |
+| `swd-call.sh <elf> ui_tap <x> <y>` | a finger on the glass for one poll, through the same `ui_touch()` as a real one: with `grab.py`, the UI can be checked with nobody at the bench. **Check that it printed `stopped at`**: straight after another OpenOCD session it can fail to connect, and a script that throws its output away has then tested nothing - three taps "did nothing" on 21/11/2026 for exactly that reason. Negative arguments as `0xFFFFFFFE`, not `-2` |
 | `swd.sh -c init -c halt -c "mdw <addr> 1"` | read anything |
 
 ---

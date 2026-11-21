@@ -14,6 +14,7 @@
 #include "nr_ss.h"         /* ../../User - the noise reduction */
 #include "palette.h"       /* g_pal */
 #include "settings.h"      /* src/ - the FRAM record, not upstream's */
+#include "ui_det.h"        /* ../../User - upstream: one continuous setting */
 
 /* What ui_cfg.c draws the range line in, defined once in fonts_menu.c. */
 extern const gfx2_font_t font_ui_10;
@@ -255,7 +256,7 @@ static void pasos_rellena(void)
  * it over instead. Not kept in the FRAM yet.
  */
 typedef enum {
-    AJ_AGC, AJ_BW, AJ_NOTCH, AJ_NR, AJ_NB, AJ_PRE, AJ_ATT,
+    AJ_AGC, AJ_BW, AJ_NOTCH, AJ_SQL, AJ_NR, AJ_NB, AJ_PRE, AJ_ATT,
     AJ_TEMA, AJ_PALETA, AJ_ESTILO, AJ_VOL,
     AJ_PUENTE, AJ_TRAZA
 } aj_id_t;
@@ -268,6 +269,7 @@ static const struct { const char *nombre; uint8_t pag; uint8_t id; } k_aj[] = {
     { "AGC",         AJ_PAG_RADIO,    AJ_AGC    },
     { "Ancho (BW)",  AJ_PAG_RADIO,    AJ_BW     },
     { "Notch",       AJ_PAG_RADIO,    AJ_NOTCH  },
+    { "Silenciador", AJ_PAG_RADIO,    AJ_SQL    },
     { "Reducción",   AJ_PAG_RADIO,    AJ_NR     },
     { "Blanker",     AJ_PAG_RADIO,    AJ_NB     },
     { "Preamplif.",  AJ_PAG_RADIO,    AJ_PRE    },
@@ -285,18 +287,65 @@ static const struct { const char *nombre; uint8_t pag; uint8_t id; } k_aj[] = {
 static const char *const k_notch_nom[4] = { "Suave", "Normal", "Fuerte", "A saco" };
 static const char *const k_nb_nom[4]    = { "Apagado", "Suave", "Medio", "Fuerte" };
 
+/*
+ * THE DETAIL PAGE - upstream's ui_det.c, for the four continuous ones:
+ * "-" and "+" either side of the value, the knob turning it, the knob's
+ * press or "Volver" back to the grid. Opened from a cell, and part of the
+ * settings screen: the Ajustes button stays lit, and pressing it from
+ * here goes back to the grid, as upstream's does.
+ *
+ * Squelch: upstream's -10..60 dB in 2 dB steps (SQUELCH_DB_* in its
+ * main.c). NR strength: 0..4080 in 16s - upstream's 0..4095 in 10s,
+ * moved onto the grid the FRAM stores it on (settings.h).
+ */
+enum { DET_NINGUNO = 0, DET_SQL, DET_NR, DET_VOL, DET_ATT };
+
+#define SQL_FLOOR_DB   (-10)
+#define SQL_CEIL_DB      60
+#define SQL_STEP_DB       2
+#define NR_STEP          16U
+#define NR_MAX         4080U
+
+static uint8_t        s_det;             /* DET_*: which one is up, 0 = grid */
+static ui_det_state_t s_dst;
+static char           s_det_val[16];
+/*
+ * Upstream boots with 50 (s_nr_strength in its main.c); nr_ss_init()
+ * leaves 0, which nr_ss.c documents as a transparent bypass. This port
+ * never set it - so until now the Ruido button switched on an NR that
+ * did nothing. 48 is 50 on the 16 grid.
+ */
+static uint16_t       s_nr_strength = 48U;
+
 static uint8_t s_aj_pag;
 static uint8_t s_aj_of_cel[UIC_CELLS];
 static uint8_t s_tema;                   /* index into k_sim_temas[]; 0 at boot */
 
+static char s_aj_buf[16];
+
+/* "-10 dB", "48": a signed number and an optional unit. */
+static const char *num_txt(char *o, int32_t v, const char *unit)
+{
+    char     d[10];
+    uint32_t n = (uint32_t)((v < 0) ? -v : v), k = 0U, i = 0U;
+
+    if (v < 0) { o[i++] = '-'; }
+    do { d[k++] = (char)('0' + n % 10U); n /= 10U; } while (n);
+    while (k) { o[i++] = d[--k]; }
+    while (unit && *unit) { o[i++] = *unit++; }
+    o[i] = '\0';
+    return o;
+}
+
 static const char *aj_valor(uint8_t id)
 {
     switch (id) {
+    case AJ_SQL:    return num_txt(s_aj_buf, (int32_t)demod_am_get_squelch_db(), " dB");
     case AJ_AGC:    return radio_agc_text();
     case AJ_BW:     return radio_bw_text();
     case AJ_NOTCH:  return anotch_activo() ? k_notch_nom[anotch_fuerza() & 3U]
                                            : "Apagado";
-    case AJ_NR:     return nr_ss_get_enabled() ? "Activo" : "Apagado";
+    case AJ_NR:     return num_txt(s_aj_buf + 8, (int32_t)s_nr_strength, 0);
     case AJ_NB:     return k_nb_nom[nb_get_nivel() & 3U];
     case AJ_PRE:    return radio_preamp() ? "Activo" : "Apagado";
     case AJ_ATT:    return radio_att_text();
@@ -340,9 +389,95 @@ static void ajustes_rellena(void)
 
 static void menu_dibuja(void);
 
+static void det_fmt(void)
+{
+    s_dst.pie = 0;
+    switch (s_det) {
+    case DET_SQL:
+        s_dst.titulo = "Silenciador";
+        s_dst.valor  = num_txt(s_det_val, (int32_t)demod_am_get_squelch_db(), " dB");
+        if ((int32_t)demod_am_get_squelch_db() <= SQL_FLOOR_DB) {
+            s_dst.pie = "abajo del todo: abierto siempre";
+        }
+        break;
+    case DET_NR:
+        s_dst.titulo = "Reducción de ruido";
+        s_dst.valor  = num_txt(s_det_val, (int32_t)s_nr_strength, 0);
+        s_dst.pie    = nr_ss_get_enabled() ? "encendida (botón Ruido)"
+                                           : "apagada: se enciende con Ruido";
+        break;
+    case DET_VOL:
+        s_dst.titulo = "Volumen";
+        s_dst.valor  = num_txt(s_det_val, (int32_t)radio_vol_db(), " dB");
+        break;
+    case DET_ATT:
+        s_dst.titulo = "Atenuador";
+        s_dst.valor  = num_txt(s_det_val, -(int32_t)radio_att_db(), " dB");
+        s_dst.pie    = "reducción de ganancia del sintonizador";
+        break;
+    default:
+        break;
+    }
+}
+
+/* One knob detent or one press of "-"/"+": d = -1 or +1, or more. */
+static void det_add(int32_t d)
+{
+    switch (s_det) {
+    case DET_SQL: {
+        int32_t v = (int32_t)demod_am_get_squelch_db() + d * SQL_STEP_DB;
+
+        if (v < SQL_FLOOR_DB) { v = SQL_FLOOR_DB; }
+        if (v > SQL_CEIL_DB)  { v = SQL_CEIL_DB; }
+        demod_am_set_squelch_db((float)v);
+        break;
+    }
+    case DET_NR: {
+        int32_t v = (int32_t)s_nr_strength + d * (int32_t)NR_STEP;
+
+        if (v < 0)               { v = 0; }
+        if (v > (int32_t)NR_MAX) { v = (int32_t)NR_MAX; }
+        s_nr_strength = (uint16_t)v;
+        nr_ss_set_strength(s_nr_strength);
+        break;
+    }
+    case DET_VOL: (void)radio_vol_set(radio_vol_db() + (int)d); break;
+    /* "+" is more gain, so the shown "-59 dB" goes UP: less reduction. */
+    case DET_ATT: (void)radio_att_set(radio_att_db() - (int)d); break;
+    default: break;
+    }
+    det_fmt();
+    ui_det_draw_valor(&s_dst);
+}
+
+static void det_open(uint8_t which)
+{
+    memset(&s_dst, 0, sizeof s_dst);
+    s_dst.pressed   = -1;
+    s_dst.preset_on = -1;
+    s_det = which;
+    det_fmt();
+    ui_det_draw(&s_dst);
+}
+
+static void det_close(void)
+{
+    s_det = DET_NINGUNO;
+    ajustes_rellena();
+    ui_cfg_draw(&s_cfg);
+}
+
+void menu_refresh_det(void)
+{
+    if (s_open != MENU_AJUSTES || s_det == DET_NINGUNO) { return; }
+    det_fmt();
+    ui_det_draw_valor(&s_dst);
+}
+
 static void aj_toca(uint8_t id)
 {
     switch (id) {
+    case AJ_SQL:   det_open(DET_SQL); return;
     case AJ_AGC:   radio_agc_cycle(); break;
     case AJ_BW:    radio_bw_cycle();  break;
     case AJ_NOTCH:
@@ -351,11 +486,11 @@ static void aj_toca(uint8_t id)
         else if (anotch_fuerza() < 3U)   { anotch_set_fuerza((uint8_t)(anotch_fuerza() + 1U)); }
         else                             { anotch_set_activo(0U); }
         break;
-    case AJ_NR:    nr_ss_set_enabled(nr_ss_get_enabled() ? 0U : 1U); radio_act_refresh(); break;
+    case AJ_NR:    det_open(DET_NR); return;
     case AJ_NB:    nb_set_nivel((uint8_t)((nb_get_nivel() + 1U) & 3U)); break;
     case AJ_PRE:   radio_preamp_toggle(); break;
-    case AJ_ATT:   radio_knob2_rf(1); break;
-    case AJ_VOL:   radio_knob2_rf(0); break;
+    case AJ_ATT:   det_open(DET_ATT); return;
+    case AJ_VOL:   det_open(DET_VOL); return;
     case AJ_TEMA:
         s_tema = (uint8_t)((s_tema + 1U) % (uint8_t)SIM_TEMA_COUNT);
         g_pal  = k_sim_temas[s_tema].pal;
@@ -403,6 +538,12 @@ void menu_ajustes_get(settings_t *s)
     s->aj_tema   = s_tema;
     s->aj_paleta = (uint8_t)spectrum_get_palette();
     s->aj_bw     = radio_bw_pack();
+    {
+        int32_t q = ((int32_t)demod_am_get_squelch_db() - SQL_FLOOR_DB) / SQL_STEP_DB;
+
+        s->aj_sql = (uint8_t)((q < 0) ? 0 : q);
+    }
+    s->aj_nr = (uint8_t)(s_nr_strength / NR_STEP);
 }
 
 /* What the screen shows - before the first paint, so a stored theme is
@@ -429,6 +570,21 @@ void menu_ajustes_apply_pantalla(const settings_t *s)
  * notch and the NR. */
 void menu_ajustes_apply_radio(const settings_t *s)
 {
+    /* The NR strength goes in even with nothing stored: demod_am_init()
+     * has just put nr_ss at 0, the bypass. See s_nr_strength. */
+    if (s->has_sqlnr) {
+        uint32_t v = (uint32_t)s->aj_nr * NR_STEP;
+        s_nr_strength = (uint16_t)((v > NR_MAX) ? NR_MAX : v);
+    }
+    nr_ss_set_strength(s_nr_strength);
+
+    if (s->has_sqlnr) {
+        int32_t db = SQL_FLOOR_DB + (int32_t)s->aj_sql * SQL_STEP_DB;
+
+        if (db > SQL_CEIL_DB) { db = SQL_CEIL_DB; }
+        demod_am_set_squelch_db((float)db);
+    }
+
     if (!s->has_aj) { return; }
     if (s->aj_agc <= (uint8_t)AGC_PROFILE_FAST) {
         demod_am_set_agc_profile((agc_profile_t)s->aj_agc);
@@ -441,6 +597,7 @@ void menu_ajustes_apply_radio(const settings_t *s)
 }
 
 const char *menu_tema_nombre(void) { return k_sim_temas[s_tema].nombre; }
+uint32_t    menu_nr_strength(void) { return s_nr_strength; }
 
 /* ------------------------------------------------------------------ */
 
@@ -465,6 +622,12 @@ void menu_close(void)
 
 void menu_toggle(menu_t m)
 {
+    /* From a detail page, its own button goes back to the grid. */
+    if (s_open == MENU_AJUSTES && m == MENU_AJUSTES && s_det != DET_NINGUNO) {
+        det_close();
+        return;
+    }
+    s_det = DET_NINGUNO;
     if (s_open == m) { menu_close(); return; }
 
     s_pressed = -1;
@@ -490,6 +653,17 @@ int menu_touch_down(uint16_t x, uint16_t y, int nuevo)
     if (s_open == MENU_NONE) { return 0; }
     if (y < UIG_Y || y >= UIG_Y + UIG_H) { return 0; }
     if (!nuevo) { return 1; }
+
+    if (s_open == MENU_AJUSTES && s_det != DET_NINGUNO) {
+        h = ui_det_hit(x, y);
+        /* Only what is drawn: no presets and no LO/HI on these pages,
+         * and ui_det_hit() maps coordinates, not buttons (its comment). */
+        if (h != UID_HIT_MENOS && h != UID_HIT_MAS && h != UID_HIT_VOLVER) { return 1; }
+        s_dst.pressed = h;
+        ui_det_draw_one(&s_dst, h);
+        s_pressed = h;
+        return 1;
+    }
 
     h = (s_open == MENU_PASO) ? ui_grid_hit(x, y) : ui_cfg_hit(x, y);
     if (h < 0) { return 1; }
@@ -518,6 +692,14 @@ void menu_touch_up(void)
 
     if (h < 0 || s_open == MENU_NONE) { return; }
     s_pressed = -1;
+
+    if (s_open == MENU_AJUSTES && s_det != DET_NINGUNO) {
+        s_dst.pressed = -1;
+        if (h == UID_HIT_VOLVER) { det_close(); return; }
+        ui_det_draw_one(&s_dst, h);
+        det_add((h == UID_HIT_MAS) ? 1 : -1);
+        return;
+    }
     elige(h);
 }
 
@@ -557,7 +739,7 @@ static void elige(int8_t h)
         int8_t  cur = s_cfg.cursor;
 
         aj_toca(id);
-        if (id == AJ_TEMA) { return; }  /* already repainted whole */
+        if (id == AJ_TEMA || s_det != DET_NINGUNO) { return; }  /* drawn already */
         s_cfg.cel[h].valor = aj_valor(id);
         s_cfg.cursor = cur;
         ui_cfg_draw_one(&s_cfg, h);
@@ -614,6 +796,7 @@ void menu_knob(int32_t d)
     int8_t was, now;
 
     if (s_open == MENU_NONE || d == 0) { return; }
+    if (s_open == MENU_AJUSTES && s_det != DET_NINGUNO) { det_add(d); return; }
 
     if (s_open == MENU_PASO) {
         was = s_grid.cursor;
@@ -659,6 +842,7 @@ void menu_knob_press(void)
     int8_t c;
 
     if (s_open == MENU_NONE) { return; }
+    if (s_open == MENU_AJUSTES && s_det != DET_NINGUNO) { det_close(); return; }
     c = (s_open == MENU_PASO) ? s_grid.cursor : s_cfg.cursor;
     if (c < 0) { c = cursor_ini(); }
     elige(c);

@@ -9,17 +9,17 @@
 #include "font_num_44.h"
 
 /* Hueco central entre los dos botones: donde va el numero. */
-#define UID_VAL_X  (UID_BTN_X0 + UID_BTN_W + 10)
-#define UID_VAL_W  (UID_BTN_X1 - 10 - UID_VAL_X)
+#define UID_VAL_X  (UID_BTN_X0 + UID_BTN_W + UID_VAL_GAP)
+#define UID_VAL_W  (UID_BTN_X1 - UID_VAL_GAP - UID_VAL_X)
 
 static int16_t pie_x(uint8_t i, uint8_t n)
 {
-    int16_t w = (int16_t)((800 - 2 * 8 - (n - 1) * 8) / n);
-    return (int16_t)(8 + i * (w + 8));
+    int16_t w = (int16_t)((GFX2_W - 2 * UID_PIE_M - (n - 1) * UID_PIE_M) / n);
+    return (int16_t)(UID_PIE_M + i * (w + UID_PIE_M));
 }
 static int16_t pie_w(uint8_t n)
 {
-    return (int16_t)((800 - 2 * 8 - (n - 1) * 8) / n);
+    return (int16_t)((GFX2_W - 2 * UID_PIE_M - (n - 1) * UID_PIE_M) / n);
 }
 
 int8_t ui_det_hit(uint16_t x, uint16_t y)
@@ -27,9 +27,9 @@ int8_t ui_det_hit(uint16_t x, uint16_t y)
     /* Los dos grandes se llevan tambien el aire de arriba y de abajo: entre
      * ellos solo esta el numero, que no es tocable, asi que ampliar no le
      * quita el toque a nadie. */
-    if (y >= UID_BTN_Y - 20 && y < UID_BTN_Y + UID_BTN_H + 20) {
+    if (y >= UID_BTN_Y - UID_BTN_HIT_M && y < UID_BTN_Y + UID_BTN_H + UID_BTN_HIT_M) {
         if ((int16_t)x < UID_VAL_X)                  { return UID_HIT_MENOS; }
-        if ((int16_t)x >= UID_BTN_X1 - 10)           { return UID_HIT_MAS; }
+        if ((int16_t)x >= UID_BTN_X1 - UID_VAL_GAP)  { return UID_HIT_MAS; }
         return UID_HIT_NONE;   /* el numero */
     }
     /*
@@ -61,7 +61,7 @@ int8_t ui_det_hit(uint16_t x, uint16_t y)
         /* El pie tiene uno o dos botones segun haya "LO / HI". Se decide por
          * la mitad de la pantalla, que es donde esta el reparto cuando son
          * dos; con uno solo, cualquier x vale. */
-        if ((int16_t)x < 400) { return UID_HIT_ALT; }
+        if ((int16_t)x < GFX2_W / 2) { return UID_HIT_ALT; }
         return UID_HIT_VOLVER;
     }
     return UID_HIT_NONE;
@@ -74,7 +74,7 @@ int8_t ui_det_hit(uint16_t x, uint16_t y)
 static void signo(gfx2_surf_t *s, int16_t x, int16_t y, int16_t w, int16_t h,
                   uint8_t mas, gfx2_rgba_t c)
 {
-    const int16_t largo = 56, grueso = 12;
+    const int16_t largo = UID_SIGNO_L, grueso = UID_SIGNO_G;
     int16_t cx = (int16_t)(x + w / 2), cy = (int16_t)(y + h / 2);
 
     gfx2_fill(s, (int16_t)(cx - largo / 2), (int16_t)(cy - grueso / 2),
@@ -110,12 +110,12 @@ static void boton(gfx2_surf_t *s, int16_t x, int16_t y, int16_t w, int16_t h,
 
 static void valor(gfx2_surf_t *s, const ui_det_state_t *st)
 {
-    gfx2_fill(s, UID_VAL_X, (int16_t)(UID_BTN_Y + 10), UID_VAL_W, 80,
-              gfx2_rgb(PAL_SURF_0));
-    gfx2_text_in(s, UID_VAL_X, (int16_t)(UID_BTN_Y + 16), UID_VAL_W, st->valor,
+    gfx2_fill(s, UID_VAL_X, (int16_t)(UID_BTN_Y + UID_VAL_FILL_DY), UID_VAL_W,
+              UID_VAL_FILL_H, gfx2_rgb(PAL_SURF_0));
+    gfx2_text_in(s, UID_VAL_X, (int16_t)(UID_BTN_Y + UID_VAL_TXT_DY), UID_VAL_W, st->valor,
                  &font_num_44, gfx2_rgb(PAL_INK), GFX2_ALIGN_C);
     if (st->pie) {
-        gfx2_text_in(s, UID_VAL_X, (int16_t)(UID_BTN_Y + 74), UID_VAL_W, st->pie,
+        gfx2_text_in(s, UID_VAL_X, (int16_t)(UID_BTN_Y + UID_VAL_PIE_DY), UID_VAL_W, st->pie,
                      &font_ui_14, gfx2_rgb(PAL_INK_MUTE), GFX2_ALIGN_C);
     }
 }
@@ -129,16 +129,16 @@ static void draw_all(gfx2_surf_t *s, void *ctx)
 
     gfx2_fill(s, 0, UIG_Y, GFX2_W, UIG_H, gfx2_rgb(PAL_SURF_0));
 
-    gfx2_text_in(s, 0, (int16_t)(UIG_Y + 14), GFX2_W, st->titulo,
+    gfx2_text_in(s, 0, (int16_t)(UIG_Y + UID_TIT_DY), GFX2_W, st->titulo,
                  &font_ui_18b, gfx2_rgb(PAL_INK), GFX2_ALIGN_C);
 
     {
         uint8_t pm = (uint8_t)(st->pressed == UID_HIT_MENOS);
         uint8_t pp = (uint8_t)(st->pressed == UID_HIT_MAS);
-        boton(s, UID_BTN_X0, UID_BTN_Y, UID_BTN_W, UID_BTN_H, 10, 0, 0, pm, 0U);
+        boton(s, UID_BTN_X0, UID_BTN_Y, UID_BTN_W, UID_BTN_H, UID_BTN_R, 0, 0, pm, 0U);
         signo(s, UID_BTN_X0, UID_BTN_Y, UID_BTN_W, UID_BTN_H, 0U,
               pm ? gfx2_rgb(PAL_SURF_0) : gfx2_rgb(PAL_INK));
-        boton(s, UID_BTN_X1, UID_BTN_Y, UID_BTN_W, UID_BTN_H, 10, 0, 0, pp, 0U);
+        boton(s, UID_BTN_X1, UID_BTN_Y, UID_BTN_W, UID_BTN_H, UID_BTN_R, 0, 0, pp, 0U);
         signo(s, UID_BTN_X1, UID_BTN_Y, UID_BTN_W, UID_BTN_H, 1U,
               pp ? gfx2_rgb(PAL_SURF_0) : gfx2_rgb(PAL_INK));
     }
@@ -150,7 +150,7 @@ static void draw_all(gfx2_surf_t *s, void *ctx)
         for (i = 0U; i < (uint8_t)UID_PRE_N; i++) {
             if (st->preset[i] == 0) { continue; }
             boton(s, (int16_t)(UID_PRE_X0 + i * (UID_PRE_W + UID_PRE_GAP)),
-                  UID_PRE_Y, UID_PRE_W, UID_PRE_H, 8,
+                  UID_PRE_Y, UID_PRE_W, UID_PRE_H, UID_PRE_R,
                   st->preset[i], &font_ui_18b,
                   (uint8_t)(st->pressed == (int8_t)(UID_HIT_PRE0 + i)),
                   (uint8_t)(st->preset_on == (int8_t)i));
@@ -158,17 +158,17 @@ static void draw_all(gfx2_surf_t *s, void *ctx)
     }
 
     if (st->alt) {
-        boton(s, pie_x(0U, n), UID_PIE_Y, pie_w(n), UID_PIE_H, 7, st->alt,
+        boton(s, pie_x(0U, n), UID_PIE_Y, pie_w(n), UID_PIE_H, UID_PIE_R, st->alt,
               &font_ui_14b, (uint8_t)(st->pressed == UID_HIT_ALT), st->alt_on);
     }
-    boton(s, pie_x((uint8_t)(n - 1U), n), UID_PIE_Y, pie_w(n), UID_PIE_H, 7,
+    boton(s, pie_x((uint8_t)(n - 1U), n), UID_PIE_Y, pie_w(n), UID_PIE_H, UID_PIE_R,
           tr("Volver", "Back"), &font_ui_14b,
           (uint8_t)(st->pressed == UID_HIT_VOLVER), 0U);
 }
 
 static void draw_val(gfx2_surf_t *s, void *ctx)
 {
-    if (!gfx2_band_hits(s, (int16_t)(UID_BTN_Y + 10), 80)) { return; }
+    if (!gfx2_band_hits(s, (int16_t)(UID_BTN_Y + UID_VAL_FILL_DY), UID_VAL_FILL_H)) { return; }
     valor(s, (const ui_det_state_t *)ctx);
 }
 
@@ -198,7 +198,7 @@ void ui_det_draw(const ui_det_state_t *st)
 
 void ui_det_draw_valor(const ui_det_state_t *st)
 {
-    gfx2_render(UID_VAL_X, (int16_t)(UID_BTN_Y + 10), UID_VAL_W, 80,
+    gfx2_render(UID_VAL_X, (int16_t)(UID_BTN_Y + UID_VAL_FILL_DY), UID_VAL_W, UID_VAL_FILL_H,
                 draw_val, (void *)st);
 }
 

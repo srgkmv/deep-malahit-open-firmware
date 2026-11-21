@@ -54,6 +54,10 @@ void menu_touch_up(void);
 void menu_knob(int32_t detents);
 void menu_knob_press(void);
 
+/* The volume or the RF gain changed from the small knob: if the settings
+ * screen's detail page for it is up, its number follows. */
+void menu_refresh_det(void);
+
 /* The band the dial is in, by upstream's rule (the narrowest whose
  * edges hold it), as an index into the generated table, or -1; and its
  * name. For the header's band pill. */
@@ -67,6 +71,7 @@ void        menu_ajustes_get(settings_t *s);
 void        menu_ajustes_apply_pantalla(const settings_t *s);
 void        menu_ajustes_apply_radio(const settings_t *s);
 const char *menu_tema_nombre(void);
+uint32_t    menu_nr_strength(void);
 
 /* ---- provided by main.c ------------------------------------------ */
 
@@ -98,6 +103,10 @@ void        radio_preamp_toggle(void);
 const char *radio_att_text(void);
 const char *radio_vol_text(void);
 void        radio_knob2_rf(int rf);
+int         radio_vol_db(void);
+int         radio_vol_set(int db);      /* clamps; returns what is in force */
+int         radio_att_db(void);         /* dB of gain reduction */
+int         radio_att_set(int db);
 void        radio_repaint_all(void);
 
 /* The filter of each family as upstream's quick preset it equals, 2 bits

@@ -190,7 +190,8 @@ MALAHIT_FONTS_TOP = -include font_num_31.h -include font_ui_10.h \
 MALAHIT_FONTS_MENU = -Dfont_ui_18b=font_ui_11 \
                      -Dfont_ui_14b=font_ui_10b \
                      -Dfont_ui_14=font_ui_10 \
-                     -Dfont_num_20=font_ui_11
+                     -Dfont_num_20=font_ui_11 \
+                     -Dfont_num_44=font_num_31
 
 DSP_SOURCES  = $(wildcard $(DSP_DIR)/Source/FilteringFunctions/*.c)
 DSP_SOURCES += $(wildcard $(DSP_DIR)/Source/ComplexMathFunctions/*.c)
@@ -397,6 +398,9 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_act.c
 #
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_cfg.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_grid.c
+# ui_det.c  one continuous setting, "-" and "+" around its value: the
+#           squelch, the NR strength (step 9, 21/11/2026)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_det.c
 #
 # THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]
 # out of User/main.c by the script the host render uses for the same
@@ -598,6 +602,7 @@ $(BUILD_DIR)/up_fonts_data.o: CFLAGS_FONTS =
 $(BUILD_DIR)/up_ui_top.o:     CFLAGS_FONTS = $(MALAHIT_FONTS_TOP)
 $(BUILD_DIR)/up_ui_cfg.o:     CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
 $(BUILD_DIR)/up_ui_grid.o:    CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
+$(BUILD_DIR)/up_ui_det.o:     CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
 
 $(BUILD_DIR)/up_%.o: $(UPSTREAM_DIR)/%.c $(BUILD_RULES) | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $(CFLAGS_EXTRA_UPSTREAM) $(CFLAGS_FONTS) $< -o $@

@@ -5876,7 +5876,8 @@ static int settings_same(const settings_t *a, const settings_t *b)
         && a->preamp == b->preamp && a->mode == b->mode
         && a->aj_agc == b->aj_agc && a->aj_estilo == b->aj_estilo
         && a->aj_flags == b->aj_flags && a->aj_tema == b->aj_tema
-        && a->aj_paleta == b->aj_paleta && a->aj_bw == b->aj_bw;
+        && a->aj_paleta == b->aj_paleta && a->aj_bw == b->aj_bw
+        && a->aj_sql == b->aj_sql && a->aj_nr == b->aj_nr;
 }
 
 static void settings_now(settings_t *out)
@@ -6694,6 +6695,57 @@ void radio_knob2_rf(int rf)
     s_top.knob_value = s_knob2_txt;
     ui_top_draw_status(&s_top);
     console_printf("  small knob -> %s\n", s_knob2_rf ? "RF gain" : "volume");
+}
+
+/*
+ * THE VOLUME AND THE RF GAIN REDUCTION, ONE WAY IN EACH - the small knob
+ * and the settings screen's detail page (menus.c) both change them here,
+ * so the codec, the header pill, the action bar and the console can never
+ * disagree about which of the two did it. Clamped here, not by callers.
+ * Return the value now in force.
+ */
+static void act_volume_refresh(void);
+
+int radio_vol_db(void) { return s_vol_db; }
+int radio_vol_min(void) { return VOL_MIN_DB; }
+int radio_vol_max(void) { return VOL_MAX_DB; }
+
+int radio_vol_set(int db)
+{
+    if (db < VOL_MIN_DB) { db = VOL_MIN_DB; }
+    if (db > VOL_MAX_DB) { db = VOL_MAX_DB; }
+    if (db == s_vol_db) { return s_vol_db; }
+
+    s_vol_db = db;
+    nau8822_set_speaker_db((int8_t)s_vol_db);
+    nau8822_set_headphone_db((int8_t)s_vol_db);
+    knob2_fmt();
+    if (!s_knob2_rf) { s_top.knob_value = s_knob2_txt; }
+    ui_top_draw_status(&s_top);
+    act_volume_refresh();
+    console_printf("  volume -> %d dB\n", s_vol_db);
+    return s_vol_db;
+}
+
+int radio_att_db(void)  { return (int)s_rf_gr; }
+int radio_att_max(void) { return (int)RF_GR_MAX; }
+
+int radio_att_set(int db)
+{
+    if (db < 0)                { db = 0; }
+    if (db > (int)RF_GR_MAX)   { db = (int)RF_GR_MAX; }
+    if ((uint8_t)db == s_rf_gr) { return (int)s_rf_gr; }
+
+    s_rf_gr = (uint8_t)db;
+    /* msi001_set_gain() recalibrates the DC offset behind itself by
+     * default - see msi001_set_dc_auto() - which is what keeps the centre
+     * of the spectrum from walking every time the gain moves. */
+    msi001_set_gain(s_rf_gr, 0, 0, 0);
+    rf_att_fmt();
+    s_top.att = s_att_txt;
+    ui_top_draw_status(&s_top);
+    console_printf("  RF gain reduction -> %u dB\n", s_rf_gr);
+    return (int)s_rf_gr;
 }
 
 /* A new theme: everything is repainted in it. The caller redraws its
@@ -8027,10 +8079,14 @@ int main(void)
     if (s_boot_have && s_boot_set.has_aj) {
         menu_ajustes_apply_radio(&s_boot_set);
     }
-    console_printf("Ajustes   : %s - tema %s, AGC %s, BW %s\n",
+    console_printf("Ajustes   : %s - tema %s, AGC %s, BW %s, squelch %d dB, "
+                   "NR %u%s\n",
                    (s_boot_have && s_boot_set.has_aj) ? "from the FRAM"
                                                      : "defaults",
-                   menu_tema_nombre(), radio_agc_text(), radio_bw_text());
+                   menu_tema_nombre(), radio_agc_text(), radio_bw_text(),
+                   (int32_t)demod_am_get_squelch_db(), menu_nr_strength(),
+                   (s_boot_have && s_boot_set.has_sqlnr) ? ""
+                       : " (squelch/NR not in the FRAM yet)");
 
     /* Everything the FRAM held is in force: THAT is the baseline, so the
      * boot does not save back what it has just read. */
@@ -8221,46 +8277,16 @@ int main(void)
         int32_t g = encoder2_take_delta();
 
         if (g != 0 && !s_knob2_rf) {
-            int32_t v = s_vol_db + g;
-
-            if (v < VOL_MIN_DB) { v = VOL_MIN_DB; }
-            if (v > VOL_MAX_DB) { v = VOL_MAX_DB; }
-
-            if (v != s_vol_db) {
-                s_vol_db = v;
-                nau8822_set_speaker_db((int8_t)s_vol_db);
-                nau8822_set_headphone_db((int8_t)s_vol_db);
-                knob2_fmt();
-                s_top.knob_value = s_knob2_txt;
-                ui_top_draw_status(&s_top);
-                act_volume_refresh();
-                console_printf("  volume -> %d dB\n", s_vol_db);
-            }
+            (void)radio_vol_set(s_vol_db + (int)g);     /* clamps, draws, logs */
+            menu_refresh_det();                         /* if its page is up */
             g = 0;
         }
 
         if (g != 0) {
-            int32_t v = (int32_t)s_rf_gr - g * RF_KNOB_STEP;
-
             /* Clockwise reduces the reduction, i.e. turns the gain UP,
              * which is the way a volume-shaped control has to feel. */
-            if (v < 0)                    { v = 0; }
-            if (v > (int32_t)RF_GR_MAX)   { v = (int32_t)RF_GR_MAX; }
-
-            if ((uint8_t)v != s_rf_gr) {
-                s_rf_gr = (uint8_t)v;
-
-                /* msi001_set_gain() recalibrates the DC offset behind
-                 * itself by default - see msi001_set_dc_auto() - which
-                 * is what keeps the centre of the spectrum from walking
-                 * every time the gain moves. */
-                msi001_set_gain(s_rf_gr, 0, 0, 0);
-
-                rf_att_fmt();
-                s_top.att = s_att_txt;
-                ui_top_draw_status(&s_top);
-                console_printf("  RF gain reduction -> %u dB\n", s_rf_gr);
-            }
+            (void)radio_att_set((int)s_rf_gr - (int)g * RF_KNOB_STEP);
+            menu_refresh_det();
         }
 
         if (encoder2_take_press()) {

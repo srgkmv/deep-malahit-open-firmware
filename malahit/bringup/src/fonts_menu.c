@@ -1,5 +1,5 @@
 /*
- * font_ui_10 AND font_ui_10b, ONCE - 21/11/2026.
+ * font_ui_10, font_ui_10b AND font_num_31, ONCE - 21/11/2026.
  *
  * compat/font_ui_10.h and _10b.h carry their glyphs as `static const`,
  * on purpose while ui_top.c was their only reader (tools/gen_fuentes.py
@@ -20,4 +20,5 @@
 #define static
 #include "font_ui_10.h"
 #include "font_ui_10b.h"
+#include "font_num_31.h"    /* ui_det.c's value, as font_num_44 */
 #undef static

@@ -18,13 +18,58 @@
  * unos 29 x 22 mm- a proposito: es el unico sitio donde se pulsa muchas
  * veces seguidas, y en un panel resistivo eso es donde mas cansa fallar.
  */
+/* Con #ifndef, como las de ui_grid.h y ui_cfg.h, para que otra pantalla
+ * ponga las suyas; sin -D salen los numeros de siempre. UID_BTN_X1 se
+ * mide desde GFX2_W, que en el DEEPSDR es el 800 que ponia aqui. */
+#ifndef UID_BTN_W
 #define UID_BTN_W   170
+#endif
+#ifndef UID_BTN_H
 #define UID_BTN_H   130
+#endif
+#ifndef UID_BTN_Y
 #define UID_BTN_Y   (UIG_Y + 62)              /* 166 */
+#endif
+#ifndef UID_BTN_X0
 #define UID_BTN_X0  14
-#define UID_BTN_X1  (800 - UID_BTN_W - 14)    /* 616 */
+#endif
+#ifndef UID_BTN_X1
+#define UID_BTN_X1  (GFX2_W - UID_BTN_W - 14) /* 616 */
+#endif
+#ifndef UID_PIE_H
 #define UID_PIE_H    34
+#endif
+#ifndef UID_PIE_Y
 #define UID_PIE_Y   (UIG_Y + UIG_H - UID_PIE_H - 4)   /* 384 */
+#endif
+
+/*
+ * LO QUE ERAN LITERALES EN ui_det.c, con los mismos valores: el aire de
+ * toque de los botones grandes, el hueco del numero, la forma de los
+ * signos, los radios, y donde va cada texto. Medidos para font_num_44 y
+ * botones de 170 x 130; otra pantalla los pone a su medida.
+ */
+#ifndef UID_BTN_HIT_M
+#define UID_BTN_HIT_M   20      /* aire de toque arriba y abajo de "-" "+" */
+#define UID_BTN_R       10
+#define UID_SIGNO_L     56      /* largo de las barras del signo */
+#define UID_SIGNO_G     12      /* y su grueso */
+#endif
+#ifndef UID_VAL_GAP
+#define UID_VAL_GAP     10      /* del boton al hueco del numero */
+#define UID_VAL_FILL_DY 10      /* el hueco: desde lo alto del boton */
+#define UID_VAL_FILL_H  80
+#define UID_VAL_TXT_DY  16      /* el numero */
+#define UID_VAL_PIE_DY  74      /* la linea de contexto */
+#endif
+#ifndef UID_TIT_DY
+#define UID_TIT_DY      14      /* el titulo, desde UIG_Y */
+#endif
+#ifndef UID_PIE_M
+#define UID_PIE_M        8      /* margen y hueco de los botones del pie */
+#define UID_PIE_R        7
+#define UID_PRE_R        8
+#endif
 
 /*
  * FILA DE AJUSTES RAPIDOS - 24/09/2026, pedido por el usuario: debajo de los
@@ -41,10 +86,16 @@
  * de dedo que usa el resto de la interfaz.
  */
 #define UID_PRE_N     3
+#ifndef UID_PRE_Y
 #define UID_PRE_Y    (UID_BTN_Y + UID_BTN_H + 24)     /* 320 */
+#endif
+#ifndef UID_PRE_H
 #define UID_PRE_H     50
+#endif
 #define UID_PRE_X0   UID_BTN_X0                       /* alineados con los grandes */
+#ifndef UID_PRE_GAP
 #define UID_PRE_GAP   8
+#endif
 #define UID_PRE_W    (((UID_BTN_X1 + UID_BTN_W) - UID_BTN_X0 \
                        - (UID_PRE_N - 1) * UID_PRE_GAP) / UID_PRE_N)
 

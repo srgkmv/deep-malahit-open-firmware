@@ -62,6 +62,9 @@ typedef struct {
     uint8_t  aj_paleta;     /* spectrum_palette_t */
     uint8_t  aj_bw;         /* 2 bits a filter family: quick preset 0-2,
                                3 = as the demodulator left it */
+    uint8_t  aj_sql;        /* squelch: (dB + 10) / 2, upstream's 2 dB steps */
+    uint8_t  aj_nr;         /* NR strength / 16 (0-4080 of upstream's 0-4095) */
+    uint8_t  has_sqlnr;     /* the two above are real (settings.c, EXT_SQLNR) */
 } settings_t;
 
 #define SET_AJ_NB_MASK      0x03U   /* blanker level 0-3 */

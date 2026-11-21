@@ -31,11 +31,18 @@
  * defaults, which is exactly what version 3 did to the image before it.
  *
  *   24  ext_ver  1
- *   25  AGC profile (bits 0-1) | spectrum style (bits 2-3)
+ *   25  AGC profile (bits 0-1) | spectrum style (bits 2-3) | EXT_SQLNR
+ *       (bit 7: bytes 18-19, squelch and NR strength, are values)
  *   26  SET_AJ_* flags: blanker, notch, NR, bridge, white trace
  *   27  theme index      28  waterfall palette
  *   29  filter presets, 2 bits a family
  *   30  CRC-32 of bytes 0-29, low 16 bits
+ *
+ * And two values that did not fit there live in the base record's two
+ * spare bytes (18, 19: squelch and NR strength). Version-3 firmware
+ * writes them as zeros and never reads them; they count only when the
+ * extension checks, and the extension's check covers them - so a base
+ * rewritten by an older image cannot hand over stale ones.
  *
  * The check covers the base record too, so an extension left behind by
  * a newer image under a base an OLDER image has since rewritten (it
@@ -56,7 +63,9 @@ typedef struct {
     uint8_t  mode;          /* v3: upstream's demod_mode_t; v1/v2: 0 */
     uint8_t  rf_gr;         /* v2; v1's CRC started here */
     uint8_t  preamp;        /* v2 */
-    uint8_t  rsv2[2];
+    uint8_t  sql;           /* the base's two spare bytes, written as 0 by */
+    uint8_t  nr;            /* v3 firmware: squelch and NR strength, read
+                               ONLY when the extension checks - see below */
     uint32_t crc;           /* v2: CRC-32 of the 20 bytes above */
 } rec_t;
 
@@ -75,7 +84,17 @@ typedef struct {
 
 _Static_assert(sizeof(slot_t) == SLOT_BYTES, "the extension fills the slot");
 
+/* 21/11/2026, the settings screen. It STAYS 1 when squelch and NR were
+ * added: 705749d reads only an extension of exactly version 1, and a 2
+ * would have cost it the whole settings screen. EXT_SQLNR says instead. */
 #define EXT_VERSION  1U
+/*
+ * Squelch and NR strength live in the base's two spare bytes, which an
+ * extension written before them also covers - as ZEROS. This bit, in
+ * the AGC/style byte's unused top half (705749d masks it away), says
+ * they were written as values.
+ */
+#define EXT_SQLNR    0x80U
 
 static int      s_slot = -1;            /* where the newest record is */
 static uint32_t s_seq;
@@ -176,12 +195,15 @@ int settings_load(settings_t *out)
         out->has_aj = (uint8_t)(r[pick].version >= 3U
                                 && e->ext_ver == EXT_VERSION
                                 && e->check == ext_check(e));
+        out->has_sqlnr = (uint8_t)(out->has_aj && (e->agc_estilo & EXT_SQLNR));
         out->aj_agc    = (uint8_t)(e->agc_estilo & 3U);
         out->aj_estilo = (uint8_t)((e->agc_estilo >> 2) & 3U);
         out->aj_flags  = e->flags;
         out->aj_tema   = e->tema;
         out->aj_paleta = e->paleta;
         out->aj_bw     = e->bw;
+        out->aj_sql    = r[pick].sql;
+        out->aj_nr     = r[pick].nr;
     }
     return 1;
 }
@@ -202,12 +224,15 @@ int settings_save(const settings_t *s)
     w.mode     = s->mode;
     w.rf_gr    = s->rf_gr;
     w.preamp   = s->preamp;
+    w.sql      = s->aj_sql;
+    w.nr       = s->aj_nr;
     w.crc      = crc32_of((const uint8_t *)&w, 20U);
 
     memset(&ws, 0, sizeof ws);
     ws.base       = w;
     ws.ext_ver    = EXT_VERSION;
-    ws.agc_estilo = (uint8_t)((s->aj_agc & 3U) | ((s->aj_estilo & 3U) << 2));
+    ws.agc_estilo = (uint8_t)((s->aj_agc & 3U) | ((s->aj_estilo & 3U) << 2)
+                              | EXT_SQLNR);
     ws.flags      = s->aj_flags;
     ws.tema       = s->aj_tema;
     ws.paleta     = s->aj_paleta;

@@ -393,4 +393,38 @@
 #define UIC_NOM_Y             8
 #define UIC_VAL_DY           26     /* the value's 14 rows end 12 above the bottom */
 
+/*
+ * ui_det.c - one continuous setting, "-" and "+" either side of its
+ * value: squelch, NR strength, smoothing. Upstream's are the largest
+ * targets of its whole UI, 170 x 130; these keep the proportion at
+ * 112 x 84 (17 x 13 mm on this glass). The value is font_num_31 - the
+ * header's digits, same character set as upstream's font_num_44 -
+ * through MALAHIT_FONTS_MENU in reglas.mk.
+ *
+ *   title  59..72   buttons 79..162   presets 175..210   foot 260..285
+ */
+#define UID_BTN_W           112
+#define UID_BTN_H            84
+#define UID_BTN_Y   (UIG_Y + 26)                        /* 79 */
+#define UID_BTN_X0            8
+#define UID_BTN_X1  (GFX2_W - UID_BTN_W - 8)            /* 360 */
+#define UID_BTN_HIT_M         6     /* touch 73..168: the presets start at 171 */
+#define UID_BTN_R             8
+#define UID_SIGNO_L          36
+#define UID_SIGNO_G           8
+#define UID_VAL_GAP           6
+#define UID_VAL_FILL_DY       6
+#define UID_VAL_FILL_H       72
+#define UID_VAL_TXT_DY       10     /* font_num_31: line 37, digits in the top 29 */
+#define UID_VAL_PIE_DY       60
+#define UID_TIT_DY            6
+#define UID_PRE_Y   (UID_BTN_Y + UID_BTN_H + 12)        /* 175 */
+#define UID_PRE_H            36
+#define UID_PRE_GAP           6
+#define UID_PIE_H            26
+#define UID_PIE_Y   (UIG_Y + UIG_H - UID_PIE_H - 3)     /* 260 */
+#define UID_PIE_M             8
+#define UID_PIE_R             6
+#define UID_PRE_R             6
+
 #endif /* MALAHIT_LAYOUT_H */
