@@ -57,12 +57,16 @@ far, and gone once the flash carries the D2 layout too (both images
 then put the rings at the same D2 address). Writing flash is the
 owner's DFU, two button presses.
 
+**Done since (`PORTING.md` step 29, from RAM, uncommitted at first):**
+mode kept in the FRAM (record v3), upstream's eleven steps generated
+from its main.c, a band's own step on choosing it, the band pill
+following the dial. **The flash image (`4d9848a`) cannot read a v3
+record** - the FRAM holds one now, so a power cycle before this step is
+flashed boots on defaults (and its first save writes v2 over a slot).
+
 **Open in step 9:** Ajustes (no settings screen yet); the frequency
 keypad (`ui_kbd.c`, tap on the frequency); WFM (upstream's WFM wants the
-station at 0 Hz, this port keeps it 12 kHz off the LO); the mode and the
-band are not kept in the FRAM; the step list is this port's five, not
-upstream's eleven (changing it moves the meaning of the stored index -
-needs a settings record v3).
+station at 0 Hz, this port keeps it 12 kHz off the LO).
 
 ## 21/11/2026, evening: step 8 started, upstream's modes run
 

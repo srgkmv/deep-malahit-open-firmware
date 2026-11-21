@@ -157,29 +157,18 @@ static void bandas(void)
 
 static void pasos(void)
 {
-    static const struct { const char *et, *desc; } k[] = {
-        { "10 Hz",    "Batido y deriva" },
-        { "100 Hz",   "Ajuste fino" },
-        { "500 Hz",   "Buscar en SSB" },
-        { "1 kHz",    "SSB" },
-        { "5 kHz",    "Onda corta" },
-        { "9 kHz",    "Onda media" },
-        { "10 kHz",   "CB y OM americana" },
-        { "12,5 kHz", "Marina y 2 m" },
-        { "25 kHz",   "Aeronáutica" },
-        { "100 kHz",  "FM comercial" },
-        { "1 MHz",    "Saltos grandes" },
-    };
+    /* paso_tabla[] es TUNE_STEPS_LISTA de main.c, generada en
+     * bandas_tabla.h: la misma lista que usa la radio. */
     ui_grid_state_t st;
     uint8_t i;
 
     memset(&st, 0, sizeof st);
     st.titulo = "Paso de sintonía";
     st.pagina = 0; st.paginas = 1;
-    st.n = (uint8_t)(sizeof k / sizeof k[0]);
+    st.n = (uint8_t)N_PASOS;
     for (i = 0; i < st.n; i++) {
-        st.cel[i].l1 = k[i].et;
-        st.cel[i].l2 = k[i].desc;
+        st.cel[i].l1 = paso_tabla[i].rotulo;
+        st.cel[i].l2 = paso_tabla[i].desc;
     }
     st.pressed = -1; st.cursor = 4; st.marcada = 3;
     st.nav[0] = "Anterior"; st.nav[1] = "Siguiente";

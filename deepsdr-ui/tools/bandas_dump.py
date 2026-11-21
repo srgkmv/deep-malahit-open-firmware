@@ -22,6 +22,22 @@ fam = {n: int(v) for n, v in
 modo = {'DEMOD_MODE_AM': 'AM', 'DEMOD_MODE_SAM': 'SAM', 'DEMOD_MODE_USB': 'USB',
         'DEMOD_MODE_LSB': 'LSB', 'DEMOD_MODE_NFM': 'NFM', 'DEMOD_MODE_WFM': 'WFM'}
 
+# EL PASO DE CADA BANDA, COMO INDICE - 21/11/2026, para el port del
+# Malahit, que pone el paso de la banda al elegirla como hace main.c.
+# BAND_STEP_<sufijo> es la posicion de <sufijo> en TUNE_STEPS_LISTA, asi
+# que se lee el orden de la lista y no se copia aqui.
+lista = re.search(r'#define TUNE_STEPS_LISTA\(X\)(.*?)\n\s*\n', src, re.S)
+if not lista:
+    sys.exit('no encuentro TUNE_STEPS_LISTA')
+paso = {'BAND_STEP_' + suf: i for i, suf in
+        enumerate(re.findall(r'X\(\s*(\w+)\s*,', lista.group(1)))}
+# Y LA LISTA ENTERA: hercios, rotulo y para que sirve, en los dos idiomas.
+# El port la usa como su tabla de pasos, en vez de escribir otra.
+pasos = re.findall(r'X\(\s*\w+\s*,\s*(\d+)UL\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*\)',
+                   lista.group(1))
+if len(pasos) != len(paso):
+    sys.exit('TUNE_STEPS_LISTA: %d pasos con nombre y %d enteros' % (len(paso), len(pasos)))
+
 filas = []
 for ln in m.group(1).split('\n'):
     ln = re.sub(r'/\*.*?\*/', '', ln).strip()
@@ -48,7 +64,8 @@ for ln in m.group(1).split('\n'):
     # guardaba uno solo y el banco de anchuras medía, por tanto, medio
     # problema. Ahora van los dos y el banco los mide los dos.
     filas.append((nombre, n_en if n_en is not None else nombre, rango,
-                  int(f.group(7)), modo[f.group(8)], fam[f.group(10)]))
+                  int(f.group(7)), modo[f.group(8)], fam[f.group(10)],
+                  int(f.group(5)), int(f.group(6)), paso[f.group(9)]))
 
 # LAS FAMILIAS, EN LOS DOS IDIOMAS - 30/09/2026.
 #
@@ -69,12 +86,26 @@ if fn:
 
 out = ['/* GENERADO por tools/bandas_dump.py desde User/main.c - no editar. */',
        '#ifndef BANDAS_TABLA_H', '#define BANDAS_TABLA_H', '',
-       'typedef struct { const char *nombre, *nombre_en, *rango, *modo; unsigned long hz; int familia; } banda_t;', '',
+       '/* lo, hi y paso, al FINAL para no mover nada de lo que ya habia: los',
+       ' * bordes de la banda (para saber en cual cae una frecuencia, la mas',
+       ' * estrecha gana, como banda_indice() de main.c) y el indice de su paso',
+       ' * en TUNE_STEPS_LISTA. Los usa el port del Malahit. */',
+       'typedef struct { const char *nombre, *nombre_en, *rango, *modo; unsigned long hz; int familia; unsigned long lo, hi; int paso; } banda_t;', '',
        'static const banda_t banda[] = {']
-for n, n_en, r, hz, md, fm in filas:
-    out.append('    { "%s", "%s", "%s", "%s", %dUL, %d },' % (n, n_en, r, md, hz, fm))
+for n, n_en, r, hz, md, fm, lo, hi, ps in filas:
+    out.append('    { "%s", "%s", "%s", "%s", %dUL, %d, %dUL, %dUL, %d },'
+               % (n, n_en, r, md, hz, fm, lo, hi, ps))
 out.append('};')
 out.append('#define N_BANDAS ((int)(sizeof banda / sizeof banda[0]))')
+out.append('')
+out.append('/* TUNE_STEPS_LISTA de main.c, entera. paso_tabla[banda[k].paso] es el')
+out.append(' * paso de la banda k. Sin usar en quien solo quiere las bandas: unused. */')
+out.append('typedef struct { unsigned long hz; const char *rotulo, *desc, *desc_en; } paso_t;')
+out.append('__attribute__((unused)) static const paso_t paso_tabla[] = {')
+for hz, et, d, d_en in pasos:
+    out.append('    { %sUL, "%s", "%s", "%s" },' % (hz, et, d, d_en))
+out.append('};')
+out.append('#define N_PASOS ((int)(sizeof paso_tabla / sizeof paso_tabla[0]))')
 out.append('')
 out.append('static const char *const familia_nombre[] = { %s };'
            % ', '.join('"%s"' % f for f in familias))

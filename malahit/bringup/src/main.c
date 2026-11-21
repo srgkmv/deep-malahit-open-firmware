@@ -52,6 +52,7 @@
 #include "demod.h"        /* upstream's demod_am.c, A/B against am.c */
 #include "grab.h"         /* screenshots off the panel, over SWD */
 #include "menus.h"        /* step 9: the mode, band and step screens */
+#include "bandas_tabla.h" /* GENERATED from ../../User/main.c: the steps */
 #include "demod_am.h"     /* ../../User - upstream: DEMOD_MODE_*, for the menus */
 #include "nr_ss.h"        /* ../../User - upstream: the Ruido button */
 #include "boot.h"         /* the power button, for the console */
@@ -5362,11 +5363,36 @@ static char s_freq_txt[16];
  */
 static uint32_t s_tuned_hz;
 
-static const uint32_t k_tune_steps[] = { 10U, 100U, 1000U, 10000U, 100000U };
-#define TUNE_STEP_N     (sizeof k_tune_steps / sizeof k_tune_steps[0])
-#define TUNE_STEP_START 2U      /* 1 kHz: SSB, and the AM channel spacing */
+/*
+ * UPSTREAM'S ELEVEN, FROM 21/11/2026 - and the paragraph above was right
+ * about how: not copied. paso_tabla[] is TUNE_STEPS_LISTA itself,
+ * generated out of upstream's main.c into bandas_tabla.h by the script
+ * that also makes the band table (reglas.mk), labels and descriptions
+ * included. The band presets name their step as an index into it, so a
+ * band chosen from the menu brings its own step.
+ *
+ * The FRAM's step_idx changed meaning with it - record version 3; an
+ * older record indexes k_old_steps[] and is mapped through its hertz
+ * at boot.
+ */
+#define TUNE_STEP_N     ((uint32_t)N_PASOS)
+static const uint32_t k_old_steps[] = { 10U, 100U, 1000U, 10000U, 100000U };
 
-static uint8_t s_step_idx = TUNE_STEP_START;
+static uint8_t s_step_idx = 3U;         /* 1 kHz; checked at boot */
+
+/* The index of the step nearest `hz` - for the default, and for an old
+ * record's index. */
+static uint8_t step_index_of(uint32_t hz)
+{
+    uint32_t i, best = 0U, d_best = UINT32_MAX;
+
+    for (i = 0U; i < TUNE_STEP_N; i++) {
+        uint32_t d = (paso_tabla[i].hz > hz) ? (uint32_t)(paso_tabla[i].hz - hz)
+                                             : (uint32_t)(hz - paso_tabla[i].hz);
+        if (d < d_best) { d_best = d; best = i; }
+    }
+    return (uint8_t)best;
+}
 static char    s_step_txt[12];
 
 /*
@@ -5423,7 +5449,7 @@ static int  s_vol_db = -24;
 static int  s_knob2_rf;             /* 0 = volume, 1 = RF gain */
 static char s_knob2_txt[12];
 
-#define TUNE_STEP_HZ    (k_tune_steps[s_step_idx])
+#define TUNE_STEP_HZ    ((uint32_t)paso_tabla[s_step_idx].hz)
 #define TUNE_MIN_HZ     100000U
 #define TUNE_MAX_HZ     30000000U
 
@@ -5544,33 +5570,20 @@ static void knob2_fmt(void)
  * disagree with the step it names. */
 static void tune_step_fmt(void)
 {
-    uint32_t    hz    = TUNE_STEP_HZ;
-    const char *unit  = " Hz";
-    uint32_t    n     = hz;
-    char        dig[8];
-    uint32_t    nd    = 0U;
-    uint32_t    w     = 0U;
-
-    if (hz >= 1000U && (hz % 1000U) == 0U) {
-        n    = hz / 1000U;
-        unit = " kHz";
-    }
+    const char *l = paso_tabla[s_step_idx].rotulo;
+    uint32_t    w = 0U;
 
     /*
      * "S" FOR STEP, and the letter is not decoration. One pill shows
      * whichever knob moved last, so without a letter the same box reads
      * "1 kHz" for the tuning step and "-24" for the volume and the
      * user cannot tell which knob they are looking at - which is
-     * exactly what happened.
+     * exactly what happened. The rest is upstream's own label now
+     * ("12,5 kHz", "1 MHz"), not formatted here.
      */
     s_step_txt[w++] = 'S';
     s_step_txt[w++] = ' ';
-
-    do { dig[nd++] = (char)('0' + (n % 10U)); n /= 10U; } while (n);
-
-    while (nd > 0U && w + 5U < sizeof s_step_txt) { s_step_txt[w++] = dig[--nd]; }
-    while (*unit != '\0' && w + 1U < sizeof s_step_txt) { s_step_txt[w++] = *unit++; }
-
+    while (*l != '\0' && w + 1U < sizeof s_step_txt) { s_step_txt[w++] = *l++; }
     s_step_txt[w] = '\0';
 }
 
@@ -5860,7 +5873,7 @@ static int settings_same(const settings_t *a, const settings_t *b)
 {
     return a->dial_hz == b->dial_hz && a->vol_db == b->vol_db
         && a->step_idx == b->step_idx && a->rf_gr == b->rf_gr
-        && a->preamp == b->preamp;
+        && a->preamp == b->preamp && a->mode == b->mode;
 }
 
 static void settings_now(settings_t *out)
@@ -5871,6 +5884,8 @@ static void settings_now(settings_t *out)
     out->rf_gr    = s_rf_gr;
     out->preamp   = (uint8_t)(s_rf_preamp ? 1U : 0U);
     out->has_rf   = 1U;
+    out->mode     = (uint8_t)demod_am_get_mode();
+    out->has_mode = 1U;
 }
 
 static void settings_tick(void)
@@ -5891,10 +5906,12 @@ static void settings_tick(void)
 
     if (settings_save(&s_set_seen)) {
         s_set_saved = s_set_seen;
-        console_printf("  saved: dial %u Hz, volume %d dB, step %u Hz, "
+        console_printf("  saved: dial %u Hz, %s, volume %d dB, step %u Hz, "
                        "ATT %u dB, preamp %s (FRAM slot %d, seq %u)\n",
-                       s_set_saved.dial_hz, (int32_t)s_set_saved.vol_db,
-                       k_tune_steps[s_set_saved.step_idx],
+                       s_set_saved.dial_hz,
+                       radio_mode_name((int)s_set_saved.mode),
+                       (int32_t)s_set_saved.vol_db,
+                       (uint32_t)paso_tabla[s_set_saved.step_idx].hz,
                        (uint32_t)s_set_saved.rf_gr,
                        s_set_saved.preamp ? "ON" : "OFF",
                        settings_slot(), settings_seq());
@@ -5990,6 +6007,8 @@ static void test_msi_round(void)
  * refused retune left the number on the screen somewhere the hardware
  * never went. Returns 1 if the tuner moved.
  */
+static void band_pill_sync(void);
+
 static int dial_tune(int64_t dial_hz)
 {
     if (dial_hz < (int64_t)TUNE_MIN_HZ) { dial_hz = (int64_t)TUNE_MIN_HZ; }
@@ -6061,6 +6080,7 @@ static int dial_tune(int64_t dial_hz)
         addon_set_filter(addon);
         s_addon_was = (uint32_t)addon;
     }
+    band_pill_sync();
     return 1;
 }
 
@@ -6448,7 +6468,7 @@ static void ui_wf_push(const float *db, uint32_t bins)
  */
 static const char *const k_mode_names[] = { "AM", "USB", "LSB", "NFM",
                                             "WFM", "SAM" };
-static const char *s_band_name;          /* the band pill, 0 = none chosen */
+static const char *s_band_name;          /* the band the dial is in, or 0 */
 static char        s_act_step[12];
 static char        s_act_vol[12];
 
@@ -6541,13 +6561,32 @@ void radio_mode_set(int mode)
 
 uint32_t radio_dial_hz(void) { return s_tuned_hz; }
 
+/*
+ * THE BAND PILL FOLLOWS THE DIAL, as upstream's top_sync() makes it:
+ * the band the frequency is in by upstream's own rule (menu_band_at(),
+ * the narrowest that holds it), or none - and then the pill says
+ * "Bandas", which is what it opens. Redrawn only when it changes: the
+ * header is 49 kB of SPI, and the knob calls this every detent.
+ */
+static void band_pill_sync(void)
+{
+    const char *n = menu_band_name(menu_band_at(s_tuned_hz));
+
+    if (n == s_band_name) { return; }
+    s_band_name    = n;
+    s_top.band     = n ? n : "Bandas";
+    s_top.en_banda = (uint8_t)(n != (const char *)0);
+    if (menu_open_id() == MENU_NONE) {
+        ui_top_draw(&s_top);
+        radio_act_refresh();
+    }
+}
+
 int radio_band_go(uint32_t hz, int mode, const char *name)
 {
     if (hz < TUNE_MIN_HZ || hz > TUNE_MAX_HZ) { return 0; }
+    (void)name;                         /* the pill follows the dial instead */
     if (!dial_tune((int64_t)hz)) { return 0; }
-    s_band_name    = name;
-    s_top.band     = name;
-    s_top.en_banda = 1U;
     if (mode >= 0) {
         radio_mode_set(mode);           /* redraws the header and the bar */
     } else {
@@ -6558,7 +6597,6 @@ int radio_band_go(uint32_t hz, int mode, const char *name)
 }
 
 uint32_t radio_step_count(void)      { return (uint32_t)TUNE_STEP_N; }
-uint32_t radio_step_hz(uint32_t i)   { return (i < TUNE_STEP_N) ? k_tune_steps[i] : 0U; }
 uint32_t radio_step_get(void)        { return s_step_idx; }
 
 void radio_step_set(uint32_t i)
@@ -7719,6 +7757,10 @@ int main(void)
      * thrown away for one bad field.
      */
     uint32_t boot_dial = GEN_HZ;
+
+    /* The default step is 1 kHz by VALUE: the table is generated, so its
+     * index is upstream's to move. */
+    if (paso_tabla[s_step_idx].hz != 1000UL) { s_step_idx = step_index_of(1000U); }
     {
         const settings_t st   = s_boot_set;
         const int        have = s_boot_have;
@@ -7734,7 +7776,7 @@ int main(void)
                  * this grid already, so this only touches what the bug
                  * left behind.
                  */
-                uint32_t g = k_tune_steps[0];
+                uint32_t g = (uint32_t)paso_tabla[0].hz;
                 uint32_t d = ((st.dial_hz + g / 2U) / g) * g;
 
                 if (d != st.dial_hz) {
@@ -7755,7 +7797,11 @@ int main(void)
                                "%d..%d - not used\n", (int32_t)st.vol_db,
                                VOL_MIN_DB, VOL_MAX_DB);
             }
-            if (st.step_idx < TUNE_STEP_N) {
+            if (!st.has_mode && st.step_idx < (sizeof k_old_steps
+                                               / sizeof k_old_steps[0])) {
+                /* A version 1-2 record: its index is into the old five. */
+                s_step_idx = step_index_of(k_old_steps[st.step_idx]);
+            } else if (st.has_mode && st.step_idx < TUNE_STEP_N) {
                 s_step_idx = st.step_idx;
             } else {
                 console_printf("Settings  : stored step %u is past the "
@@ -7765,7 +7811,7 @@ int main(void)
         console_printf("Settings  : %s - dial %u Hz, volume %d dB, step "
                        "%u Hz\n", have ? "from the FRAM" : "nothing in "
                        "the FRAM yet, defaults", boot_dial, s_vol_db,
-                       k_tune_steps[s_step_idx]);
+                       (uint32_t)paso_tabla[s_step_idx].hz);
         if (have) {
             console_printf("            (slot %d, seq %u, record version "
                            "%u, at 0x%04x)\n", settings_slot(),
@@ -7864,6 +7910,18 @@ int main(void)
      * A/B - `swd-call ... demod_path 0` - until that is settled.
      */
     demod_path(1);
+
+    /* The mode the last session left, from a version-3 record. */
+    if (s_boot_have && s_boot_set.has_mode
+        && s_boot_set.mode <= (uint8_t)DEMOD_MODE_SAM
+        && s_boot_set.mode != (uint8_t)DEMOD_MODE_WFM) {
+        (void)demod_mode((int)s_boot_set.mode);
+    }
+    console_printf("Mode      : %s%s\n", radio_mode_name(radio_mode_get()),
+                   (s_boot_have && s_boot_set.has_mode) ? ", from the FRAM"
+                                                        : "");
+    s_band_name = (const char *)1;      /* force the first sync to draw */
+    band_pill_sync();
     s_top.mode = radio_mode_name(radio_mode_get());
     top_sync_chips();
     ui_top_draw(&s_top);

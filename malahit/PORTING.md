@@ -1024,6 +1024,19 @@ Each step should end with something visible on the radio.
    call 750 us, the loop's copy of a half 414 us (406), frame 42.7 ms,
    no overrun. And the SAI DMA error count reads 0 where it had read 1
    on every run since the panel DMA - not explained, recorded.
+29. **The radio remembers its mode; upstream's eleven steps; the band
+   pill follows the dial.** *21/11/2026, from RAM* - settings record
+   version 3: the demodulator's mode in the byte that was reserved, and
+   step_idx now indexes upstream's TUNE_STEPS_LISTA (10 Hz ... 1 MHz,
+   with 500 Hz, 9 kHz, 12,5 and 25 kHz) instead of five decades. The
+   list is GENERATED, not copied - `bandas_dump.py` now emits it beside
+   the band table, with each band's edges and its own step - so a band
+   chosen from the menu brings its step, as upstream's does. A v2 record
+   loads with its step mapped through its hertz (1 kHz stayed 1 kHz on
+   the radio). The header's band pill is upstream's banda_indice() rule
+   - the narrowest band whose edges hold the dial, or "Bandas". Checked:
+   41 m + USB saved, reloaded, came back USB on 7.300 with a 5 kHz step.
+   Firmware older than this rejects a v3 record and boots on defaults.
    Checked with nobody at the glass: `ui_tap` injects a finger over SWD
    and **`tools/grab.py` reads the panel's own GRAM back** (RAMRD over
    SPI3's MISO, one dummy byte, 9 s a screen) - every screen above was

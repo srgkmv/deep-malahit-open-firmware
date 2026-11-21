@@ -401,6 +401,8 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_grid.c
 # THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]
 # out of User/main.c by the script the host render uses for the same
 # purpose (deepsdr-ui/tools/bandas_dump.py), into the build directory.
+# And with it upstream's step list, TUNE_STEPS_LISTA, which main.c uses
+# as its step table and menus.c for the step screen.
 # A band added upstream reaches this radio at the next build, and the
 # PNG and the panel list the same bands.
 #
@@ -618,6 +620,8 @@ $(BANDAS_TABLA): $(UPSTREAM_DIR)/main.c $(BANDAS_DUMP) | $(BUILD_DIR)
 	python3 $(BANDAS_DUMP) $(UPSTREAM_DIR)/main.c $@
 $(BUILD_DIR)/menus.o: $(BANDAS_TABLA)
 $(BUILD_DIR)/menus.o: CFLAGS += -I$(BUILD_DIR)
+$(BUILD_DIR)/main.o: $(BANDAS_TABLA)
+$(BUILD_DIR)/main.o: CFLAGS += -I$(BUILD_DIR)
 
 $(BUILD_DIR)/%.o: %.S $(BUILD_RULES) | $(BUILD_DIR)
 	$(AS) -c $(ASFLAGS) $< -o $@

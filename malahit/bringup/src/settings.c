@@ -13,10 +13,18 @@
  * are read: a radio that has only a version-1 record comes back on its
  * dial, volume and step, with the RF front end measured as before, and
  * its first save writes version 2.
+ *
+ * VERSION 3 (21/11/2026, step 9) is version 2 plus the demodulator's
+ * mode in the byte that was `rsv`, and a different MEANING for step_idx:
+ * an index into upstream's eleven steps instead of this port's first
+ * five. The bytes are the same either way; main.c reads
+ * settings_version() and maps an older index through its hertz. Older
+ * firmware rejects a version-3 record and boots on defaults - it does
+ * not misread it.
  */
 #define SLOT_BYTES      32U
 #define REC_MAGIC       0x31484C4DU     /* "MLH1" */
-#define REC_VERSION     2U
+#define REC_VERSION     3U
 
 typedef struct {
     uint32_t magic;
@@ -25,7 +33,7 @@ typedef struct {
     int8_t   vol_db;
     uint8_t  step_idx;
     uint8_t  version;
-    uint8_t  rsv;
+    uint8_t  mode;          /* v3: upstream's demod_mode_t; v1/v2: 0 */
     uint8_t  rf_gr;         /* v2; v1's CRC started here */
     uint8_t  preamp;        /* v2 */
     uint8_t  rsv2[2];
@@ -62,7 +70,7 @@ static int rec_ok(const rec_t *r)
 {
     if (r->magic != REC_MAGIC) { return 0; }
 
-    if (r->version == 2U) {
+    if (r->version == 2U || r->version == 3U) {
         return r->crc == crc32_of((const uint8_t *)r, 20U);
     }
     if (r->version == 1U) {
@@ -116,6 +124,8 @@ int settings_load(settings_t *out)
     out->has_rf   = (r[pick].version >= 2U);
     out->rf_gr    = out->has_rf ? r[pick].rf_gr  : 0U;
     out->preamp   = out->has_rf ? r[pick].preamp : 0U;
+    out->has_mode = (r[pick].version >= 3U);
+    out->mode     = out->has_mode ? r[pick].mode : 0U;
     return 1;
 }
 
@@ -131,6 +141,7 @@ int settings_save(const settings_t *s)
     w.vol_db   = s->vol_db;
     w.step_idx = s->step_idx;
     w.version  = REC_VERSION;
+    w.mode     = s->mode;
     w.rf_gr    = s->rf_gr;
     w.preamp   = s->preamp;
     w.crc      = crc32_of((const uint8_t *)&w, 20U);

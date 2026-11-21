@@ -84,6 +84,34 @@ static int banda_ok(int k)
     return banda[k].hz >= BAND_LO_HZ && banda[k].hz <= BAND_HI_HZ;
 }
 
+/*
+ * WHICH BAND THE DIAL IS IN - upstream's banda_indice(), the same rule:
+ * the NARROWEST band whose edges hold the frequency, because the ranges
+ * overlap on purpose (40 m ends where 41 m begins, and at the edge the
+ * small one says more). A preset with no edges - "Horaria", three
+ * frequencies - is not a range and is never the answer.
+ */
+int menu_band_at(uint32_t hz)
+{
+    int      k, best = -1;
+    uint32_t w_best = UINT32_MAX;
+
+    for (k = 0; k < N_BANDAS; k++) {
+        uint32_t w;
+
+        if (banda[k].lo == 0UL && banda[k].hi == 0UL) { continue; }
+        if (hz < banda[k].lo || hz > banda[k].hi)    { continue; }
+        w = (uint32_t)(banda[k].hi - banda[k].lo);
+        if (w < w_best) { w_best = w; best = k; }
+    }
+    return best;
+}
+
+const char *menu_band_name(int k)
+{
+    return (k >= 0 && k < N_BANDAS) ? banda[k].nombre : (const char *)0;
+}
+
 static int modo_de(const char *s)
 {
     if (!strcmp(s, "AM"))  { return DEMOD_MODE_AM; }
@@ -147,7 +175,7 @@ static void bandas_rellena(void)
         s_cfg.cel[n].valor  = rango_cabe(n, banda[k].rango);
         s_cfg.cel[n].extra  = banda[k].modo;
         s_band_of_cel[n]    = (uint8_t)k;
-        if (k == s_band_last) { s_cfg.marcada = n; }
+        if (k == menu_band_at(radio_dial_hz())) { s_cfg.marcada = n; }
         n++;
     }
     s_cfg.n = n;
@@ -160,6 +188,11 @@ static void bandas_familia_inicial(void)
     uint32_t dial = radio_dial_hz(), best = UINT32_MAX;
     int      k;
 
+    {
+        int here = menu_band_at(dial);
+
+        if (here >= 0) { s_fam_sel = (uint8_t)banda[here].familia; return; }
+    }
     if (s_band_last >= 0) { s_fam_sel = (uint8_t)banda[s_band_last].familia; return; }
     for (k = 0; k < N_BANDAS; k++) {
         uint32_t d;
@@ -175,36 +208,8 @@ static void bandas_familia_inicial(void)
 /* STEPS                                                               */
 /* ------------------------------------------------------------------ */
 
-/* main.c's five steps, with upstream's words for what each is for
- * (TUNE_STEPS_LISTA in User/main.c). */
-static const char *paso_desc(uint32_t hz)
-{
-    switch (hz) {
-    case 10U:     return "Batido y deriva";
-    case 100U:    return "Ajuste fino";
-    case 500U:    return "Buscar en SSB";
-    case 1000U:   return "SSB";
-    case 5000U:   return "Onda corta";
-    case 9000U:   return "Onda media";
-    case 10000U:  return "CB y OM americana";
-    case 100000U: return "Saltos grandes";
-    default:      return "";
-    }
-}
-
-static char s_paso_txt[UIG_CELLS][12];
-
-static void paso_fmt(uint32_t hz, char *o)
-{
-    const char *u = " Hz";
-    uint32_t    v = hz, k = 0U, d = 1U;
-
-    if (hz >= 1000U && hz % 1000U == 0U) { v = hz / 1000U; u = " kHz"; }
-    while (d * 10U <= v) { d *= 10U; }
-    for (; d != 0U; d /= 10U) { o[k++] = (char)('0' + (v / d) % 10U); }
-    while (*u) { o[k++] = *u++; }
-    o[k] = '\0';
-}
+/* The steps are upstream's TUNE_STEPS_LISTA, generated into
+ * bandas_tabla.h with the bands: value, label and what each is for. */
 
 static void pasos_rellena(void)
 {
@@ -222,9 +227,8 @@ static void pasos_rellena(void)
     s_grid.nav[0]  = "Anterior";
     s_grid.nav[1]  = "Siguiente";
     for (i = 0U; i < n; i++) {
-        paso_fmt(radio_step_hz(i), s_paso_txt[i]);
-        s_grid.cel[i].l1 = s_paso_txt[i];
-        s_grid.cel[i].l2 = paso_desc(radio_step_hz(i));
+        s_grid.cel[i].l1 = paso_tabla[i].rotulo;
+        s_grid.cel[i].l2 = paso_tabla[i].desc;
         if (i == radio_step_get()) { s_grid.marcada = (uint8_t)i; }
     }
 }
@@ -312,7 +316,7 @@ static void elige(int8_t h)
     if (s_open == MENU_PASO) {
         s_grid.pressed = -1;
         radio_step_set((uint32_t)h);
-        console_printf("  menu: paso %s\n", s_paso_txt[h]);
+        console_printf("  menu: paso %s\n", paso_tabla[h].rotulo);
         menu_close();
         return;
     }
@@ -340,6 +344,10 @@ static void elige(int8_t h)
         int m = modo_de(banda[k].modo);
 
         s_band_last = k;
+        /* The band's own step too, as upstream's band button does. */
+        if (banda[k].paso >= 0 && banda[k].paso < N_PASOS) {
+            radio_step_set((uint32_t)banda[k].paso);
+        }
         if (!radio_band_go((uint32_t)banda[k].hz, m, banda[k].nombre)) {
             console_printf("  menu: banda %s - el dial no llega a %u Hz\n",
                            banda[k].nombre, (uint32_t)banda[k].hz);

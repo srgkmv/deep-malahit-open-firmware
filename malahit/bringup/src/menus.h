@@ -52,6 +52,12 @@ void menu_touch_up(void);
 void menu_knob(int32_t detents);
 void menu_knob_press(void);
 
+/* The band the dial is in, by upstream's rule (the narrowest whose
+ * edges hold it), as an index into the generated table, or -1; and its
+ * name. For the header's band pill. */
+int         menu_band_at(uint32_t hz);
+const char *menu_band_name(int k);
+
 /* ---- provided by main.c ------------------------------------------ */
 
 /* Upstream's demod_mode_t as an int. Sets the demodulator, the header's
@@ -65,9 +71,9 @@ const char *radio_mode_name(int mode);
 int         radio_band_go(uint32_t hz, int mode, const char *name);
 uint32_t    radio_dial_hz(void);
 
-/* The tuning step, by index into main.c's table. */
+/* The tuning step, by index into upstream's table (paso_tabla[] in the
+ * generated bandas_tabla.h). */
 uint32_t    radio_step_count(void);
-uint32_t    radio_step_hz(uint32_t i);
 uint32_t    radio_step_get(void);
 void        radio_step_set(uint32_t i);
 
