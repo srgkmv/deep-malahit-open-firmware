@@ -4,11 +4,29 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 21/11/2026, night: step 9 - the action bar works
+## START HERE — 21/11/2026, night: steps 8, 9 and 28 in git and IN FLASH
 
-**In flash: still `41a0523`.** Everything below is in the working tree,
-checked from RAM on the radio, and NOT committed yet - the owner asks.
-`PORTING.md` step 27 has the whole of it; in short:
+**In flash: `4d9848a`** - `build_flash/bringup.bin`, 153 544 bytes,
+sha256 `deb595dd…`, SELFTEST 0, clean build; written over DFU without
+`:leave`, read back identical byte for byte, left with the 4-byte
+`:leave` upload. **Cold boot**: settings from the FRAM (10 MHz, -46 dB,
+1 kHz step, ATT 59), touch and add-on board up, upstream's demodulator
+playing, screen and audio 2019 ms after SysTick, SAI DMA err 0, no
+overrun.
+
+**One thing to watch, not a fault so far:** after the cold boot
+`baseband: station` started at 9 and climbed slowly (21 at one minute,
+23 at 72 s) where every warm RAM run today read 28, while the spectrum
+peak read 94 dB throughout. `station` is a correlation at EXACTLY
++12 kHz over a 42.7 ms block, so it falls off for a carrier only a few
+hertz away - 1 ppm of the 22 MHz reference is 10 Hz at 10 MHz - and the
+reference was cold. **It settled: 27 by five minutes and flat after**,
+DMA err 0 and no overrun throughout, and the owner's taps on Ruido and
+Ajustes all landed. The deaf cold start (`station` 3-8, FLAT until a
+re-init) looked different. If a cold boot ever reads low and STAYS low,
+that is the deaf start again.
+
+Step 9, from `PORTING.md` step 27, in short:
 
 - **Bandas, Modo, Paso** open upstream's own screens (`ui_cfg.c`,
   `ui_grid.c`) at 480 x 320, laid out on the PC first (deepsdr-ui
