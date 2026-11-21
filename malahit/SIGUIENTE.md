@@ -6,7 +6,8 @@ says what the next session should do and what it must not trust.
 
 ## START HERE — 21/11/2026, night: steps 8, 9 and 28 in git and IN FLASH
 
-**In flash: `4d9848a`** - `build_flash/bringup.bin`, 153 544 bytes,
+**In flash: `93eaba6` since later the same night - see below.** Before
+that, `4d9848a` - `build_flash/bringup.bin`, 153 544 bytes,
 sha256 `deb595dd…`, SELFTEST 0, clean build; written over DFU without
 `:leave`, read back identical byte for byte, left with the 4-byte
 `:leave` upload. **Cold boot**: settings from the FRAM (10 MHz, -46 dB,
@@ -57,12 +58,14 @@ far, and gone once the flash carries the D2 layout too (both images
 then put the rings at the same D2 address). Writing flash is the
 owner's DFU, two button presses.
 
-**Done since (`PORTING.md` step 29, from RAM, uncommitted at first):**
-mode kept in the FRAM (record v3), upstream's eleven steps generated
-from its main.c, a band's own step on choosing it, the band pill
-following the dial. **The flash image (`4d9848a`) cannot read a v3
-record** - the FRAM holds one now, so a power cycle before this step is
-flashed boots on defaults (and its first save writes v2 over a slot).
+**Done since (`PORTING.md` step 29) and IN FLASH: `93eaba6`** -
+154 856 bytes, sha256 `0e05b56c…`, clean build, written over
+DFU, read back identical, left with the 4-byte `:leave`. Cold boot: the
+v3 record read (slot 1, seq 74), "Mode: AM, from the FRAM", screen and
+audio 2053 ms, DMA err 0. Mode kept in the FRAM (record v3), upstream's
+eleven steps generated from its main.c, a band's own step on choosing
+it, the band pill following the dial. Firmware older than 93eaba6
+cannot read a v3 record and boots on defaults.
 
 **Open in step 9:** Ajustes (no settings screen yet); the frequency
 keypad (`ui_kbd.c`, tap on the frequency); WFM (upstream's WFM wants the
