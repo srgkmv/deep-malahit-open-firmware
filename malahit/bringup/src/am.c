@@ -409,9 +409,9 @@ void am_init(float fs_hz)
 
     /* The cycle counter has to be switched on before it counts. Free,
      * idempotent, and the trace enable above it is what gates the whole
-     * debug block. */
+     * debug block. Not zeroed: it is shared, and spi3.c's DMA timeout
+     * is one of the intervals a reset would stretch to four billion. */
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-    DWT->CYCCNT       = 0U;
     DWT->CTRL        |= DWT_CTRL_CYCCNTENA_Msk;
 
     s_dc_x1 = 0.0f;

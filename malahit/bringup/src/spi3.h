@@ -83,4 +83,70 @@ void spi3_write(const uint8_t *data, uint32_t len);
 void spi3_write_repeat(const uint8_t *pattern, uint32_t pattern_len,
                        uint32_t repeats);
 
+/*
+ * TRANSMIT BY DMA: DMA1 stream 2, DMAMUX1 channel 2, request 62.
+ *
+ * What it buys is not bus time - 30 MHz is 30 MHz - but a bus that keeps
+ * running while the CPU is somewhere else. The polled loop above stops
+ * the moment an interrupt takes the core, the 16-byte FIFO empties in
+ * 4 us, and the clock waits for the CPU to come back; with the AM
+ * demodulator in the block interrupt ~40 % of the time, the 121 kB
+ * waterfall measured 48 ms against the 32 ms its bytes need. A DMA
+ * stream feeds the FIFO through all of that.
+ *
+ * CS and DC are NOT handled here: they are the panel driver's, and the
+ * bus belongs to whoever started the transfer until spi3_dma_wait()
+ * returns. None of the polled functions above may be called in between;
+ * they call spi3_dma_wait() first themselves, as a backstop, but the
+ * caller still owns CS and has to raise it.
+ */
+#define SPI3_DMA_MAX    65535U      /* CR2.TSIZE is sixteen bits */
+
+/*
+ * Clock DMA1, take request 62 back from any other multiplexer channel
+ * (the factory firmware has it wired to DMA1 stream 2 - see spi3.c),
+ * and set the stream up. Once, after spi3_init(). Returns 0.
+ */
+int spi3_dma_init(void);
+
+/* Multiplexer channels that were found wired to request 62 and taken
+ * back by spi3_dma_init(), as a bitmask. 0 is the normal answer. */
+uint32_t spi3_dma_mux_released(void);
+
+/*
+ * Start sending len bytes (1..SPI3_DMA_MAX) and return at once. `data`
+ * must stay untouched until spi3_dma_wait() returns. Returns 0, or -1 if
+ * nothing was started: not initialised, len out of range, or a buffer
+ * the DMA cannot reach (DTCM, ITCM) - the caller then sends it polled.
+ *
+ * eot_irq: also raise SPI3's interrupt at EOT, for a caller that chains
+ * transfers from SPI3_IRQHandler (ili9488.c). The handler collects the
+ * transfer with spi3_dma_wait(), which returns at once when EOT is
+ * already up, and the teardown switches the interrupt off again.
+ */
+int spi3_dma_start(const uint8_t *data, uint32_t len, int eot_irq);
+
+/* 1 between spi3_dma_start() and the spi3_dma_wait() that collects it. */
+int spi3_dma_busy(void);
+
+/*
+ * Wait for the last bit to leave the shift register, then hand the
+ * peripheral back to the polled functions. 0 on success. -1 if it did
+ * not finish in twice its own time plus 10 ms, -2 if the stream
+ * reported a transfer error; either way the transfer has been ABORTED
+ * - some bytes never left - and the bus is usable again.
+ */
+int spi3_dma_wait(void);
+
+/* Counters: failed transfers, and the error flags ever seen on stream 2
+ * (bit 0 FEIF, 2 DMEIF, 3 TEIF), sticky. */
+uint32_t spi3_dma_failures(void);
+uint32_t spi3_dma_flags_seen(void);
+
+/* Transfers collected since boot, and how many of them ended with FEIF
+ * set. FEIF in direct mode stops nothing and loses nothing, so it is not
+ * a failure; whether it is every transfer or some is what tells a
+ * configuration artefact from a bus that was late. */
+void spi3_dma_counts(uint32_t *done, uint32_t *fe);
+
 #endif /* MALAHIT_SPI3_H */

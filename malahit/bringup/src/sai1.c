@@ -953,9 +953,9 @@ static uint32_t s_tx_last = 2U;     /* 2 = no half written yet */
  * "DMA2 streams 1 and 5", which is this unit's accident rather than a
  * property of the part.
  *
- * The same scan is owed to SPI3_TX (request 62) the day the panel moves
- * to DMA. The factory firmware has that one configured too, on DMA1
- * stream 2 - disabled, today.
+ * The same scan was owed to SPI3_TX (request 62) the day the panel moved
+ * to DMA - the factory firmware has that one configured too, on DMA1
+ * stream 2 - and spi3.c's dma_release_requests() is it, 21/11/2026.
  */
 static uint32_t s_mux_released;     /* bitmask of channels taken back */
 

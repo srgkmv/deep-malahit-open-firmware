@@ -63,6 +63,53 @@ void ili9488_blit(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
                   const uint8_t *px);
 
 /*
+ * THE BLOCK QUEUE: blits by DMA that return before the pixels have gone.
+ *
+ * ili9488_q_slot() hands out the buffer to compose the next block in -
+ * three bytes a pixel, as for ili9488_blit() - waiting only if every
+ * slot is queued; ili9488_q_push() queues what was composed there as a
+ * w x h block at (x, y) and returns at once. SPI3's end-of-transfer
+ * interrupt then sends the queued blocks one after another by DMA, each
+ * under its own window and RAMWR, while the caller composes the next -
+ * and keeps sending through the AM block interrupt, which it outranks.
+ *
+ * With the DMA off or failed, q_push() sends the block polled before it
+ * returns, so callers do not change.
+ *
+ * Every other function in this driver waits for the queue to empty
+ * before it touches the bus, so nothing can land among a block's pixels.
+ */
+uint8_t *ili9488_q_slot(uint32_t *cap);
+void     ili9488_q_push(uint16_t x, uint16_t y, uint16_t w, uint16_t h);
+
+/* Wait for every queued block to have gone, CS raised. */
+void ili9488_sync(void);
+
+/* The deepest the queue has been since the last call (then reset), and
+ * the times it stopped moving - each of which switched the DMA off. */
+uint32_t ili9488_q_depth_max(void);
+uint32_t ili9488_q_stalls(void);
+
+/*
+ * Set up the DMA (spi3_dma_init()) and prove it before anything is sent
+ * through it: 256 bytes go out by DMA with CS HIGH - the panel is not
+ * listening - and they must finish, without an error, and take at least
+ * half the time their bits need on the wire (a transfer that "finishes"
+ * faster than that did not happen). Only then is the queue allowed to
+ * use it, and its interrupt armed. Returns 0, or negative with the DMA
+ * left off and every blit polled, exactly as before. `test_us` gets the
+ * probe's time if not NULL.
+ */
+int ili9488_dma_init(uint32_t *test_us);
+
+/* The switch, for A/B measurement: off sends everything polled. On only
+ * takes effect if the self-test passed and nothing has failed since. */
+void ili9488_dma_enable(int on);
+
+/* 1 if queued blocks go by DMA. */
+int ili9488_dma_on(void);
+
+/*
  * Eight colour bars with a one-pixel white border, drawn left to right:
  * black, red, green, blue, yellow, cyan, magenta, white.
  *

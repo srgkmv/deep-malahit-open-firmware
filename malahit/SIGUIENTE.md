@@ -1,8 +1,80 @@
 # Where to pick this up
 
-Rewritten 19/11/2026, updated 21/11/2026. `WORKING.md` is still the file
+Rewritten 19/11/2026, updated 21/11/2026 (twice). `WORKING.md` is still the file
 to read first; this one only says what the next session should do and
 what it must not trust.
+
+## 21/11/2026, afternoon: the panel on DMA — frame ~80 -> ~47 ms, in git and in flash
+
+**In git and in flash.** `build_flash/bringup.bin`, 100 392 bytes,
+sha256 `6f991a4e…`, written over DFU ~12:13, read back identical byte
+for byte, left with the 4-byte `:leave` upload (see below).
+
+The panel's pixels go by DMA now (`PORTING.md` step 21; `WORKING.md`,
+"The panel on DMA, and why the queue runs from an interrupt"): a queue
+of eight 4-row slots, DMA1 stream 2 on request 62, each next block
+started by SPI3's end-of-transfer interrupt at priority 0, above the AM
+block interrupt. Measured on one run, the switch flipped over SWD
+(`swd-call.sh build/bringup.elf ili9488_dma_enable 0|1`), generator on
+the dial: **frame median 79.9 ms polled -> 47.5 ms (21 fps)**, waterfall
+48.3 -> 30.2 ms. A first version that started blocks from the display
+loop stopped at 65.5 ms, and why it stopped is the useful part: the
+8.4 ms AM interrupt idles any bus the CPU has to restart.
+
+Seen on the radio: self-test 256 B in 69 us (68.3 us of bit times),
+118 455 transfers, 0 failed, 0 stalls, `dry 0`, no block overrun, the
+carrier at full level throughout. FEIF on every transfer - explained
+as far as it can be without a test, harmless, `WORKING.md` says why.
+
+**Checked by the owner, same afternoon, from RAM:** the picture is the
+same with and without the DMA - and with it **the waterfall is much
+smoother; without it there was a flicker, with it it is clean**. The
+audio is unchanged. The 10 MHz digital noise was not noticeable (it
+had been expected to sound steadier, not louder).
+
+**The first cold boot of this image from flash, ~12:15: it works, and
+it took 4.46 s instead of 2.7.** Panel DMA on, probe 70 us, the carrier
+at full level, transfers clean. The extra 1.8 s is the TOUCH, not the
+panel - read over SWD from the running radio afterwards, without a
+halt (`swd.sh -c init -c "mdh <addr> 1"`, addresses from
+`build_flash/bringup.elf`):
+
+| `touch.c` / `i2c3.c` | read | meaning |
+|---|---|---|
+| `s_recover_clocks` | -1 | the recovery before the reset: SDA never came back |
+| `s_dbg_after_reset` | 0x03 | both lines high after the reset pulse |
+| `s_dbg_sda_low_at` | 5 | SDA found low from the 5th identify read on |
+| `s_dbg_rc_at` | 0 | ... and that read had failed |
+| `s_dbg_tries` | 66 | the first identify ran all 60 tries; the second, after recovering the bus again, got it on its 6th |
+
+The console showed only `I2C3 : bus recovered, -1 clocks` - the
+identify's counters print only when BOTH attempts fail. **This is the
+"touch controller silent" seen once before (section below), now at a
+real power-on - so by that note's own rule it is real.** Nothing links
+it to the DMA that can be seen: another bus (I2C3, PA8/PC9), no shared
+pins, and the queue's interrupt only writes CS and DC through BSRR.
+One cold boot is one sample; two or three more, watching the boot time
+and that console line, say whether it is every cold start or some.
+`touch_init()`'s second attempt is what saved this one.
+
+**Not run:** `make SELFTEST=1` builds (93.96 % of AXI SRAM in the RAM image); it
+  has not been run.
+
+**Next, in order of what the radio gains:**
+1. **The touch at power-on**: a few more cold boots first (above), and
+   if it repeats, why the FT6236 holds SDA low from the fifth read of
+   the first identify - the recovery runs BEFORE the reset pulse, and
+   the reset itself may be what leaves it mid-byte.
+2. **Remember the dial and the volume** across power-offs - FM25W256
+   FRAM on SPI2, `BOARD.md` section 6, no driver yet. The same FRAM
+   could keep the crash record.
+3. The 100 kHz-step test for the 10 MHz digital noise (below).
+4. The frame is now near the bus: one waterfall alone is 32.4 ms of
+   wire. Going faster means fewer bytes (the waterfall shorter, or
+   redrawn less often than the trace) or a faster SPI clock than 30 MHz
+   - and 30 MHz is already 1.5 times the datasheet's (ILI9488 17.4.3,
+   4-line SPI: `twc` 50 ns minimum, 20 MHz), and a faster clock moves
+   the digital-noise comb.
 
 ## 21/11/2026: in flash and verified — fast boot, buffered console, a crash that can be switched off, no more deaf cold starts
 
@@ -99,9 +171,8 @@ shows `irq 0/0`, or the radio dies on a load, start there.**
 
 **Next, in order of what the radio gains:**
 
-1. **The panel on SPI DMA** - "THE NEXT THING TO DO" in `WORKING.md`.
-   Measured tonight: waterfall 48 ms and trace 17-26 ms of an ~80 ms
-   frame - now nearly all of it.
+1. ~~**The panel on SPI DMA**~~ - done the same afternoon, see the
+   section above.
 2. **Remember the dial and the volume** across power-offs. Every boot
    starts on 10.000 MHz at -24 dB; there is an FM25W256 FRAM on the
    board (`BOARD.md` section 6) and no driver for it yet. The same FRAM

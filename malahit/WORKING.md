@@ -446,9 +446,10 @@ In rough order of how often it has been the answer:
    for comparison. `sai1_dma_start()` now takes the request lines back
    and says which channels it had to take them from.
 
-   `sai1.c`'s `dma_release_sai_requests()` is the scan. The same is owed
-   to SPI3_TX, request 62, the day the panel moves to DMA — the factory
-   firmware has that one configured too, on DMA1 stream 2.
+   `sai1.c`'s `dma_release_sai_requests()` is the scan. The same was
+   owed to SPI3_TX, request 62, the day the panel moved to DMA — the
+   factory firmware has that one configured too, on DMA1 stream 2 — and
+   was paid on that day, 21/11/2026: `spi3.c`'s `dma_release_requests()`.
 17. **Did the test that proved it take its own setup away with it?**
    The speaker was silent for three days and the cause was a retired
    test. Step 4 proved a 1 kHz tone comes out of the speaker; that test
@@ -1895,15 +1896,83 @@ rather than taken:
   control broken throughout. Consecutive steps showed three of four
   within 0.1 dB. Same numbers, opposite conclusion.
 
+### The panel on DMA, and why the queue runs from an interrupt — 21/11/2026
+
+**What runs:** every pixel block gfx2 and gfx hand over is converted
+into one of eight 4-row slots (`ili9488_q_slot()`), queued
+(`ili9488_q_push()`), and sent by DMA1 stream 2 - request 62, SPI3_TX -
+under its own window and RAMWR. SPI3's end-of-transfer interrupt
+(vector 51, priority 0) raises CS, sends the next block's eleven bytes
+of window commands polled, and starts its DMA. The display loop only
+converts and queues; it waits when all eight slots are taken. Anything
+else that touches the panel - a fill, a register read, the init - waits
+for the queue to empty first (`bus_idle()` in `ili9488.c`), so nothing
+can land among a block's pixels.
+
+**Why from an interrupt, measured in order on one run each:**
+
+| | frame | waterfall |
+|---|---|---|
+| polled | 79.9 ms | 48.3 ms |
+| DMA, the display loop starts each block | 65.5 ms | 39.5 ms |
+| DMA, the EOT interrupt starts each block | 47.5 ms | 30.2 ms |
+
+The waterfall's bytes need 32.4 ms. The polled loop lost the rest to
+interrupts - the SPI FIFO is 16 bytes, 4 us, and the AM block interrupt
+holds the core 8.4 ms (`hook` on the status line, ~4 000k cycles). The
+first DMA version won back the CPU's conversion time but not that: a
+block is 2.7 ms on the wire, so whatever block was going out when the
+demodulator arrived finished, and the bus then stood idle until the
+display loop got the core back. The arithmetic matched to the
+millisecond (29.7 ms of wire + 8.4 ms + a little = 39.5). Only something
+that outranks the demodulator, with more than 8.4 ms of blocks already
+converted, keeps the bus going through it: eight full slots are 12.3 ms.
+
+**The switch, for any A/B:** `swd-call.sh build/bringup.elf
+ili9488_dma_enable 0` (or 1) on the running radio. The status line's
+`lcd dma q8 0/0/1` reads: transport, deepest queue this frame (8 = the
+loop ran ahead of the wire, the healthy case), transfers failed, queue
+stalls, DMA error flags seen. Once a second, `lcd:` counts transfers.
+
+**What `wf` and `trace` mean now:** time to QUEUE, not to send. They
+fell to 30 and ~5-9 ms partly because the last ~12 ms of each drain
+under whatever comes next. `frame` is the honest number.
+
+**FEIF is set on every transfer** - 118 455 of 118 455 - and nothing is
+wrong: all of them ended by EOT, the self-test's timing is the wire's,
+and FEIF stops nothing. The likely reason, not proven: in direct mode
+the stream preloads ONE byte, and an empty 16-byte SPI FIFO asks for
+sixteen back to back at the start of every block - an underrun by
+definition, and harmless, because an SPI master just waits for data
+(the polled path paused for milliseconds at a time for weeks without a
+wrong pixel). The test, if it ever matters: FIFO mode (`DMDIS`) in
+`spi3_dma_init()`, and watch the `FEIF on` count stop.
+
+**Two things changed on the way that are not about the panel:**
+- **`DWT->CYCCNT` is no longer zeroed** by `ili9488_fill_screen()` or
+  `am_init()`. It is shared - am.c, sai1.c, boot.c and now the DMA
+  timeout all time intervals on it - and a reset in the middle of one
+  makes it four billion cycles long. Everything uses differences.
+- **A complete window arms nothing** in `rm68120_ili9488.c`, and the
+  window's last pixel queues its last block. Before, the tail of a
+  window taller than the buffer sat staged until the next
+  `set_window()`; pixels written past a window were sent as rows below
+  it, and are now dropped (nothing upstream writes any).
+
+**What it does to the 10 MHz digital noise is not known.** The SPI is
+now busy ~95 % of the frame instead of in bursts of 38 + 41 ms of every
+120 ms. If the panel's 1.25 MHz pixel comb is the source (SIGUIENTE.md,
+"Where it comes from"), each burst is the same as before and there is
+less silence between them - steadier, present more of the time, no
+louder while it lasts. Listen with the generator off.
+
 ### THE NEXT THING TO DO
 
 - ~~**An encoder driver.**~~ Done, 05/11/2026 — see above. What is left
   of it is the buttons, which need the ADC, and the second encoder.
-- **The panel on DMA.** Now the larger of the two: the waterfall blit
-  is 40 ms of the 91 ms frame and the trace another 16. SPI3_TX is
-  DMAMUX request 62, and the factory firmware has a stream configured
-  for it already — so read trap 16 before arming anything, and scan the
-  multiplexer the way `sai1_dma_start()` does.
+- ~~**The panel on DMA.**~~ Done, 21/11/2026 — the frame from ~80 ms
+  to ~47 ms. "The panel on DMA, and why the queue runs from an
+  interrupt" below, and `PORTING.md` step 21.
 - **SAI on DMA is done** (above), and the one thing it left undone is
   the interrupt: `sai1_tx_due()` is a polled stand-in for the
   half-transfer interrupt and can miss a whole half if the producer is

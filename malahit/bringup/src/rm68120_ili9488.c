@@ -10,43 +10,78 @@
 #include "clock.h"
 
 /*
- * The staging buffer, and why this size.
+ * THE STAGING BUFFER IS THE PANEL DRIVER'S NOW.
  *
- * gfx2 composes a band at a time - GFX2_BAND_H rows of the full screen
- * width - and hands it over in one window. At 480 wide and the band
- * height this port builds with, the largest window is 480 x BAND_H
- * pixels, three bytes each.
+ * It used to be a 46 kB array here, sized for 32 rows of 480 at three
+ * bytes a pixel, flushed in one synchronous transfer whenever it filled.
+ * Since 21/11/2026 the same 46 kB are ili9488.c's block queue - eight
+ * slots of four full rows - and this file composes straight into the
+ * slot the queue hands out (ili9488_q_slot()) and queues it when it is
+ * full or the window is done (ili9488_q_push()). The SPI interrupt sends
+ * the queued blocks by DMA while gfx2 composes the next ones.
  *
- * Sized for 32 rows so the band height can be raised without this
- * becoming the thing that stops it: 480 x 32 x 3 is 46 kB, which on a
- * board with 512 kB of AXI SRAM is affordable, and the band is the one
- * buffer whose size directly decides how many times gfx2 re-runs the
- * drawing code per frame.
- *
- * A window larger than this does not break: rm68120_dato() flushes
- * whenever the buffer fills, and set_window() re-arms. It just costs
- * more transfers.
+ * A window taller than a slot is simply several blocks, each under its
+ * own window command - which is what a flush of a full buffer always
+ * was here.
  */
-#define STAGE_ROWS      32U
-#define STAGE_BYTES     (480U * STAGE_ROWS * 3U)
-
-static uint8_t s_stage[STAGE_BYTES];
-
 volatile uint32_t g_lcd_ciclos;     /* bus time, accumulated by gfx2 */
 
-uint8_t *g_rm_put = s_stage;
-uint8_t *g_rm_end = s_stage;        /* empty until a window is set */
+static uint8_t s_none[3];           /* where an unarmed window points */
 
-/* Where the pixels flushed so far are going, and what is left. */
+uint8_t *g_rm_put = s_none;
+uint8_t *g_rm_end = s_none;         /* empty until a window is set */
+
+static uint8_t *s_buf = s_none;     /* the slot being composed into */
+
+/* Where the pixels flushed so far are going. */
 static uint16_t s_x0, s_y0, s_x1, s_y1;
-static uint32_t s_pending;          /* pixels still to come in this window */
 static uint16_t s_row;              /* next row to receive, absolute */
+
+/*
+ * Point the inline rm68120_dato() at a fresh slot, and say where it
+ * ends.
+ *
+ * THE END IS THE WINDOW'S LAST ROW WHEN THAT COMES FIRST: the window's
+ * own last pixel triggers its flush, so the final block of a window is
+ * queued as it is finished - not left staged until somebody's NEXT
+ * set_window, as the tail of a tall gfx_fill_rect() used to be.
+ *
+ * A COMPLETE WINDOW ARMS NOTHING, so it does not wait for a slot it will
+ * never fill - the display loop would otherwise stall at the end of
+ * every window whenever the queue is full, which is most of the time.
+ * Pixels written past the end of a window are dropped; nothing upstream
+ * writes any, and the old behaviour - sending them as rows below the
+ * window - was not what a panel does with them either.
+ */
+static void arm(void)
+{
+    if (s_row > s_y1) {
+        g_rm_put = s_none;
+        g_rm_end = s_none;
+        s_buf    = s_none;
+        return;
+    }
+
+    uint32_t cap;
+    uint32_t w    = (uint32_t)(s_x1 - s_x0) + 1U;
+    uint32_t left = (uint32_t)(s_y1 - s_row) + 1U;
+
+    s_buf = ili9488_q_slot(&cap);
+
+    uint32_t rows = cap / (w * 3U);    /* >= 4: a slot is four full rows */
+
+    if (rows == 0U)  { rows = 1U; }     /* cannot happen at w <= 480 */
+    if (left < rows) { rows = left; }
+
+    g_rm_put = s_buf;
+    g_rm_end = s_buf + (w * rows * 3U);
+}
 
 void rm68120_flush(void)
 {
-    uint32_t bytes = (uint32_t)(g_rm_put - s_stage);
+    uint32_t bytes = (uint32_t)(g_rm_put - s_buf);
 
-    if (bytes == 0U) { return; }
+    if (s_buf == s_none || bytes == 0U) { return; }
 
     uint32_t px   = bytes / 3U;
     uint32_t w    = (uint32_t)(s_x1 - s_x0) + 1U;
@@ -60,11 +95,12 @@ void rm68120_flush(void)
     uint32_t rows = px / w;
 
     if (rows > 0U) {
-        ili9488_blit(s_x0, s_row, (uint16_t)w, (uint16_t)rows, s_stage);
+        /* Returns as soon as the block is queued. */
+        ili9488_q_push(s_x0, s_row, (uint16_t)w, (uint16_t)rows);
         s_row = (uint16_t)(s_row + rows);
     }
 
-    g_rm_put = s_stage;
+    arm();
 }
 
 void rm68120_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
@@ -75,22 +111,23 @@ void rm68120_set_window(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
     s_x0 = x0; s_y0 = y0; s_x1 = x1; s_y1 = y1;
     s_row = y0;
 
-    uint32_t w = (uint32_t)(x1 - x0) + 1U;
-    uint32_t h = (uint32_t)(y1 - y0) + 1U;
-
-    s_pending = w * h;
-
     /*
-     * Arm the buffer for at most a whole number of rows, so a flush
-     * never splits one. Everything beyond that simply flushes earlier.
+     * An inverted window would make w wrap to four billion in arm(). gfx
+     * clips before it gets here, so this is a guard and not a feature:
+     * nothing is armed, and every pixel sent to it is dropped by the
+     * bounds test in rm68120_dato(). So is a window wider than the
+     * panel, which a slot of four full rows could not hold one row of.
      */
-    uint32_t cap_rows = STAGE_BYTES / (w * 3U);
+    if (x1 < x0 || y1 < y0 || (uint32_t)(x1 - x0) >= ILI9488_W) {
+        g_rm_put = s_none;
+        g_rm_end = s_none;
+        s_buf    = s_none;
+        return;
+    }
 
-    if (cap_rows == 0U) { cap_rows = 1U; }      /* absurdly wide window */
-    if (cap_rows > h)   { cap_rows = h; }
-
-    g_rm_put = s_stage;
-    g_rm_end = s_stage + (w * cap_rows * 3U);
+    /* Arm for at most a whole number of rows, so a flush never splits
+     * one. Everything beyond that simply flushes earlier. */
+    arm();
 }
 
 void rm68120_write_data(uint16_t rgb565)
@@ -101,6 +138,9 @@ void rm68120_write_data(uint16_t rgb565)
 
 void rm68120_fill_screen(uint16_t rgb565)
 {
+    /* Whatever is staged was drawn first, so it goes first. */
+    rm68120_flush();
+
     ili9488_fill_rect(0, 0, ILI9488_W, ILI9488_H,
                       (uint8_t)((rgb565 >> 8) & 0xF8U),
                       (uint8_t)((rgb565 >> 3) & 0xFCU),
@@ -108,15 +148,33 @@ void rm68120_fill_screen(uint16_t rgb565)
 }
 
 /* ------------------------------------------------------------------ */
-/* lcd_dma, synchronous - see compat/lcd_dma_ili9488.h                */
+/* lcd_dma - see compat/lcd_dma_ili9488.h                             */
 /* ------------------------------------------------------------------ */
 
-void lcd_dma_init(void) { }
-void lcd_dma_pon(uint8_t on) { (void)on; }
+void lcd_dma_init(void) { (void)ili9488_dma_init(0); }
 
-uint8_t lcd_dma_hay(void) { return 0U; }        /* never in flight */
-uint8_t lcd_dma_espera(void) { return 1U; }     /* always finished */
-uint16_t lcd_dma_fallos(void) { return 0U; }
+void lcd_dma_pon(uint8_t on) { ili9488_dma_enable(on); }
+
+uint8_t lcd_dma_hay(void) { return (uint8_t)ili9488_dma_on(); }
+
+/*
+ * Nothing of the CALLER'S is ever in flight here, so there is nothing
+ * to wait for: lcd_dma_manda() has converted every pixel into the
+ * staging buffer before it returns, and the buffer it was given is free
+ * the moment it does. What is still going out is this driver's own
+ * copy, and the driver collects that itself before anything else
+ * touches the bus. See compat/lcd_dma_ili9488.h.
+ */
+uint8_t lcd_dma_espera(void) { return 1U; }
+
+/* Transfers that failed plus queues that stalled: either one switches
+ * the DMA off for the rest of the run. */
+uint16_t lcd_dma_fallos(void)
+{
+    uint32_t n = spi3_dma_failures() + ili9488_q_stalls();
+
+    return (uint16_t)((n > 0xFFFFU) ? 0xFFFFU : n);
+}
 
 uint8_t lcd_dma_manda(const uint16_t *px, uint32_t n)
 {
@@ -126,7 +184,7 @@ uint8_t lcd_dma_manda(const uint16_t *px, uint32_t n)
      * Through rm68120_dato() rather than straight to SPI, so the
      * window that set_window() armed is respected and there is exactly
      * one path from a pixel to the panel. The staging buffer flushes
-     * itself whenever it fills.
+     * itself whenever it fills, and at the window's last pixel.
      */
     for (uint32_t i = 0; i < n; i++) { rm68120_dato(px[i]); }
     rm68120_flush();
@@ -145,6 +203,10 @@ uint32_t rm68120_ciclo(void)
      * uses; truncating it to 32 bits is fine because gfx2 only ever
      * looks at differences, and at 480 MHz a 32-bit count wraps every
      * nine seconds - far longer than a band takes to draw.
+     *
+     * With the DMA on, what it measures around a band is the CPU's
+     * conversion plus any wait for a free slot in the queue - not this
+     * band's time on the wire, which overlaps whatever comes next.
      */
     return (uint32_t)board_cycles();
 }

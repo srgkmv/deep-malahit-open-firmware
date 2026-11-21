@@ -891,6 +891,32 @@ Each step should end with something visible on the radio.
    shows itself, keep the radio in that state** - a snapshot to compare,
    then one init step at a time called into the running image - instead
    of reloading, which cures it and destroys the evidence.
+21. **The panel on DMA.** *Done, 21/11/2026, in flash* — the
+   frame went from **~80 ms (12.5 fps) to ~47 ms (21 fps)**, median, same
+   signal, same picture, both measured in one run with the switch
+   (`ili9488_dma_enable`) flipped over SWD. Pixel blocks go to SPI3 by
+   DMA1 stream 2 (request 62, `spi3.c`) from a queue of eight 4-row
+   slots (`ili9488.c`, "THE BLOCK QUEUE"), and SPI3's end-of-transfer
+   interrupt starts each next block.
+
+   **What it bought is not overlap but the bus time interrupts used to
+   steal.** The polled loop stopped whenever the core was taken; the
+   SPI FIFO holds 4 us, the AM block interrupt runs 8.4 ms. The
+   waterfall measured 48 ms for the 32 ms its 121 kB need. A first
+   version that started each block from the display loop, double
+   buffered, got it to 39.5 ms and no further - the bus still stood
+   idle for the rest of every 8.4 ms interrupt once the block in flight
+   had gone. Starting blocks from an interrupt that outranks the
+   demodulator, with 12 ms of blocks queued, got it to 30 ms. Same
+   lesson as step 10's: on this radio a transfer that needs the CPU
+   between pieces is a transfer the demodulator can stop.
+
+   Fail-safe by construction: a 256-byte self-test with CS high (the
+   panel not listening) has to pass before the queue is used, a queue
+   that stops moving for 20 ms is torn down and the DMA stays off for
+   the run, and every other panel function waits for the queue to
+   empty before it touches the bus. 118 455 transfers on the radio, no
+   failure, no stall, no audio underrun.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

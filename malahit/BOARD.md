@@ -1040,8 +1040,13 @@ Two consequences, one harmless and one not:
   requests feeds no stream — and then it cost exactly half the receive
   stream the moment our firmware set `DMAEN`. `sai1_dma_start()` now
   scans all sixteen multiplexer channels and takes back any that names
-  one of its requests. The same is owed to SPI3_TX before the panel
-  moves to DMA. `WORKING.md`'s trap 16 has the symptom.
+  one of its requests. `WORKING.md`'s trap 16 has the symptom.
+
+Since 21/11/2026 channel 2 / DMA1 stream 2 is **ours**, for the panel
+(`spi3.c`), and `spi3_dma_init()` does the same scan for request 62.
+The boot line `Panel DMA` says which channels it had to take back; on
+every load so far, none - the factory's stream 2 was idle (EN=0) and
+ours now sits on the same channel.
 
 ### Display throughput **[measured]**
 
@@ -1049,6 +1054,21 @@ A full 480 × 320 frame at 18 bpp is 460 800 bytes and takes **129 ms** at
 SPI3 = 30 MHz — 7.7 frames a second — of which the 1024-point complex FFT
 is 1.7 ms. The display is the entire cost of a panorama on this radio and
 the FFT is a rounding error against it.
+
+**With the radio running, 21/11/2026** - generator on the dial, AM
+demodulating, the full UI - one frame of waterfall (440 x 92, 121 kB,
+32.4 ms of wire) and trace:
+
+| transport | frame, median | p10 - p90 | waterfall |
+|---|---|---|---|
+| polled | 79.9 ms | 71.6 - 80.6 ms | 48.3 ms |
+| DMA, each block started by the display loop | 65.5 ms | 59.3 - 68.5 ms | 39.5 ms |
+| DMA, blocks chained by SPI3's EOT interrupt | **47.5 ms** | 44.4 - 60.9 ms | 30.2 ms |
+
+The polled figure is not the wire's: the AM block interrupt takes the
+core for 8.4 ms every 42.7 ms, and a polled SPI stops with it. The DMA
+probe at boot - 256 bytes with CS high - takes 69 us against 68.3 us
+of bit times, so the bus itself runs without gaps. `PORTING.md` step 21.
 
 Measured both ways: drawing column by column into a 960-byte buffer costs
 the same as building a whole 460 kB frame and sending it in one transfer,

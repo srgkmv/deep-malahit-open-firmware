@@ -6263,6 +6263,51 @@ int main(void)
                    "screen.\n");
 
     /*
+     * THE PANEL ON DMA, from its first picture - 21/11/2026.
+     *
+     * Every block gfx2 and gfx hand over goes out by DMA1 stream 2 from
+     * here on, while the CPU converts the next one (spi3.c, "TRANSMIT BY
+     * DMA"; rm68120_ili9488.c for the two halves of the staging buffer).
+     * What it buys is the bus time the polled loop lost to interrupts:
+     * the waterfall measured 48 ms for the 32 ms its 121 kB need.
+     *
+     * The self-test sends 256 bytes with CS high - the panel does not
+     * listen - and only a clean, plausibly-timed transfer switches the
+     * DMA on. Anything else leaves it off and every blit polled, which
+     * is how this radio drew until today: a failure here costs frame
+     * rate, never the screen.
+     */
+    {
+        uint32_t probe_us = 0U;
+        int      dma_rc   = ili9488_dma_init(&probe_us);
+
+        console_printf("Panel DMA : %s - DMA1 stream 2, request 62, "
+                       "probe 256 B in %u us",
+                       (dma_rc == 0) ? "on" : "OFF", probe_us);
+        if (dma_rc != 0) {
+            console_printf(" - rc %d, every blit stays polled", dma_rc);
+        }
+        if (spi3_dma_mux_released() != 0U) {
+            console_printf("\n            request 62 taken back from "
+                           "mux channels 0x%04x", spi3_dma_mux_released());
+        }
+        console_printf("\n");
+
+        /*
+         * THE SWITCH, said once here so that it is in the image at all:
+         * nothing else calls it, and --gc-sections would drop it. It is
+         * the A/B of the two paths on one running radio, same picture,
+         * same signal - see the `lcd` column of the status line:
+         *
+         *   swd-call.sh build/bringup.elf ili9488_dma_enable 0   (polled)
+         *   swd-call.sh build/bringup.elf ili9488_dma_enable 1   (DMA)
+         *
+         * On only takes if the self-test above passed.
+         */
+        ili9488_dma_enable(1);
+    }
+
+    /*
      * THE ENCODER IS SET UP HERE, NOT INSIDE ITS TEST, and that
      * placement is the whole of trap 17 applied before it could bite a
      * second time. The audio went silent for three days because step 4's
@@ -7239,9 +7284,18 @@ int main(void)
          * The blit is the expensive half of the frame - 92 x 440
          * pixels is 121 kB over SPI - and it is done whole rather than
          * scrolled because this panel has no hardware scroll that gfx2
-         * can reach and the ring already avoids the memory copy. If
-         * the frame rate needs more than that, it is the SPI DMA that
-         * buys it, which is the same conclusion the SAI reached.
+         * can reach and the ring already avoids the memory copy.
+         *
+         * ON DMA SINCE 21/11/2026, and that changes what `wf` and
+         * `trace` in the status line mean. They are still timed from
+         * the first pixel to the return, but the return now comes when
+         * the last block has been QUEUED, not sent: the display loop
+         * waits only for a free slot, so the figure is the wire time of
+         * all but the last eight blocks plus the CPU's, and the queue's
+         * last ~12 ms drain under whatever comes next. `frame` is the
+         * number that cannot flatter. `lcd ... qN` is the deepest the
+         * queue got in the frame - 8 means the loop ran ahead of the
+         * wire and had to wait, which is the healthy case.
          */
         uint64_t w0 = board_cycles();
         ui_wf_push(&s_db[PAN_LO], PAN_SHOWN);
@@ -7284,6 +7338,22 @@ int main(void)
                            encoder_button_down(), encoder2_button_down(),
                            s_press_n, s_press2_n,
                            (uint32_t)boot_power_key());
+            /*
+             * THE PANEL'S DMA, once a second: blocks sent since boot, how
+             * many of them ended with FEIF up (spi3_dma_counts() says why
+             * that is a question and not a fault), and the two things
+             * that ARE faults and switch the DMA off.
+             */
+            {
+                uint32_t n, fe;
+
+                spi3_dma_counts(&n, &fe);
+                console_printf("  lcd: %s, %u transfers, FEIF on %u, "
+                               "failed %u, stalls %u\n",
+                               ili9488_dma_on() ? "dma" : "polled",
+                               n, fe, spi3_dma_failures(),
+                               ili9488_q_stalls());
+            }
             /*
              * THE LINE IS LOW AND THESE THREE SAY WHY. A high-impedance
              * source read with too short a sample time reads low, so
@@ -7502,7 +7572,8 @@ int main(void)
 
         console_printf("peak %+7d Hz %3d dB | phase %+3d.%02u deg "
                        "gain %+2d.%02u dB | mirror %3d dB @%+4d bin | "
-                       "blk %u | dsp %u us trace %u us wf %u us\n",
+                       "blk %u | dsp %u us trace %u us wf %u us | "
+                       "lcd %s q%u %u/%u/%x\n",
                        pk.offset_hz, (int32_t)pk.db,
                        (int32_t)iqbal_fase_grados(),
                        (uint32_t)((int32_t)(iqbal_fase_grados() * 100.0f)
@@ -7519,7 +7590,10 @@ int main(void)
                        (int32_t)iqbal_espejo_db(),
                        (int32_t)iqbal_espejo_bin(),
                        iqbal_bloques(),
-                       dsp_us, draw_us, wf_us);
+                       dsp_us, draw_us, wf_us,
+                       ili9488_dma_on() ? "dma" : "pol",
+                       ili9488_q_depth_max(), spi3_dma_failures(),
+                       ili9488_q_stalls(), spi3_dma_flags_seen());
 
         /*
          * ONCE PER RESULT, NOT ONCE PER FRAME. iqbal_ab_hay() is sticky -
