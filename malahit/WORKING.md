@@ -2052,9 +2052,13 @@ louder while it lasts. Listen with the generator off.
   more than one half late. Nothing is late yet, because nothing
   produces audio.
 
-After that: the other screens — menus, band list, keypad, FT8 map —
-live in `ui_digi.c` (1817 lines) and `ui_kbd.c`, already separate
-modules, and the same host harness renders them.
+**NEXT, from 21/11/2026: `PORTING.md` step 8**, the upstream DSP tree
+- census first, and the memory map with it (`SIGUIENTE.md`, "START
+HERE": the RAM-load loop above will not survive the graft as it is).
+The other screens - menus, band list, keypad, FT8 map - live in
+`ui_digi.c` (1817 lines) and `ui_kbd.c`, already separate modules, the
+same host harness renders them, and they arrive with upstream's
+`main.c`.
 
 ### Still open
 

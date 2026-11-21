@@ -1,8 +1,63 @@
 # Where to pick this up
 
-Rewritten 19/11/2026, updated 21/11/2026 (twice). `WORKING.md` is still the file
-to read first; this one only says what the next session should do and
-what it must not trust.
+Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
+HERE". `WORKING.md` is still the file to read first; this one only
+says what the next session should do and what it must not trust.
+
+## START HERE — end of the 21/11/2026 session; the next one is step 8
+
+**What is in flash is exactly `41a0523`** (sha `214e3e8b…`, 104 960
+bytes), verified by read-back and a cold boot. Nothing is open from
+this session. What it did, each with its own section below and its own
+step in `PORTING.md`:
+
+| step | what | the number |
+|---|---|---|
+| 21 | the panel on DMA, blocks chained from SPI3's EOT interrupt | frame ~80 -> ~47 ms |
+| 22 | the touch controller left alone 300 ms after its reset | lost 2/20 -> 0/20 |
+| 23 | dial, volume, step kept in the FM25W256 FRAM (checked to BE FRAM first; factory content backed up) | cold boot restores them |
+| 24 | ATT and preamp kept too; the dial no longer loses 1 Hz a retune | 14 993/29 990 dials off -> 0 |
+| 25 | the retune click filled with the modulation's own period instead of faded | -7.0 -> -47.9 dB rms |
+
+**The next session: PORTING.md step 8, the upstream DSP tree** - the
+modes. The owner chose it, 21/11/2026. The radio is AM-only today, on
+this port's own `am.c` and a scaffold `main.c`. What is known already
+(`PORTING.md`, the box under step 7, and §3.3):
+
+- `demod_am.c` is the hub of every mode, and its transitive closure is
+  **106 `.c` files, 72 126 lines**; upstream has no switch to leave
+  modes out, so it comes as essentially all of `User/` at once. 12 of
+  the files touch GD32 registers (`lcd_dma.c` - already replaced by
+  `compat/` -, `ipa_blit.c` -> DMA2D, `spi_flash.c`, ...).
+- Storage is decided: **build without the disk** - no SPI NOR, no SD on
+  this board - so maps, the station database, screenshots and USB mass
+  storage are off. Settings already live in the FRAM (`settings.c`).
+- Upstream's `main.c` (39 094 lines) replaces the scaffold loop and
+  brings the band table, menus, keypad and FT8 screen with it - the rest
+  of step 9.
+
+**Start with a census, not with code**: compile that closure against
+this port - storage and USB stubbed - and let the compiler and the
+linker write the work list (undefined symbols, GD32 registers, missing
+headers), sorted by file. That turns 72 000 lines into a number.
+
+**And settle MEMORY before the census can mislead.** Today:
+
+| image | AXI SRAM (512 kB) |
+|---|---|
+| flash image, `.data` + `.bss` | 335 kB |
+| RAM image (code too), `make` | 439 kB |
+| RAM image, `SELFTEST=1` | 98 %, 8 kB stack included |
+
+72 000 lines of code will not fit a RAM image that also carries the
+code, so **the SWD RAM-load loop - the whole working method of this
+port, `WORKING.md` "The loop" - stops working the day step 8 links**,
+unless the image is split: code in AXI, data elsewhere. Unused today:
+**DTCM 128 kB** (CPU only - right for DSP state, wrong for any DMA
+buffer: `spi3.c`'s `dma_reachable()` and `sai1.h` say why), **D2 SRAM1-3
+288 kB** (DMA-reachable; needs its RCC clock bits), SRAM4 64 kB in D3.
+The other way out - every test a DFU write - costs the owner two button
+presses a load; decide with the owner, not by default.
 
 ## 21/11/2026, night: the retune click — predicted, not faded — in git and in flash
 
