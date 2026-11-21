@@ -24,6 +24,23 @@ static uint32_t  s_sink_n;
 static uint8_t   s_path;                        /* 0 am.c, 1 upstream */
 static int32_t   s_mix_hz = (int32_t)AM_IF_HZ;
 
+/*
+ * WFM is upstream's OTHER block hook - demod_wfm_process_raw(), its own
+ * state, 512 frames at 192 kHz in and out, exactly this port's chunk -
+ * so the loop below calls one or the other. Upstream swaps the hook its
+ * DMA calls (sdr_rx_set_block_hook()); here the hook stays demod_block()
+ * and picks by s_wfm.
+ *
+ * s_cambiando: a mode change in progress, from the display loop. The
+ * block interrupt preempts the display loop, and upstream's mode switch
+ * is not something to run a block through half-way - upstream takes its
+ * hook off for the duration (apply_demod_mode(): sdr_rx_set_block_hook(0)
+ * first). A block that lands then plays silence and is counted.
+ */
+static volatile uint8_t  s_wfm;
+static volatile uint8_t  s_cambiando;
+static volatile uint32_t s_mudos;      /* blocks silenced by a mode change */
+
 static volatile uint32_t s_hooks;      /* demod_block() calls               */
 static volatile uint32_t s_sink_bad;   /* sink asked for a length != CHUNK  */
 static volatile uint32_t s_sink_none;  /* a call returned without audio     */
@@ -56,11 +73,18 @@ void demod_block(const int16_t *rx, int16_t *tx, uint32_t frames)
     uint32_t t0  = DWT->CYCCNT;
     uint32_t off = 0U;
 
+    if (s_cambiando) {
+        memset(tx, 0, frames * 2U * sizeof(int16_t));
+        s_mudos++;
+        return;
+    }
+
     for (; off + CHUNK <= frames; off += CHUNK) {
         s_sink   = &tx[off * 2U];
         s_sink_n = CHUNK;
 
-        demod_am_process_raw(&rx[off * 2U]);
+        if (s_wfm) { demod_wfm_process_raw(&rx[off * 2U]); }
+        else       { demod_am_process_raw(&rx[off * 2U]); }
 
         /*
          * A call that delivered nothing leaves this stretch of the
@@ -146,22 +170,53 @@ SWD_ENTRY void demod_path(int upstream)
 
 int demod_path_get(void) { return s_path; }
 
+/*
+ * A MODE, upstream's apply_demod_mode() minus what this board does not
+ * have: no codec rate to change - the NAU8822 runs at 192 kHz for every
+ * mode here, which is the rate upstream's WFM wants - and no hook to
+ * swap. What is left is its order: the mode; rf_doble off in WFM, as
+ * upstream's "!will_be_wfm && s_rf_doble"; the decimators forgotten; a
+ * fresh WFM entry or a short WFM mute, or the AM chain's reset; and the
+ * mix at 0 in WFM, as demod_am.h asks of whoever tunes ("demod_am_set_
+ * mix_hz(0)"). The TUNER's half - on the dial in WFM - is main.c's
+ * radio_mode_set().
+ */
 SWD_ENTRY int demod_mode(int mode)
 {
-    if (mode < (int)DEMOD_MODE_AM || mode > (int)DEMOD_MODE_SAM
-        || mode == (int)DEMOD_MODE_WFM) {
+    uint8_t wfm, era;
+
+    if (mode < (int)DEMOD_MODE_AM || mode > (int)DEMOD_MODE_SAM) {
         console_printf("demod     : mode %d refused (0 AM 1 USB 2 LSB "
-                       "3 NFM 5 SAM)\n", mode);
-    } else {
-        demod_am_set_mode((demod_mode_t)mode);
+                       "3 NFM 4 WFM 5 SAM)\n", mode);
+        return (int)demod_am_get_mode();
     }
+    wfm = (uint8_t)(mode == (int)DEMOD_MODE_WFM);
+    era = s_wfm;
+
+    s_cambiando = 1U;
+    __DSB();
+
+    demod_am_set_mode((demod_mode_t)mode);
+    demod_am_set_rf_doble((uint8_t)!wfm);
+    demod_am_decim_olvida();
+    if (wfm) {
+        if (era) { demod_wfm_mute_corto(); }
+        else     { demod_wfm_reset_diag(); }
+    } else {
+        demod_am_reset_diag();
+    }
+    demod_am_set_mix_hz(wfm ? 0.0f : (float)s_mix_hz);
+    s_wfm = wfm;
+
+    __DSB();
+    s_cambiando = 0U;
     return (int)demod_am_get_mode();
 }
 
 SWD_ENTRY void demod_mix(int hz)
 {
     s_mix_hz = (int32_t)hz;
-    demod_am_set_mix_hz((float)hz);
+    if (!s_wfm) { demod_am_set_mix_hz((float)hz); }
     console_printf("demod     : mix %d Hz\n", hz);
 }
 
@@ -178,12 +233,13 @@ SWD_ENTRY void demod_report(void)
 
     console_printf("demod     : path %s, mode %s, mix %d Hz\n",
                    s_path ? "upstream" : "am.c",
-                   (m >= 0 && m <= 5) ? names[m] : "?", s_mix_hz);
+                   (m >= 0 && m <= 5) ? names[m] : "?",
+                   s_wfm ? 0 : s_mix_hz);     /* in force: 0 in WFM */
     console_printf("            hook %u us last, %u us worst of 42667; "
                    "upstream %u us worst a call\n",
                    us(s_last), us(s_worst), us(s_up_worst));
     console_printf("            hooks %u, SAI overruns %u, sink bad %u, "
-                   "no audio %u, tail %u\n",
+                   "no audio %u, tail %u, muted by a mode change %u\n",
                    s_hooks, sai1_block_overruns, s_sink_bad, s_sink_none,
-                   s_tail);
+                   s_tail, s_mudos);
 }

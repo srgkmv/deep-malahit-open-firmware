@@ -1094,6 +1094,95 @@ Each step should end with something visible on the radio.
    and **`tools/grab.py` reads the panel's own GRAM back** (RAMRD over
    SPI3's MISO, one dummy byte, 9 s a screen) - every screen above was
    seen as the panel holds it, not as a PNG predicts it.
+33. **The frequency keypad: a tap on the frequency.** *21/11/2026, from
+   RAM, seen on the glass* - upstream's `ui_kbd.c` at 480 x 320: its
+   geometry and literals `#ifndef` upstream, proven neutral three ways
+   (`PROCEDENCIA.md`: the DEEPSDR keypad renders byte-identical, the
+   host and the Cortex-M4 disassembly identical). Its columns are
+   ui_grid's, as upstream's are: 4 x 114 + 3 x 4 in the menu area, a
+   34-row strip over keys of 114 x 46 (17 x 7 mm); the digits' INK
+   centred in the key (12 rows above, 11 below) and the typed number's
+   beside the title and hint, measured on the render rather than
+   computed from the line box - the first try, from the box, sat them
+   2-3 px low. deepsdr-ui `make malahit-menus` renders it, measures
+   every label, the longest entry (nine digits and the comma) against
+   the hint beside it, and the hit map: 0 failures. `src/menus.c` runs
+   it with upstream's entry functions as they are (one comma, Borrar
+   back past it, nothing typed is nothing done, nine digits times a
+   million in 64 bits); `radio_dial_go()` clamps to the dial as
+   upstream's clamps to its own. As upstream: the knob does nothing on
+   it, a second tap on the frequency starts the entry afresh, and it
+   takes the place of any other screen (the bar's buttons go dark).
+   Checked over SWD with `ui_tap` and `grab.py`: 7,155 MHz (with a
+   Borrar on the way) tuned 7 155 000 Hz and the pill said 40 m; 165 MHz
+   stopped at 30 MHz with "el borde del dial" on the console; MHz on an
+   empty entry and after a lone comma did nothing; Vaciar, Volver
+   (no retune), over Paso, and Bandas from it all as they should;
+   10000 kHz put the radio back on 10 MHz. FRAM format unchanged.
+34. **Suavizado, and a settings record of its own: version 4.**
+   *21/11/2026, from RAM, seen on the glass* - upstream's third
+   continuous setting: an exponential average of the TRACE between
+   frames (`s_db_traza`, upstream's name), the waterfall and the S-meter
+   left raw, as upstream's are; 0-95 % of weight on the history in 5 %
+   steps, 25 % by default (upstream's since 30/10/2026). On the Espectro
+   page before Puente, as upstream has it, opening the detail page; the
+   number alone in the big digits because neither font_num_31 nor
+   upstream's font_num_44 has a '%' (upstream's own page draws "25 "),
+   the unit in the line under it. **Measured on the radio**: eight
+   dumps of `s_db` and `s_db_traza` over SWD at 40 %, the noise floor's
+   frame-to-frame spread 4.97 dB raw and 3.10 dB on the trace - 0.62,
+   where an EMA on white noise predicts 0.65 - and the mean level 0.4 dB
+   apart.
+   **The FRAM record is version 4 now, and older firmware cannot read
+   it** - the owner allowed exactly that the same night. The 32-byte
+   slot had three bits left that older images ignore, for a setting of
+   twenty values. Version 4 is 64-byte slots at 0x4100, a byte a value,
+   27 bytes of room, CRC-32; the old slots at 0x4000 are only READ, so
+   the first boot of this image came back on the v3 record (seq 150,
+   "suavizado is the default") and its first save wrote v4 (seq 151).
+   Reloaded: "record version 4, at 0x4100", suavizado 40 % from the
+   FRAM; set back to 25. An image before this one boots on defaults
+   over a v4 record.
+35. **VHF, and WFM with the tuner on the dial.** *21/11/2026, from RAM;
+   the paths checked on the radio, and WFM heard by the owner on an
+   antenna: "plays fine", in mono - upstream's WFM is mono by design
+   (demod_am.h: no room in +/-96 kHz for the 19 kHz pilot and the 38 kHz
+   L-R), so no stereo is expected* - the owner's choice of the two ways:
+   as upstream does it.
+   - **The dial goes to 180 MHz**, upstream's own top (RADIO_TUNE_* in
+     `src/menus.h`, which the band screen reads too: FM OIRT, FM, Aérea,
+     Meteo, Marina, VHF alta and APRS appear). `msi001_retune()` now
+     switches the MSi001's path when a frequency crosses an edge - the
+     fast path kept the boot's AM mode, so a VHF frequency was planned
+     as a 132 MHz up-conversion. **The edges are the factory firmware's
+     and the board's, not the chip's**: AM below 60, VHF 60-120, B3
+     120-250 (RE report 5.4), the schematic's filters being "VHF1 50MHz
+     - 120MHz" and "VHF2 120MHz - 250MHz"; this port had 150/260 and no
+     VHF2 at all. VHF2 is mask 0x2B (BOARD.md's sub-band switch on RF4).
+     The filter is chosen by the TUNER's frequency now, as the path is,
+     so the two cannot sit on opposite sides of an edge.
+   - **WFM**: upstream's `demod_wfm_process_raw()` - its own 192 kHz,
+     512-frame hook, exactly this port's chunk, so `demod_block()` calls
+     it instead of `demod_am_process_raw()`; upstream's mode-switch order
+     without the codec-rate half this board does not need (rf_doble off,
+     decimators forgotten, the WFM entry reset or short mute, mix 0). A
+     mode change now raises a flag the block interrupt answers with
+     silence, where before upstream's switch ran with blocks going
+     through it (upstream takes its hook off). **The tuner goes ON the
+     dial in WFM** (`s_lo_off` 0, 12 kHz in every other mode), so does
+     the spectrum's window (bins 32..479 instead of 64..511), and the
+     boot puts it there before its first tune when the FRAM says WFM.
+     The BW chip in WFM is upstream's audio low-pass, 15/8/4 kHz, and
+     the FRAM keeps it (record v4, byte 27, 0 = not stored).
+   - **Checked on the radio**, over SWD: 100 MHz in AM - plan 100 000 000
+     Hz exact, LODIV 32, VCO 3.2 GHz, register 0 with VHF_MODE and
+     RF_SYNTH, filter 0x28; WFM there - "tuner on the dial", the leakage
+     under the centre mark, the hook 6.7 ms of 42.7, no overrun, no
+     sink error, no silent block; boot straight into WFM from the FRAM;
+     the BW chip round 15 -> 8 -> 4 -> 15 k; 145 MHz - B3, LODIV 16,
+     filter 0x2B; back to 10 MHz AM - the generator's carrier at 94 dB,
+     as before any of it. Then the owner put an antenna on it and
+     listened: WFM plays fine, mono.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

@@ -15,6 +15,7 @@
 #include "palette.h"       /* g_pal */
 #include "settings.h"      /* src/ - the FRAM record, not upstream's */
 #include "ui_det.h"        /* ../../User - upstream: one continuous setting */
+#include "ui_kbd.h"        /* ../../User - upstream: the frequency keypad */
 
 /* What ui_cfg.c draws the range line in, defined once in fonts_menu.c. */
 extern const gfx2_font_t font_ui_10;
@@ -29,9 +30,10 @@ static int8_t          s_pressed = -1;   /* the hit index under the finger */
 /* ------------------------------------------------------------------ */
 
 /*
- * The analogue family of upstream's mode screen, without WFM: upstream's
- * WFM path demodulates the station at 0 Hz and this port keeps it 12 kHz
- * off the LO (am.h), so it is not offered until that is reconciled. The
+ * The analogue family of upstream's mode screen. WFM since 21/11/2026:
+ * upstream's WFM path demodulates the station at 0 Hz, so in WFM the
+ * tuner goes ON the dial instead of 12 kHz under it (main.c,
+ * radio_mode_set()) - the owner's choice, as upstream does it. The
  * digital families need their decoders, which are switched off
  * (decoders_off.c). The descriptions are upstream's, except AM's:
  * "Amplitud modulada" is 91 px in a 92 px cell, measured by the host
@@ -43,6 +45,7 @@ static const struct { int mode; const char *n; const char *d; } k_modos[] = {
     { DEMOD_MODE_USB, "USB", "Banda lateral alta" },
     { DEMOD_MODE_LSB, "LSB", "Banda lateral baja" },
     { DEMOD_MODE_NFM, "NFM", "FM estrecha" },
+    { DEMOD_MODE_WFM, "WFM", "FM ancha" },
 };
 #define N_MODOS ((uint8_t)(sizeof k_modos / sizeof k_modos[0]))
 
@@ -78,8 +81,8 @@ static void modos_rellena(void)
  * so is a family left with none. radio_band_go() would clamp the dial
  * instead, which is a band button that tunes somewhere else.
  */
-#define BAND_LO_HZ  100000UL
-#define BAND_HI_HZ  30000000UL
+#define BAND_LO_HZ  RADIO_TUNE_MIN_HZ
+#define BAND_HI_HZ  RADIO_TUNE_MAX_HZ
 
 static uint8_t s_fam_of_cat[UIC_CATS];   /* visible category -> family */
 static uint8_t s_band_of_cel[UIC_CELLS]; /* cell -> index in banda[] */
@@ -127,7 +130,8 @@ static int modo_de(const char *s)
     if (!strcmp(s, "USB")) { return DEMOD_MODE_USB; }
     if (!strcmp(s, "LSB")) { return DEMOD_MODE_LSB; }
     if (!strcmp(s, "NFM")) { return DEMOD_MODE_NFM; }
-    return -1;                                  /* WFM: not here yet */
+    if (!strcmp(s, "WFM")) { return DEMOD_MODE_WFM; }
+    return -1;
 }
 
 /*
@@ -253,12 +257,12 @@ static void pasos_rellena(void)
  * pages under the same names, and the values in upstream's words. A tap
  * (or the knob's press on the cursor) steps an enumerated value, as
  * upstream's does; the two the small knob owns - ATT and volume - hand
- * it over instead. Not kept in the FRAM yet.
+ * it over instead. Kept in the FRAM (settings.c, record version 4).
  */
 typedef enum {
     AJ_AGC, AJ_BW, AJ_NOTCH, AJ_SQL, AJ_NR, AJ_NB, AJ_PRE, AJ_ATT,
     AJ_TEMA, AJ_PALETA, AJ_ESTILO, AJ_VOL,
-    AJ_PUENTE, AJ_TRAZA
+    AJ_SUAV, AJ_PUENTE, AJ_TRAZA
 } aj_id_t;
 
 enum { AJ_PAG_RADIO = 0, AJ_PAG_PANTALLA, AJ_PAG_ESPECTRO, AJ_PAGS };
@@ -278,6 +282,7 @@ static const struct { const char *nombre; uint8_t pag; uint8_t id; } k_aj[] = {
     { "Paleta",      AJ_PAG_PANTALLA, AJ_PALETA },
     { "Estilo",      AJ_PAG_PANTALLA, AJ_ESTILO },
     { "Volumen",     AJ_PAG_PANTALLA, AJ_VOL    },
+    { "Suavizado",   AJ_PAG_ESPECTRO, AJ_SUAV   },   /* upstream's place: before Puente */
     { "Puente",      AJ_PAG_ESPECTRO, AJ_PUENTE },
     { "Traza",       AJ_PAG_ESPECTRO, AJ_TRAZA  },
 };
@@ -288,7 +293,7 @@ static const char *const k_notch_nom[4] = { "Suave", "Normal", "Fuerte", "A saco
 static const char *const k_nb_nom[4]    = { "Apagado", "Suave", "Medio", "Fuerte" };
 
 /*
- * THE DETAIL PAGE - upstream's ui_det.c, for the four continuous ones:
+ * THE DETAIL PAGE - upstream's ui_det.c, for the five continuous ones:
  * "-" and "+" either side of the value, the knob turning it, the knob's
  * press or "Volver" back to the grid. Opened from a cell, and part of the
  * settings screen: the Ajustes button stays lit, and pressing it from
@@ -296,9 +301,10 @@ static const char *const k_nb_nom[4]    = { "Apagado", "Suave", "Medio", "Fuerte
  *
  * Squelch: upstream's -10..60 dB in 2 dB steps (SQUELCH_DB_* in its
  * main.c). NR strength: 0..4080 in 16s - upstream's 0..4095 in 10s,
- * moved onto the grid the FRAM stores it on (settings.h).
+ * moved onto the grid the FRAM stores it on (settings.h). Suavizado:
+ * upstream's 0..95 % in 5s (SPECTRUM_SMOOTH_* in its main.c).
  */
-enum { DET_NINGUNO = 0, DET_SQL, DET_NR, DET_VOL, DET_ATT };
+enum { DET_NINGUNO = 0, DET_SQL, DET_NR, DET_VOL, DET_ATT, DET_SUAV };
 
 #define SQL_FLOOR_DB   (-10)
 #define SQL_CEIL_DB      60
@@ -358,6 +364,10 @@ static const char *aj_valor(uint8_t id)
         default:                     return "Contorno";
         }
     case AJ_VOL:    return radio_vol_text();
+    case AJ_SUAV: {
+        static char b[8];               /* its own: a page's values all live at once */
+        return num_txt(b, (int32_t)radio_suav_pct(), " %");
+    }
     case AJ_PUENTE: return spectrum_get_bridge() ? "Unido" : "Suelto";
     case AJ_TRAZA:  return spectrum_get_heatmap_trace_white() ? "Blanca" : "Del color";
     default:        return "";
@@ -415,6 +425,14 @@ static void det_fmt(void)
         s_dst.valor  = num_txt(s_det_val, -(int32_t)radio_att_db(), " dB");
         s_dst.pie    = "reducción de ganancia del sintonizador";
         break;
+    case DET_SUAV:
+        /* The number alone: font_num_31 has no '%' (nor has upstream's
+         * font_num_44, so upstream's own page draws "25 " here), so the
+         * unit goes to the line under it. */
+        s_dst.titulo = "Suavizado";
+        s_dst.valor  = num_txt(s_det_val, (int32_t)radio_suav_pct(), 0);
+        s_dst.pie    = "% promediado entre fotogramas";
+        break;
     default:
         break;
     }
@@ -444,6 +462,7 @@ static void det_add(int32_t d)
     case DET_VOL: (void)radio_vol_set(radio_vol_db() + (int)d); break;
     /* "+" is more gain, so the shown "-59 dB" goes UP: less reduction. */
     case DET_ATT: (void)radio_att_set(radio_att_db() - (int)d); break;
+    case DET_SUAV: (void)radio_suav_set(radio_suav_pct() + 5 * (int)d); break;
     default: break;
     }
     det_fmt();
@@ -491,6 +510,7 @@ static void aj_toca(uint8_t id)
     case AJ_PRE:   radio_preamp_toggle(); break;
     case AJ_ATT:   det_open(DET_ATT); return;
     case AJ_VOL:   det_open(DET_VOL); return;
+    case AJ_SUAV:  det_open(DET_SUAV); return;
     case AJ_TEMA:
         s_tema = (uint8_t)((s_tema + 1U) % (uint8_t)SIM_TEMA_COUNT);
         g_pal  = k_sim_temas[s_tema].pal;
@@ -544,6 +564,9 @@ void menu_ajustes_get(settings_t *s)
         s->aj_sql = (uint8_t)((q < 0) ? 0 : q);
     }
     s->aj_nr = (uint8_t)(s_nr_strength / NR_STEP);
+    s->aj_suav   = (uint8_t)radio_suav_pct();
+    s->has_suav  = 1U;
+    s->aj_wfm_bw = (uint8_t)(demod_am_get_audio_bw() + 1U);
 }
 
 /* What the screen shows - before the first paint, so a stored theme is
@@ -562,6 +585,7 @@ void menu_ajustes_apply_pantalla(const settings_t *s)
         spectrum_set_palette((spectrum_palette_t)s->aj_paleta);
     }
     if (s->aj_estilo < 3U) { spectrum_set_style((spectrum_style_t)s->aj_estilo); }
+    if (s->has_suav) { (void)radio_suav_set((int)s->aj_suav); }   /* clamps */
     spectrum_set_bridge((s->aj_flags & SET_AJ_PUENTE) ? 1U : 0U);
     spectrum_set_heatmap_trace_white((s->aj_flags & SET_AJ_TRAZA_W) ? 1U : 0U);
 }
@@ -594,10 +618,179 @@ void menu_ajustes_apply_radio(const settings_t *s)
     anotch_set_activo((s->aj_flags & SET_AJ_NOTCH_ON) ? 1U : 0U);
     nr_ss_set_enabled((s->aj_flags & SET_AJ_NR_ON) ? 1U : 0U);
     radio_bw_unpack(s->aj_bw);
+    if (s->aj_wfm_bw >= 1U && s->aj_wfm_bw <= (uint8_t)AUDIO_BW_1K8 + 1U) {
+        demod_am_set_audio_bw((audio_bw_t)(s->aj_wfm_bw - 1U));
+    }
 }
 
 const char *menu_tema_nombre(void) { return k_sim_temas[s_tema].nombre; }
 uint32_t    menu_nr_strength(void) { return s_nr_strength; }
+
+/* ------------------------------------------------------------------ */
+/* THE FREQUENCY KEYPAD                                                */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Upstream's ui_kbd.c, opened by a tap on the frequency in the header.
+ * What a key DOES is upstream's too, from its main.c, and kept as it is
+ * there for the reason upstream gives: the entry functions carry their
+ * odd cases already solved - a comma with nothing after it yet, Borrar
+ * back past the comma, nine digits times a million done in 64 bits.
+ *
+ *   menu_freq_keypad_digit/point/del/clr/accept_callback  -> kbd_*()
+ *   kbd_lectura_freq()                                    -> kbd_lectura()
+ *   k_kbd_freq_rot[], k_kbd_freq_tipo[], k_kbd_digito[]   -> the same
+ *   kbd_apply(), kbd_touch()                              -> kbd_apply(),
+ *                                         menu_touch_down()/menu_touch_up()
+ *
+ * The digits are typed, never pre-filled with the dial: "typing a fresh
+ * number is the point" (upstream). Out of the dial's range clamps to its
+ * edge, as upstream's does to its own (radio_dial_go()). The big knob
+ * does nothing here, as upstream's does nothing (its comment, 23/09/2026:
+ * a knob that fell through repainted the radio over invisible keys).
+ * Upstream's clock keypad is the same module and is not wired: this
+ * radio has no clock setting yet.
+ */
+#define FE_MAX_DIGITS  9U       /* upstream's FREQ_ENTRY_MAX_DIGITS */
+#define FE_NO_POINT    0xFFU    /* upstream's FREQ_ENTRY_NO_POINT */
+
+static ui_kbd_state_t s_kbd;
+static uint32_t       s_fe_value;
+static uint8_t        s_fe_digits;
+static uint8_t        s_fe_point = FE_NO_POINT;  /* digits before the comma */
+static char           s_kbd_lectura[16];
+
+static const char *const k_kbd_rot[UIK_KEYS] = {
+    "1", "2", "3", "Borrar",
+    "4", "5", "6", "Vaciar",
+    "7", "8", "9", "Volver",
+    ",", "0", "kHz", "MHz",
+};
+static const uint8_t k_kbd_tipo[UIK_KEYS] = {
+    UIK_DIGITO, UIK_DIGITO, UIK_DIGITO, UIK_BORRA,
+    UIK_DIGITO, UIK_DIGITO, UIK_DIGITO, UIK_BORRA,
+    UIK_DIGITO, UIK_DIGITO, UIK_DIGITO, UIK_VUELVE,
+    UIK_DIGITO, UIK_DIGITO, UIK_ACEPTA, UIK_ACEPTA,
+};
+static const uint8_t k_kbd_digito[UIK_KEYS] = {
+    1U, 2U, 3U, 0xFFU,
+    4U, 5U, 6U, 0xFFU,
+    7U, 8U, 9U, 0xFFU,
+    0xFFU, 0U, 0xFFU, 0xFFU,
+};
+
+/* The digits as typed, leading zeros and all, the comma where it went. */
+static void kbd_lectura(void)
+{
+    char     tmp[FE_MAX_DIGITS + 1U];
+    uint32_t v = s_fe_value;
+    uint8_t  n = s_fe_digits, i = n, k = 0U, j;
+
+    s_kbd.lectura = s_kbd_lectura;
+    if (n == 0U && s_fe_point == FE_NO_POINT) {
+        s_kbd_lectura[0] = '\0';
+        return;
+    }
+    tmp[n] = '\0';
+    while (i > 0U) { tmp[--i] = (char)('0' + (v % 10U)); v /= 10U; }
+    for (j = 0U; j < n; j++) {
+        if (s_fe_point != FE_NO_POINT && j == s_fe_point) { s_kbd_lectura[k++] = ','; }
+        s_kbd_lectura[k++] = tmp[j];
+    }
+    /* A comma with no digits after it yet is shown, or the tap looks lost. */
+    if (s_fe_point != FE_NO_POINT && s_fe_point >= n) { s_kbd_lectura[k++] = ','; }
+    s_kbd_lectura[k] = '\0';
+}
+
+static void kbd_lectura_draw(void)
+{
+    kbd_lectura();
+    ui_kbd_draw_lectura(&s_kbd);
+}
+
+static void kbd_digit(uint8_t d)
+{
+    if (s_fe_digits >= FE_MAX_DIGITS) { return; }
+    s_fe_value = s_fe_value * 10U + d;
+    s_fe_digits++;
+    kbd_lectura_draw();
+}
+
+static void kbd_point(void)
+{
+    if (s_fe_point != FE_NO_POINT) { return; }      /* one per entry */
+    s_fe_point = s_fe_digits;
+    kbd_lectura_draw();
+}
+
+static void kbd_del(void)
+{
+    if (s_fe_digits > 0U) {
+        s_fe_value /= 10U;
+        s_fe_digits--;
+        /* Back past the comma, or onto it: the comma goes too. */
+        if (s_fe_point != FE_NO_POINT && s_fe_point > s_fe_digits) {
+            s_fe_point = FE_NO_POINT;
+        }
+        kbd_lectura_draw();
+    } else if (s_fe_point != FE_NO_POINT) {
+        s_fe_point = FE_NO_POINT;                    /* a lone comma */
+        kbd_lectura_draw();
+    }
+}
+
+static void kbd_clr(void)
+{
+    s_fe_value  = 0U;
+    s_fe_digits = 0U;
+    s_fe_point  = FE_NO_POINT;
+    kbd_lectura_draw();
+}
+
+/* kHz or MHz. Nothing typed is nothing done: no retune to the bottom of
+ * the dial from an empty entry. The multiply and the divide are in 64
+ * bits, so nine digits times a million cannot overflow on the way. */
+static void kbd_accept(uint32_t mult)
+{
+    uint64_t hz;
+    uint32_t got;
+
+    if (s_fe_digits == 0U && s_fe_point == FE_NO_POINT) { return; }
+    hz = (uint64_t)s_fe_value * mult;
+    if (s_fe_point != FE_NO_POINT) {
+        uint8_t i;
+
+        for (i = s_fe_point; i < s_fe_digits; i++) { hz /= 10U; }
+    }
+    if (hz > 0xFFFFFFFFULL) { hz = 0xFFFFFFFFULL; }
+
+    got = radio_dial_go((uint32_t)hz);
+    if (got == 0U) {
+        console_printf("  teclado: %s -> el sintetizador no fue a %u Hz\n",
+                       s_kbd_lectura, (uint32_t)hz);
+    } else {
+        console_printf("  teclado: %s %s -> %u Hz%s\n", s_kbd_lectura,
+                       mult == 1000U ? "kHz" : "MHz", got,
+                       (uint64_t)got != hz ? " (el borde del dial)" : "");
+    }
+    menu_close();
+}
+
+static void kbd_apply(uint8_t i)
+{
+    uint8_t d = k_kbd_digito[i];
+
+    if (d != 0xFFU) { kbd_digit(d); return; }
+    switch (i) {
+    case 3U:  kbd_del();            break;
+    case 7U:  kbd_clr();            break;
+    case 11U: menu_close();         break;
+    case 12U: kbd_point();          break;
+    case 14U: kbd_accept(1000U);    break;
+    case 15U: kbd_accept(1000000U); break;
+    default:                        break;
+    }
+}
 
 /* ------------------------------------------------------------------ */
 
@@ -605,8 +798,9 @@ menu_t menu_open_id(void) { return s_open; }
 
 static void dibuja(void)
 {
-    if (s_open == MENU_PASO) { ui_grid_draw(&s_grid); }
-    else                     { ui_cfg_draw(&s_cfg); }
+    if (s_open == MENU_PASO)         { ui_grid_draw(&s_grid); }
+    else if (s_open == MENU_TECLADO) { ui_kbd_draw(&s_kbd); }
+    else                             { ui_cfg_draw(&s_cfg); }
 }
 
 static void menu_dibuja(void) { dibuja(); }
@@ -632,6 +826,7 @@ void menu_toggle(menu_t m)
 
     s_pressed = -1;
     switch (m) {
+    case MENU_TECLADO: menu_teclado_open(); return;
     case MENU_MODO:   modos_rellena(); break;
     case MENU_BANDAS: bandas_familia_inicial(); bandas_rellena(); break;
     case MENU_PASO:   pasos_rellena(); break;
@@ -646,6 +841,36 @@ void menu_toggle(menu_t m)
                                    : m == MENU_PASO ? "Paso" : "Ajustes");
 }
 
+/*
+ * A tap on the frequency. Opening it again over itself starts the entry
+ * afresh, as upstream's kbd_show() does; over any other screen it takes
+ * that screen's place, as upstream allows on purpose.
+ */
+void menu_teclado_open(void)
+{
+    uint8_t i;
+
+    s_det       = DET_NINGUNO;
+    s_pressed   = -1;
+    s_fe_value  = 0U;
+    s_fe_digits = 0U;
+    s_fe_point  = FE_NO_POINT;
+    memset(&s_kbd, 0, sizeof s_kbd);
+    s_kbd.titulo  = "Frecuencia";
+    s_kbd.pista   = "teclea y elige la unidad";
+    s_kbd.pressed = -1;
+    s_kbd.cursor  = -1;
+    for (i = 0U; i < UIK_KEYS; i++) {
+        s_kbd.tecla[i] = k_kbd_rot[i];
+        s_kbd.tipo[i]  = k_kbd_tipo[i];
+    }
+    kbd_lectura();
+    s_open = MENU_TECLADO;
+    ui_kbd_draw(&s_kbd);
+    radio_act_refresh();        /* no button of the bar is this screen's */
+    console_printf("  menu -> Teclado\n");
+}
+
 int menu_touch_down(uint16_t x, uint16_t y, int nuevo)
 {
     int8_t h;
@@ -653,6 +878,17 @@ int menu_touch_down(uint16_t x, uint16_t y, int nuevo)
     if (s_open == MENU_NONE) { return 0; }
     if (y < UIG_Y || y >= UIG_Y + UIG_H) { return 0; }
     if (!nuevo) { return 1; }
+
+    /* Decided on the press and kept to the lift, as upstream's
+     * kbd_touch(): the lift's coordinates are not to be trusted. */
+    if (s_open == MENU_TECLADO) {
+        h = ui_kbd_hit(x, y);
+        if (h < 0 || s_kbd.tipo[h] == (uint8_t)UIK_NADA) { return 1; }
+        s_kbd.pressed = h;
+        ui_kbd_draw_one(&s_kbd, h);
+        s_pressed = h;
+        return 1;
+    }
 
     if (s_open == MENU_AJUSTES && s_det != DET_NINGUNO) {
         h = ui_det_hit(x, y);
@@ -692,6 +928,13 @@ void menu_touch_up(void)
 
     if (h < 0 || s_open == MENU_NONE) { return; }
     s_pressed = -1;
+
+    if (s_open == MENU_TECLADO) {
+        s_kbd.pressed = -1;
+        ui_kbd_draw_one(&s_kbd, h);
+        kbd_apply((uint8_t)h);
+        return;
+    }
 
     if (s_open == MENU_AJUSTES && s_det != DET_NINGUNO) {
         s_dst.pressed = -1;
@@ -796,6 +1039,7 @@ void menu_knob(int32_t d)
     int8_t was, now;
 
     if (s_open == MENU_NONE || d == 0) { return; }
+    if (s_open == MENU_TECLADO) { return; }         /* upstream's: no knob */
     if (s_open == MENU_AJUSTES && s_det != DET_NINGUNO) { det_add(d); return; }
 
     if (s_open == MENU_PASO) {
@@ -841,7 +1085,7 @@ void menu_knob_press(void)
 {
     int8_t c;
 
-    if (s_open == MENU_NONE) { return; }
+    if (s_open == MENU_NONE || s_open == MENU_TECLADO) { return; }
     if (s_open == MENU_AJUSTES && s_det != DET_NINGUNO) { det_close(); return; }
     c = (s_open == MENU_PASO) ? s_grid.cursor : s_cfg.cursor;
     if (c < 0) { c = cursor_ini(); }

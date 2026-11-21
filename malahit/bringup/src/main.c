@@ -5450,8 +5450,8 @@ static int  s_knob2_rf;             /* 0 = volume, 1 = RF gain */
 static char s_knob2_txt[12];
 
 #define TUNE_STEP_HZ    ((uint32_t)paso_tabla[s_step_idx].hz)
-#define TUNE_MIN_HZ     100000U
-#define TUNE_MAX_HZ     30000000U
+#define TUNE_MIN_HZ     ((uint32_t)RADIO_TUNE_MIN_HZ)  /* src/menus.h */
+#define TUNE_MAX_HZ     ((uint32_t)RADIO_TUNE_MAX_HZ)
 
 /*
  * THE DIAL, THE TUNER, AND A FIXED 12 kHz BETWEEN THEM.
@@ -5493,6 +5493,32 @@ _Static_assert(PAN_IF_BINS * PAN_BIN_HZ == AM_IF_HZ,
  * PAN_IF_BINS above it - and that is what puts the dial mid-trace. */
 _Static_assert(PAN_LO + PAN_SHOWN / 2U == PAN_BINS / 2U + PAN_IF_BINS,
                "the shown window must be centred on the dial");
+
+/*
+ * THE OFFSET IS THE MODE'S SINCE WFM - 21/11/2026, the owner's choice.
+ *
+ * Upstream's WFM path takes the station at 0 Hz: no down-mix, no channel
+ * filter, the discriminator straight on the raw +/-96 kHz (demod_am.h,
+ * its WFM note: "the local oscillator exactly on frequency"). A 200 kHz
+ * broadcast channel 12 kHz off the middle of a 192 kHz window loses its
+ * top edge to the codec's anti-alias filter, so in WFM the TUNER goes on
+ * the dial, as upstream's does, and the leakage sits under the carrier -
+ * which a discriminator does not mind the way an envelope detector does.
+ * Every other mode keeps the 12 kHz (am.h).
+ *
+ * So the dial-to-tuner offset is a variable, and with it the window of
+ * bins the trace and the waterfall show: still the 448 centred on the
+ * dial, which at 0 Hz is centred on DC.
+ */
+#define PAN_LO_WFM      (PAN_BINS / 2U - PAN_SHOWN / 2U)    /* 32       */
+
+static uint32_t s_lo_off = AM_IF_HZ;    /* dial minus tuner */
+static uint32_t s_pan_lo = PAN_LO;      /* first bin shown */
+
+static uint32_t lo_off_for(int mode)
+{
+    return (mode == (int)DEMOD_MODE_WFM) ? 0U : AM_IF_HZ;
+}
 
 /* am_probe()'s MIRROR side, with nothing there, read at most 118 over
  * two runs on 19/11/2026 (no generator); a verdict needs one side over
@@ -5877,7 +5903,8 @@ static int settings_same(const settings_t *a, const settings_t *b)
         && a->aj_agc == b->aj_agc && a->aj_estilo == b->aj_estilo
         && a->aj_flags == b->aj_flags && a->aj_tema == b->aj_tema
         && a->aj_paleta == b->aj_paleta && a->aj_bw == b->aj_bw
-        && a->aj_sql == b->aj_sql && a->aj_nr == b->aj_nr;
+        && a->aj_sql == b->aj_sql && a->aj_nr == b->aj_nr
+        && a->aj_suav == b->aj_suav && a->aj_wfm_bw == b->aj_wfm_bw;
 }
 
 static void settings_now(settings_t *out)
@@ -6034,7 +6061,7 @@ static int dial_tune(int64_t dial_hz)
         am_retune_note();
     }
 
-    if (msi001_retune((uint32_t)dial_hz - AM_IF_HZ) != MSI_OK) {
+    if (msi001_retune((uint32_t)dial_hz - s_lo_off) != MSI_OK) {
         return 0;
     }
 
@@ -6047,7 +6074,7 @@ static int dial_tune(int64_t dial_hz)
      * synthesiser reached the TUNER's frequency; the dial is the same
      * fixed offset above it.
      */
-    s_tuned_hz = kp->f_actual + AM_IF_HZ;
+    s_tuned_hz = kp->f_actual + s_lo_off;
     ui_fmt_khz(s_tuned_hz, s_freq_txt, sizeof s_freq_txt);
     ui_top_draw_freq(&s_top);
 
@@ -6074,7 +6101,11 @@ static int dial_tune(int64_t dial_hz)
      */
     static uint32_t s_bpf_was   = UINT32_MAX;
     static uint32_t s_addon_was = UINT32_MAX;
-    uint32_t        bpf   = msi001_bpf_for(s_tuned_hz);
+    /* The filter by the TUNER's frequency, as msi001_retune() picks the
+     * MSi001's path: at 60 or 120 MHz the dial and the tuner can be on
+     * two sides of an edge, and an AM path behind a VHF filter is
+     * silence. */
+    uint32_t        bpf   = msi001_bpf_for(kp->f_actual);
     addon_filter_t  addon = addon_filter_for(s_tuned_hz);
 
     if (bpf != s_bpf_was) {
@@ -6489,6 +6520,23 @@ static const struct { uint16_t lo, hi; } k_fil_quick[3] = {
 };
 static char s_top_bw[12];
 
+/*
+ * IN WFM THE BW CHIP IS THE AUDIO LOW-PASS - upstream's wfm_alpf_khz():
+ * WFM has no channel filter family (demod_am_filtro_familia() would
+ * answer SSB's), and what there is to choose is the audio low-pass
+ * behind the discriminator, upstream's three AUDIO_BW_* reused as 15, 8
+ * and 4 kHz. "15 k", as upstream's wfm_alpf_format() writes it.
+ */
+static uint16_t wfm_alpf_khz(void)
+{
+    switch (demod_am_get_audio_bw()) {
+    case AUDIO_BW_2K3: return 8U;
+    case AUDIO_BW_1K8: return 4U;
+    case AUDIO_BW_4K0:
+    default:           return 15U;
+    }
+}
+
 static void top_sync_chips(void)
 {
     uint16_t lo = 0U, hi = 0U;
@@ -6496,6 +6544,18 @@ static void top_sync_chips(void)
     agc_profile_t p = demod_am_get_agc_profile();
 
     s_top.agc = k_agc_names[(p <= AGC_PROFILE_FAST) ? (uint32_t)p : 0U];
+
+    if (demod_am_get_mode() == DEMOD_MODE_WFM) {
+        uint16_t k = wfm_alpf_khz();
+
+        if (k >= 10U) { s_top_bw[i++] = (char)('0' + k / 10U); }
+        s_top_bw[i++] = (char)('0' + k % 10U);
+        s_top_bw[i++] = ' ';
+        s_top_bw[i++] = 'k';
+        s_top_bw[i]   = '\0';
+        s_top.bw = s_top_bw;
+        return;
+    }
 
     demod_am_get_filtro(demod_am_filtro_familia(), &lo, &hi);
     /* upstream's fil_format(): "0-4,0k", "0,3-2,7k" */
@@ -6527,6 +6587,19 @@ static void agc_cycle(void)
 
 static void bw_cycle(void)
 {
+    /* WFM: upstream's audio_bw_cycle(), 15 -> 8 -> 4 -> 15 kHz. */
+    if (demod_am_get_mode() == DEMOD_MODE_WFM) {
+        audio_bw_t b = demod_am_get_audio_bw();
+
+        b = (b == AUDIO_BW_4K0) ? AUDIO_BW_2K3
+          : (b == AUDIO_BW_2K3) ? AUDIO_BW_1K8 : AUDIO_BW_4K0;
+        demod_am_set_audio_bw(b);
+        top_sync_chips();
+        ui_top_draw_status(&s_top);
+        console_printf("  BW (WFM audio) -> %s\n", s_top.bw);
+        return;
+    }
+
     uint8_t  fam = demod_am_filtro_familia();
     uint16_t lo = 0U, hi = 0U;
     int      k, now = -1;
@@ -6590,6 +6663,21 @@ void radio_mode_set(int mode)
      */
     if (!demod_path_get()) { demod_path(1); }
     (void)demod_mode(mode);
+
+    /* Into or out of WFM: the same dial, the tuner moved under it. */
+    {
+        uint32_t off = lo_off_for(radio_mode_get());
+
+        if (off != s_lo_off) {
+            s_lo_off = off;
+            s_pan_lo = off ? PAN_LO : PAN_LO_WFM;
+            if (!dial_tune((int64_t)s_tuned_hz)) {
+                console_printf("  *** the tuner refused %u Hz for %s ***\n",
+                               s_tuned_hz - off, radio_mode_name(radio_mode_get()));
+            }
+            console_printf("  tuner %s the dial\n", off ? "12 kHz below" : "on");
+        }
+    }
     s_top.mode = radio_mode_name(radio_mode_get());
     top_sync_chips();                   /* the filter family follows the mode */
     ui_top_draw(&s_top);
@@ -6631,6 +6719,64 @@ int radio_band_go(uint32_t hz, int mode, const char *name)
         radio_act_refresh();
     }
     return 1;
+}
+
+/*
+ * SMOOTHING - upstream's "Suavizado", s_spectrum_smooth_alpha in its
+ * main.c: an exponential average of the TRACE between frames, per bin,
+ * with this much weight on what was drawn before. 0 draws each frame
+ * raw; 95 % is upstream's ceiling (100 would freeze it). Upstream's
+ * default is 25 since 30/10/2026, its owner's word: at 75 a short burst
+ * left a trail and the noise floor came out rounded.
+ *
+ * The WATERFALL stays raw, as upstream's does since it split the two
+ * arrays (its s_db_frame / s_db_traza): a row is one moment, and an
+ * average smears it into the rows after it. So does the S-meter's peak.
+ *
+ * Kept up to date under a menu too - it is 448 multiplies - so the trace
+ * is current the moment the menu closes.
+ */
+#define SUAV_MAX_PCT    95
+#define SUAV_STEP_PCT    5
+
+static float   s_db_traza[PAN_SHOWN];
+static uint8_t s_db_traza_lista;
+static uint8_t s_suav_pct = 25U;
+
+static void traza_suaviza(const float *db)
+{
+    const float a = (float)s_suav_pct * 0.01f, b = 1.0f - a;
+    uint32_t    i;
+
+    if (!s_db_traza_lista) {
+        /* The first frame: nothing to blend with, so no fade-in from
+         * zero at every boot - upstream's s_db_traza_lista. */
+        for (i = 0U; i < PAN_SHOWN; i++) { s_db_traza[i] = db[i]; }
+        s_db_traza_lista = 1U;
+        return;
+    }
+    for (i = 0U; i < PAN_SHOWN; i++) { s_db_traza[i] = a * s_db_traza[i] + b * db[i]; }
+}
+
+int radio_suav_pct(void) { return (int)s_suav_pct; }
+
+int radio_suav_set(int pct)
+{
+    if (pct < 0)            { pct = 0; }
+    if (pct > SUAV_MAX_PCT) { pct = SUAV_MAX_PCT; }
+    pct -= pct % SUAV_STEP_PCT;
+    s_suav_pct = (uint8_t)pct;
+    return pct;
+}
+
+uint32_t radio_dial_go(uint32_t hz)
+{
+    if (hz < TUNE_MIN_HZ) { hz = TUNE_MIN_HZ; }
+    if (hz > TUNE_MAX_HZ) { hz = TUNE_MAX_HZ; }
+    if (!dial_tune((int64_t)hz)) { return 0U; }
+    ui_top_draw(&s_top);
+    radio_act_refresh();
+    return s_tuned_hz;
 }
 
 uint32_t radio_step_count(void)      { return (uint32_t)TUNE_STEP_N; }
@@ -6999,6 +7145,12 @@ static void ui_touch(void)
             if (h == UI_TOP_HIT_BW)  { bw_cycle();  return; }
             if (h == UI_TOP_HIT_NONE && ui_top_band_hit(x, y)) {
                 menu_toggle(MENU_BANDAS);
+                return;
+            }
+            /* The frequency: upstream's keypad. Its zone is ui_top.c's,
+             * which drew the digits and so knows where they end. */
+            if (h == UI_TOP_HIT_NONE && ui_top_freq_hit(x, y)) {
+                menu_teclado_open();
                 return;
             }
 
@@ -7905,6 +8057,14 @@ int main(void)
      */
     uint32_t boot_dial = GEN_HZ;
 
+    /* A WFM session comes back with the tuner ON the dial (s_lo_off): the
+     * offset has to be right before the first listening tune below, as
+     * radio_mode_set() makes it right on every later change. */
+    if (s_boot_have && s_boot_set.has_mode) {
+        s_lo_off = lo_off_for((int)s_boot_set.mode);
+        s_pan_lo = s_lo_off ? PAN_LO : PAN_LO_WFM;
+    }
+
     /* The default step is 1 kHz by VALUE: the table is generated, so its
      * index is upstream's to move. */
     if (paso_tabla[s_step_idx].hz != 1000UL) { s_step_idx = step_index_of(1000U); }
@@ -7963,13 +8123,13 @@ int main(void)
             console_printf("            (slot %d, seq %u, record version "
                            "%u, at 0x%04x)\n", settings_slot(),
                            settings_seq(), settings_version(),
-                           SETTINGS_ADDR);
+                           settings_addr());
         }
 
         /* The band filters for THAT dial: everything above set them for
          * the generator, and dial_tune() only rewrites them when the
          * band changes, which from here it would not know. */
-        msi001_bpf(msi001_bpf_for(boot_dial));
+        msi001_bpf(msi001_bpf_for(boot_dial - s_lo_off));
         addon_set_filter(addon_filter_for(boot_dial));
     }
 
@@ -7989,20 +8149,26 @@ int main(void)
      * back to zero. The DIAL is the number on the screen; the TUNER is
      * always 12 kHz under it from here on.
      */
-    if (msi001_retune(boot_dial - AM_IF_HZ) == MSI_OK) {
+    if (msi001_retune(boot_dial - s_lo_off) == MSI_OK) {
         const msi_plan_t *cp = msi001_last_plan();
 
-        console_printf("Tuning    : dial %u Hz, tuner %u Hz - %u Hz below, "
-                       "so the\n", cp->f_actual + AM_IF_HZ, cp->f_actual,
-                       AM_IF_HZ);
-        console_printf("            leakage stays off the carrier. am.c "
-                       "subtracts it and\n");
-        console_printf("            rotates the station back to zero.\n\n");
-        ui_init_state(cp->f_actual + AM_IF_HZ);
+        if (s_lo_off == 0U) {
+            console_printf("Tuning    : dial %u Hz, tuner ON it - WFM: upstream's "
+                           "discriminator\n            takes the station at "
+                           "0 Hz (radio_mode_set()).\n\n", cp->f_actual);
+        } else {
+            console_printf("Tuning    : dial %u Hz, tuner %u Hz - %u Hz below, "
+                           "so the\n", cp->f_actual + s_lo_off, cp->f_actual,
+                           s_lo_off);
+            console_printf("            leakage stays off the carrier. am.c "
+                           "subtracts it and\n");
+            console_printf("            rotates the station back to zero.\n\n");
+        }
+        ui_init_state(cp->f_actual + s_lo_off);
     } else {
         /* The tuner stayed where the spectrum test left it, so the dial
          * is 12 kHz above THAT - the same relation, on whatever it has. */
-        ui_init_state(sp->f_actual + AM_IF_HZ);
+        ui_init_state(sp->f_actual + s_lo_off);
     }
 
     /* What the FRAM holds is now the starting point: nothing is saved
@@ -8064,10 +8230,11 @@ int main(void)
      */
     demod_path(1);
 
-    /* The mode the last session left, from a version-3 record. */
+    /* The mode the last session left, from a version-3 record. WFM too
+     * since 21/11/2026: the tuner already went on the dial for it, above
+     * (s_lo_off, set from the record before the boot tune). */
     if (s_boot_have && s_boot_set.has_mode
-        && s_boot_set.mode <= (uint8_t)DEMOD_MODE_SAM
-        && s_boot_set.mode != (uint8_t)DEMOD_MODE_WFM) {
+        && s_boot_set.mode <= (uint8_t)DEMOD_MODE_SAM) {
         (void)demod_mode((int)s_boot_set.mode);
     }
     console_printf("Mode      : %s%s\n", radio_mode_name(radio_mode_get()),
@@ -8080,13 +8247,14 @@ int main(void)
         menu_ajustes_apply_radio(&s_boot_set);
     }
     console_printf("Ajustes   : %s - tema %s, AGC %s, BW %s, squelch %d dB, "
-                   "NR %u%s\n",
+                   "NR %u, suavizado %d %%%s\n",
                    (s_boot_have && s_boot_set.has_aj) ? "from the FRAM"
                                                      : "defaults",
                    menu_tema_nombre(), radio_agc_text(), radio_bw_text(),
                    (int32_t)demod_am_get_squelch_db(), menu_nr_strength(),
-                   (s_boot_have && s_boot_set.has_sqlnr) ? ""
-                       : " (squelch/NR not in the FRAM yet)");
+                   radio_suav_pct(),
+                   (s_boot_have && s_boot_set.has_suav) ? ""
+                       : " (a record before version 4: suavizado is the default)");
 
     /* Everything the FRAM held is in force: THAT is the baseline, so the
      * boot does not save back what it has just read. */
@@ -8430,8 +8598,9 @@ int main(void)
         /* Under an open menu the trace is not drawn - the screen is
          * the menu's (src/menus.h) - but the waterfall keeps its rows,
          * so it is current the moment the menu closes. */
+        traza_suaviza(&s_db[s_pan_lo]);
         if (menu_open_id() == MENU_NONE) {
-            spectrum_draw(&s_db[PAN_LO], PAN_SHOWN,
+            spectrum_draw(s_db_traza, PAN_SHOWN,
                           SPC_TRACE_X, SPC_TRACE_Y, SPC_TRACE_W, SPC_TRACE_H,
                           UI_DB_MIN, UI_DB_MAX, 0, 0U, 0, 0);
         }
@@ -8459,7 +8628,7 @@ int main(void)
          * wire and had to wait, which is the healthy case.
          */
         uint64_t w0 = board_cycles();
-        ui_wf_push(&s_db[PAN_LO], PAN_SHOWN);
+        ui_wf_push(&s_db[s_pan_lo], PAN_SHOWN);
         if (menu_open_id() == MENU_NONE) {
             gfx2_wf_blit(SPC_TRACE_X, SPC_WF_Y, SPC_TRACE_W, SPC_WF_ROWS,
                          s_wf, SPC_TRACE_W, s_wf_head,

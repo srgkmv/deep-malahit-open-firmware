@@ -31,7 +31,8 @@ typedef enum {
     MENU_MODO,
     MENU_BANDAS,
     MENU_PASO,
-    MENU_AJUSTES
+    MENU_AJUSTES,
+    MENU_TECLADO        /* the frequency keypad: no button of its own */
 } menu_t;
 
 /* Which screen is up; MENU_NONE when the spectrum is showing. The main
@@ -42,6 +43,10 @@ menu_t menu_open_id(void);
  * one already up - upstream's accion_pantalla(). */
 void menu_toggle(menu_t m);
 void menu_close(void);
+
+/* A tap on the frequency in the header: upstream's keypad (ui_kbd.c),
+ * the entry empty. Over another screen it takes its place. */
+void menu_teclado_open(void);
 
 /* A finger on the glass while a screen is up. `down` on every poll with
  * a contact, `up` once when it lifts. Returns 1 if the point was the
@@ -75,6 +80,15 @@ uint32_t    menu_nr_strength(void);
 
 /* ---- provided by main.c ------------------------------------------ */
 
+/*
+ * What the dial can reach: 100 kHz to upstream's own top, 180 MHz - the
+ * MSi001's AM path below 60 MHz, its VHF path to 120 behind the VHF1
+ * filter, and B3 above behind VHF2 (msi001.c). One place, because the
+ * band screen leaves out what the dial cannot tune.
+ */
+#define RADIO_TUNE_MIN_HZ   100000UL
+#define RADIO_TUNE_MAX_HZ   180000000UL
+
 /* Upstream's demod_mode_t as an int. Sets the demodulator, the header's
  * mode chip and the action bar's value. */
 void        radio_mode_set(int mode);
@@ -85,6 +99,11 @@ const char *radio_mode_name(int mode);
  * the dial could not go there. `name` goes in the header's band pill. */
 int         radio_band_go(uint32_t hz, int mode, const char *name);
 uint32_t    radio_dial_hz(void);
+
+/* Tune to a typed frequency: clamped to the dial's range, as upstream's
+ * keypad clamps to its own. Returns the dial reached, 0 if the tuner
+ * refused. */
+uint32_t    radio_dial_go(uint32_t hz);
 
 /* The tuning step, by index into upstream's table (paso_tabla[] in the
  * generated bandas_tabla.h). */
@@ -107,6 +126,8 @@ int         radio_vol_db(void);
 int         radio_vol_set(int db);      /* clamps; returns what is in force */
 int         radio_att_db(void);         /* dB of gain reduction */
 int         radio_att_set(int db);
+int         radio_suav_pct(void);       /* the trace's smoothing, 0-95 % */
+int         radio_suav_set(int pct);    /* clamps, 5 % steps; returns it */
 void        radio_repaint_all(void);
 
 /* The filter of each family as upstream's quick preset it equals, 2 bits

@@ -103,8 +103,9 @@
 
 typedef enum {
     MSI_BAND_AM = 0,    /* LW/MW/SW, up-converted through FIF1, LODIV 16 */
-    MSI_BAND_VHF,       /* 64..108 MHz broadcast FM, LODIV 32            */
-    MSI_BAND_B3,        /* 174..240 MHz, LODIV 16                        */
+    MSI_BAND_VHF,       /* 64..108 MHz broadcast FM, LODIV 32; used
+                           60..120 here, as the factory firmware does   */
+    MSI_BAND_B3,        /* 174..240 MHz, LODIV 16; used 120..250         */
     MSI_BAND_B45,       /* UHF, LODIV 4                                  */
     MSI_BAND_L          /* L band, LODIV 2                               */
 } msi_band_t;
@@ -343,6 +344,8 @@ void msi001_set_am_port(int port2);
 #define MSI_BPF_12_30       0x0CU   /* BPF3 + BPF4 */
 #define MSI_BPF_30_60       0x30U   /* BPF5 + BPF6 */
 #define MSI_BPF_VHF1        0x28U   /* BPF4 + BPF6, VHF sub-band 1 */
+#define MSI_BPF_VHF2        0x2BU   /* the same, sub-band switch on RF4
+                                       (BPF1 + BPF2): VHF2, 120-250 MHz */
 
 /* The mask this board needs for a frequency, from the table above. */
 uint32_t msi001_bpf_for(uint32_t freq_hz);

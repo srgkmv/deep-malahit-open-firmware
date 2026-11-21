@@ -62,13 +62,15 @@ static void fondo_principal(void)
 static void modos(void)
 {
     static const struct { const char *n, *d; } k[] = {
-        /* La lista de malahit/bringup/src/menus.c, k_modos[]: sin WFM, y
-         * AM es "Envolvente" porque "Amplitud modulada" no cabe. */
+        /* La lista de malahit/bringup/src/menus.c, k_modos[]; AM es
+         * "Envolvente" porque "Amplitud modulada" no cabe. WFM desde el
+         * 21/11/2026. */
         { "AM",  "Envolvente" },
         { "SAM", "AM síncrona" },
         { "USB", "Banda lateral alta" },
         { "LSB", "Banda lateral baja" },
         { "NFM", "FM estrecha" },
+        { "WFM", "FM ancha" },
     };
     ui_cfg_state_t st;
     uint8_t i;
@@ -115,8 +117,9 @@ static const char *rango_cabe(int k, const char *r)
     return s_rng[k];
 }
 
-/* Lo que la radio sintoniza: TUNE_MIN_HZ..TUNE_MAX_HZ de su main.c. */
-static int sintoniza(int k) { return banda[k].hz >= 100000UL && banda[k].hz <= 30000000UL; }
+/* Lo que la radio sintoniza: RADIO_TUNE_MIN_HZ..RADIO_TUNE_MAX_HZ de su
+ * src/menus.h - 100 kHz a 180 MHz desde el 21/11/2026. */
+static int sintoniza(int k) { return banda[k].hz >= 100000UL && banda[k].hz <= 180000000UL; }
 
 static void bandas(void)
 {
@@ -224,11 +227,12 @@ extern const gfx2_font_t font_num_31;
 
 static void detalle(void)
 {
-    static const char *const valores[] = { "-10 dB", "60 dB", "4080", "-60 dB" };
+    static const char *const valores[] = { "-10 dB", "60 dB", "4080", "-60 dB", "95" };
     static const char *const pies[] = {
         "abajo del todo: abierto siempre", "encendida (botón Ruido)",
         "apagada: se enciende con Ruido",
-        "reducción de ganancia del sintonizador" };
+        "reducción de ganancia del sintonizador",
+        "% promediado entre fotogramas" };
     int16_t hueco = (int16_t)(UID_BTN_X1 - UID_VAL_GAP
                               - (UID_BTN_X0 + UID_BTN_W + UID_VAL_GAP));
     ui_det_state_t st;
@@ -241,6 +245,9 @@ static void detalle(void)
         cabe("pie", pies[i], &font_ui_10, hueco);
     }
     cabe("titulo", "Reducción de ruido", &font_ui_11, GFX2_W);
+    /* Suavizado's cell on the settings grid: name and "95 %". */
+    cabe("ajuste", "Suavizado", &font_ui_11, (int16_t)(UIC_CELL_W - 2 * UIC_NOM_X));
+    cabe("ajuste", "95 %", &font_ui_10, (int16_t)(UIC_CELL_W - 2 * UIC_NOM_X));
 
     memset(&st, 0, sizeof st);
     st.titulo = "Reducción de ruido";
@@ -252,6 +259,84 @@ static void detalle(void)
     escribe("detalle");
 }
 
+/*
+ * TECLADO: ui_kbd.c, el de la frecuencia - lo que abre un toque en la
+ * frecuencia de la cabecera. Los rotulos son los de upstream
+ * (k_kbd_freq_rot[] en su main.c, los que copia src/menus.c). Se mide:
+ * cada rotulo contra su tecla; la lectura mas larga que se puede teclear
+ * -nueve cifras y la coma- contra lo que le deja la pista a su izquierda,
+ * porque las dos comparten filas; y que el centro de cada tecla la
+ * devuelve a ella y la franja de arriba no responde.
+ */
+#include "ui_kbd.h"
+
+static void teclado(void)
+{
+    static const char *const rot[UIK_KEYS] = {
+        "1", "2", "3", "Borrar",
+        "4", "5", "6", "Vaciar",
+        "7", "8", "9", "Volver",
+        ",", "0", "kHz", "MHz",
+    };
+    static const uint8_t tip[UIK_KEYS] = {
+        UIK_DIGITO, UIK_DIGITO, UIK_DIGITO, UIK_BORRA,
+        UIK_DIGITO, UIK_DIGITO, UIK_DIGITO, UIK_BORRA,
+        UIK_DIGITO, UIK_DIGITO, UIK_DIGITO, UIK_VUELVE,
+        UIK_DIGITO, UIK_DIGITO, UIK_ACEPTA, UIK_ACEPTA,
+    };
+    const char *titulo = "Frecuencia", *pista = "teclea y elige la unidad";
+    ui_kbd_state_t st;
+    uint8_t i;
+
+    for (i = 0U; i < UIK_KEYS; i++) {
+        cabe("tecla", rot[i], tip[i] == UIK_DIGITO ? &font_num_31 : &font_ui_11,
+             (int16_t)(UIK_CELL_W - 8));
+    }
+    {
+        int16_t izq = gfx2_text_w(pista, &font_ui_10);
+        int16_t t   = gfx2_text_w(titulo, &font_ui_10);
+
+        if (t > izq) { izq = t; }
+        cabe("lectura", "999999999,", &font_num_31,
+             (int16_t)(GFX2_W - 2 * (UIK_MARGIN + UIK_TXT_PAD) - izq - 8));
+    }
+    if (UIK_GRID_Y + UIK_ROWS * UIK_CELL_H + (UIK_ROWS - 1) * UIK_GAP > UIK_Y + UIK_H) {
+        printf("  SE SALE  teclado: la rejilla pasa de la zona de menu\n");
+        s_fallos++;
+    }
+    for (i = 0U; i < UIK_KEYS; i++) {
+        int cx = UIK_MARGIN + (i % UIK_COLS) * (UIK_CELL_W + UIK_GAP) + UIK_CELL_W / 2;
+        int cy = UIK_GRID_Y + (i / UIK_COLS) * (UIK_CELL_H + UIK_GAP) + UIK_CELL_H / 2;
+
+        if (ui_kbd_hit((uint16_t)cx, (uint16_t)cy) != (int8_t)i) {
+            printf("  TOQUE    la tecla %u no responde en su centro\n", (unsigned)i);
+            s_fallos++;
+        }
+    }
+    if (ui_kbd_hit(GFX2_W / 2, (uint16_t)(UIK_Y + UIK_READ_H / 2)) != UIK_HIT_NONE) {
+        printf("  TOQUE    la franja de la lectura responde como tecla\n");
+        s_fallos++;
+    }
+
+    memset(&st, 0, sizeof st);
+    st.titulo  = titulo;
+    st.pista   = pista;
+    st.lectura = "14,074";
+    st.pressed = 6;                     /* el "6", con el dedo encima */
+    st.cursor  = -1;
+    for (i = 0U; i < UIK_KEYS; i++) { st.tecla[i] = rot[i]; st.tipo[i] = tip[i]; }
+    fondo_principal();
+    ui_kbd_draw(&st);
+    escribe("teclado");
+
+    /* Vacio, como se abre: las rayas. */
+    st.lectura = "";
+    st.pressed = -1;
+    fondo_principal();
+    ui_kbd_draw(&st);
+    escribe("teclado_vacio");
+}
+
 int main(void)
 {
     printf("menus del Malahit, 480 x 320\n");
@@ -260,6 +345,7 @@ int main(void)
     pasos();
     ajustes();
     detalle();
+    teclado();
     if (ui_grid_recortes()) {
         printf("  ui_grid: %u renglones recortados\n",
                (unsigned)ui_grid_recortes());

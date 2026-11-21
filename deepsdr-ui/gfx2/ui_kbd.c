@@ -78,10 +78,10 @@ static void tecla(gfx2_surf_t *s, const ui_kbd_state_t *st, uint8_t i)
 
     colores(st, i, &fondo, &borde, &tinta);
 
-    gfx2_rrect(s, x, y, UIK_CELL_W, UIK_CELL_H, 8, fondo);
-    gfx2_rrect_outline(s, x, y, UIK_CELL_W, UIK_CELL_H, 8, 1, borde);
+    gfx2_rrect(s, x, y, UIK_CELL_W, UIK_CELL_H, UIK_CELL_R, fondo);
+    gfx2_rrect_outline(s, x, y, UIK_CELL_W, UIK_CELL_H, UIK_CELL_R, 1, borde);
     if (st->cursor == (int8_t)i && st->pressed != (int8_t)i) {
-        gfx2_rrect_outline(s, x, y, UIK_CELL_W, UIK_CELL_H, 8, 2, gfx2_rgb(PAL_ACCENT));
+        gfx2_rrect_outline(s, x, y, UIK_CELL_W, UIK_CELL_H, UIK_CELL_R, 2, gfx2_rgb(PAL_ACCENT));
     }
 
     /* Los digitos van en la MISMA tipografia que la lectura de arriba y que
@@ -96,10 +96,10 @@ static void tecla(gfx2_surf_t *s, const ui_kbd_state_t *st, uint8_t i)
      * tecla; las cifras no tienen rasgos por debajo de la linea base, asi que
      * el descent de la fuente no cuenta aqui. */
     if (st->tipo[i] == (uint8_t)UIK_DIGITO) {
-        gfx2_text_in(s, x, (int16_t)(y + 4), UIK_CELL_W, st->tecla[i],
+        gfx2_text_in(s, x, (int16_t)(y + UIK_DIG_DY), UIK_CELL_W, st->tecla[i],
                      &font_num_44, tinta, GFX2_ALIGN_C);
     } else {
-        gfx2_text_in(s, x, (int16_t)(y + 19), UIK_CELL_W, st->tecla[i],
+        gfx2_text_in(s, x, (int16_t)(y + UIK_ROT_DY), UIK_CELL_W, st->tecla[i],
                      &font_ui_18b, tinta, GFX2_ALIGN_C);
     }
 }
@@ -112,11 +112,11 @@ static void lectura(gfx2_surf_t *s, const ui_kbd_state_t *st)
     gfx2_fill(s, 0, UIK_Y, GFX2_W, UIK_READ_H, gfx2_rgb(PAL_SURF_0));
 
     if (st->titulo) {
-        gfx2_text(s, UIK_MARGIN + 4, (int16_t)(UIK_Y + 6), st->titulo,
+        gfx2_text(s, UIK_MARGIN + UIK_TXT_PAD, (int16_t)(UIK_Y + UIK_TIT_DY), st->titulo,
                   &font_ui_14, gfx2_rgb(PAL_INK_MUTE));
     }
     if (st->pista) {
-        gfx2_text(s, UIK_MARGIN + 4, (int16_t)(UIK_Y + 28), st->pista,
+        gfx2_text(s, UIK_MARGIN + UIK_TXT_PAD, (int16_t)(UIK_Y + UIK_PISTA_DY), st->pista,
                   &font_ui_14, gfx2_rgb(PAL_INK_MUTE));
     }
 
@@ -127,13 +127,13 @@ static void lectura(gfx2_surf_t *s, const ui_kbd_state_t *st)
         w = gfx2_text_w(st->lectura, &font_num_44);
         if (st->unidad) {
             int16_t wu = gfx2_text_w(st->unidad, &font_ui_18b);
-            gfx2_text(s, (int16_t)(GFX2_W - UIK_MARGIN - 4 - wu),
-                      (int16_t)(UIK_Y + 26), st->unidad,
+            gfx2_text(s, (int16_t)(GFX2_W - UIK_MARGIN - UIK_TXT_PAD - wu),
+                      (int16_t)(UIK_Y + UIK_UNI_DY), st->unidad,
                       &font_ui_18b, gfx2_rgb(PAL_INK_MUTE));
-            w = (int16_t)(w + wu + 10);
+            w = (int16_t)(w + wu + UIK_UNI_GAP);
         }
-        gfx2_text(s, (int16_t)(GFX2_W - UIK_MARGIN - 4 - w),
-                  (int16_t)(UIK_Y + 2), st->lectura,
+        gfx2_text(s, (int16_t)(GFX2_W - UIK_MARGIN - UIK_TXT_PAD - w),
+                  (int16_t)(UIK_Y + UIK_LEC_DY), st->lectura,
                   &font_num_44, gfx2_rgb(PAL_ACCENT));
     } else {
         /* Aun no hay nada escrito. Un hueco vacio no dice si la pantalla
@@ -142,8 +142,8 @@ static void lectura(gfx2_surf_t *s, const ui_kbd_state_t *st)
         /* Rayas, no un guion largo: font_num_44 solo lleva cifras, signos y
          * dos puntos (ver sus rangos en fonts_data.c), asi que cualquier
          * otra cosa saldria en blanco. */
-        gfx2_text(s, (int16_t)(GFX2_W - UIK_MARGIN - 4 - gfx2_text_w("---", &font_num_44)),
-                  (int16_t)(UIK_Y + 2), "---",
+        gfx2_text(s, (int16_t)(GFX2_W - UIK_MARGIN - UIK_TXT_PAD - gfx2_text_w("---", &font_num_44)),
+                  (int16_t)(UIK_Y + UIK_LEC_DY), "---",
                   &font_num_44, gfx2_rgb(PAL_INK_MUTE));
     }
 

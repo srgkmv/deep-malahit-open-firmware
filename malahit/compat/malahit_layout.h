@@ -427,4 +427,41 @@
 #define UID_PIE_R             6
 #define UID_PRE_R             6
 
+/*
+ * ui_kbd.c - the frequency keypad, opened by a tap on the frequency.
+ * Upstream's is a reading strip over a 4 x 4 grid whose COLUMNS are
+ * exactly ui_grid's, so nothing jumps sideways between the two screens;
+ * here too: 5 + 4 x 114 + 3 x 4 + 5. Same area as the other menus.
+ *
+ * The strip is the arithmetic of its two faces: title and hint in
+ * font_ui_10 (line box 13) stacked on the left, 3..15 and 17..29; the
+ * typed number in font_num_31 on the right, whose digits' INK is rows
+ * 6..28 of its line - so the line goes at 0 and the digits stand 59..81
+ * beside the left block's 58..80, measured on the render. 34 rows, the
+ * divider on the last.
+ *
+ * The keys get the rest: 90 + 4 x 46 + 3 x 4 = 286, three rows of air
+ * above (the divider at 86) and three below (the action bar at 290).
+ * 114 x 46 is 17 x 7 mm on this glass - upstream's are 192 x 59.
+ *
+ *   strip 53..86   keys 90..135  140..185  190..235  240..285
+ */
+#define UIK_Y            UIG_Y                          /* 53 */
+#define UIK_H            UIG_H                          /* 236 */
+#define UIK_READ_H           34
+#define UIK_MARGIN            5
+#define UIK_GAP               4
+#define UIK_CELL_W          114     /* 5 + 4*114 + 3*4 + 5 = 478, as ui_grid */
+#define UIK_CELL_H           46
+#define UIK_GRID_Y  (UIK_Y + UIK_READ_H + 3)            /* 90 */
+#define UIK_CELL_R            6
+#define UIK_DIG_DY            6     /* font_num_31: ink 6..28 of the line, 23 rows: 12 above, 11 below */
+#define UIK_ROT_DY           16     /* font_ui_11: (46 - 14) / 2 */
+#define UIK_TXT_PAD           4
+#define UIK_TIT_DY            3
+#define UIK_PISTA_DY         17
+#define UIK_LEC_DY            0     /* digits' ink 59..81, beside the title and hint's 58..80 */
+#define UIK_UNI_DY           18     /* font_ui_11's baseline on the digits' */
+#define UIK_UNI_GAP           6
+
 #endif /* MALAHIT_LAYOUT_H */

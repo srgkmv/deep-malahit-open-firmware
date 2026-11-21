@@ -34,19 +34,61 @@
  * sitio a la lectura.
  */
 
+/* Con #ifndef, como las de ui_grid.h, ui_cfg.h y ui_det.h, para que otra
+ * pantalla ponga las suyas; sin -D salen los numeros de siempre. */
+#ifndef UIK_Y
 #define UIK_Y          104
+#endif
+#ifndef UIK_H
 #define UIK_H          318                  /* 104..421, igual que la rejilla */
+#endif
 
+#ifndef UIK_READ_H
 #define UIK_READ_H      54                  /* franja de la lectura */
+#endif
 #define UIK_COLS         4
 #define UIK_ROWS         4
 #define UIK_KEYS       (UIK_COLS * UIK_ROWS)
+#ifndef UIK_MARGIN
 #define UIK_MARGIN       7
+#endif
+#ifndef UIK_GAP
 #define UIK_GAP          6
+#endif
+#ifndef UIK_CELL_W
 #define UIK_CELL_W     192                  /* 7 + 4*192 + 3*6 + 7 = 800 */
+#endif
+#ifndef UIK_CELL_H
 #define UIK_CELL_H      59
+#endif
+#ifndef UIK_GRID_Y
 #define UIK_GRID_Y     (UIK_Y + UIK_READ_H + 8)          /* 166 */
+#endif
 /* 166 + 4*59 + 3*6 = 420, o sea justo dentro de los 421 de la zona. */
+
+/*
+ * LO QUE ERAN LITERALES EN ui_kbd.c, con los mismos valores: el radio de
+ * las teclas, donde va el rotulo dentro de cada una, y donde va cada texto
+ * de la franja de arriba. Medidos para font_num_44, font_ui_18b y
+ * font_ui_14 en teclas de 192 x 59; otra pantalla los pone a su medida.
+ */
+#ifndef UIK_CELL_R
+#define UIK_CELL_R       8      /* radio de las esquinas de una tecla */
+#endif
+#ifndef UIK_DIG_DY
+#define UIK_DIG_DY       4      /* la cifra, desde lo alto de la tecla */
+#define UIK_ROT_DY      19      /* el rotulo en palabras, igual */
+#endif
+#ifndef UIK_TXT_PAD
+#define UIK_TXT_PAD      4      /* de UIK_MARGIN al texto, a los dos lados */
+#endif
+#ifndef UIK_TIT_DY
+#define UIK_TIT_DY       6      /* el titulo, desde UIK_Y */
+#define UIK_PISTA_DY    28      /* la pista */
+#define UIK_LEC_DY       2      /* lo tecleado */
+#define UIK_UNI_DY      26      /* la unidad, a su derecha */
+#define UIK_UNI_GAP     10      /* entre lo tecleado y la unidad */
+#endif
 
 #define UIK_HIT_NONE   (-1)
 

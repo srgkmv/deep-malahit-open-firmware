@@ -401,6 +401,9 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_grid.c
 # ui_det.c  one continuous setting, "-" and "+" around its value: the
 #           squelch, the NR strength (step 9, 21/11/2026)
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_det.c
+# ui_kbd.c  the frequency keypad, a tap on the frequency (step 9,
+#           21/11/2026)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_kbd.c
 #
 # THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]
 # out of User/main.c by the script the host render uses for the same
@@ -603,6 +606,7 @@ $(BUILD_DIR)/up_ui_top.o:     CFLAGS_FONTS = $(MALAHIT_FONTS_TOP)
 $(BUILD_DIR)/up_ui_cfg.o:     CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
 $(BUILD_DIR)/up_ui_grid.o:    CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
 $(BUILD_DIR)/up_ui_det.o:     CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
+$(BUILD_DIR)/up_ui_kbd.o:     CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
 
 $(BUILD_DIR)/up_%.o: $(UPSTREAM_DIR)/%.c $(BUILD_RULES) | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $(CFLAGS_EXTRA_UPSTREAM) $(CFLAGS_FONTS) $< -o $@

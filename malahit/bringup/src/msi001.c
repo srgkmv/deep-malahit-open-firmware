@@ -78,9 +78,18 @@ msi_band_t msi001_band_for(uint32_t freq_hz)
      * up-convert path and the synthesiser reaches it comfortably:
      * (132 + 60) x 16 = 3072 MHz.
      */
+    /*
+     * THE EDGES ARE THE FACTORY FIRMWARE'S, AND THE BOARD'S - 21/11/2026.
+     * They were 150 and 260 here, from the chip's own description; the
+     * factory firmware switches at 120 and 250 (RE report 5.4: "<60 /
+     * 60-120 / 120-250 / 250-1000 / 1000-2000"), and the schematic's two
+     * VHF filters are "VHF1 50MHz - 120MHz" and "VHF2 120MHz - 250MHz",
+     * VHF2 feeding the B3 input. A VHF-mode tuner at 140 MHz would sit
+     * behind a filter that ends at 120.
+     */
     if (freq_hz <  60000000U) { return MSI_BAND_AM; }
-    if (freq_hz < 150000000U) { return MSI_BAND_VHF; }
-    if (freq_hz < 260000000U) { return MSI_BAND_B3; }
+    if (freq_hz < 120000000U) { return MSI_BAND_VHF; }
+    if (freq_hz < 250000000U) { return MSI_BAND_B3; }
     if (freq_hz < 1000000000U) { return MSI_BAND_B45; }
     return MSI_BAND_L;
 }
@@ -523,6 +532,18 @@ int msi001_tune(uint32_t freq_hz, msi_band_t band)
 int msi001_retune(uint32_t freq_hz)
 {
     msi_plan_t p;
+    msi_band_t band = msi001_band_for(freq_hz);
+
+    /*
+     * ACROSS A BAND EDGE, THE WHOLE SEQUENCE - 21/11/2026, when the dial
+     * went past 30 MHz. The fast path below only rewrites the
+     * synthesiser, which keeps the mode register's band: a VHF frequency
+     * planned in AM mode is a 132 MHz up-conversion the part is not
+     * doing. msi001_tune() writes the mode, the synthesiser, the gain
+     * and recalibrates the DC, as at boot - the factory firmware's
+     * "change of band: 5 SPI words" (RE report 5.5).
+     */
+    if (band != s_plan.band) { return msi001_tune(freq_hz, band); }
 
     msi001_plan(freq_hz, s_plan.band, &p);
     if (!p.ok) { return MSI_ERR_RANGE; }
@@ -678,7 +699,10 @@ uint32_t msi001_bpf_for(uint32_t freq_hz)
     if (freq_hz < 12000000U) { return MSI_BPF_0_12; }
     if (freq_hz < 30000000U) { return MSI_BPF_12_30; }
     if (freq_hz < 60000000U) { return MSI_BPF_30_60; }
-    return MSI_BPF_VHF1;
+    /* The two VHF filters, on the same edges as msi001_band_for(): the
+     * schematic's VHF1 50-120 MHz and VHF2 120-250 MHz. */
+    if (freq_hz < 120000000U) { return MSI_BPF_VHF1; }
+    return MSI_BPF_VHF2;
 }
 
 void msi001_bpf(uint32_t mask)

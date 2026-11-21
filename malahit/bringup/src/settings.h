@@ -65,6 +65,10 @@ typedef struct {
     uint8_t  aj_sql;        /* squelch: (dB + 10) / 2, upstream's 2 dB steps */
     uint8_t  aj_nr;         /* NR strength / 16 (0-4080 of upstream's 0-4095) */
     uint8_t  has_sqlnr;     /* the two above are real (settings.c, EXT_SQLNR) */
+    uint8_t  aj_suav;       /* v4: the trace's smoothing, % (0-95) */
+    uint8_t  has_suav;      /* 0: a v1-3 record - keep the default */
+    uint8_t  aj_wfm_bw;     /* v4: WFM's audio low-pass, audio_bw_t + 1;
+                               0 = not stored - keep the default */
 } settings_t;
 
 #define SET_AJ_NB_MASK      0x03U   /* blanker level 0-3 */
@@ -74,7 +78,7 @@ typedef struct {
 #define SET_AJ_PUENTE       0x40U
 #define SET_AJ_TRAZA_W      0x80U
 
-#define SETTINGS_ADDR   0x4000U
+#define SETTINGS_ADDR   0x4000U     /* versions 1-3; version 4 at 0x4100 */
 
 /*
  * Bring up the FRAM (SPI2 at 15 MHz) and read both slots. Returns 1 and
@@ -83,15 +87,18 @@ typedef struct {
  */
 int settings_load(settings_t *out);
 
-/* The record version the newest slot was written in (1, 2 or 3), 0 if
- * none - for the boot line, and for main.c to know which step table a
- * stored step_idx indexes (3: upstream's eleven; 1-2: the old five). */
+/* The record version the newest slot was written in (1-4), 0 if none -
+ * for the boot line, and for main.c to know which step table a stored
+ * step_idx indexes (3-4: upstream's eleven; 1-2: the old five); and the
+ * FRAM address it was read from. */
 uint32_t settings_version(void);
+uint32_t settings_addr(void);
 
 /*
- * Write `s` to the other slot and read it back - always as version 3
- * with the settings-screen extension, `has_rf`, `has_mode` and `has_aj`
- * ignored. Returns 1 if the read-back is what was written.
+ * Write `s` to the other slot and read it back - always as version 4,
+ * at 0x4100 (settings.c), the `has_*` flags ignored. Returns 1 if the
+ * read-back is what was written. Firmware older than version 4 cannot
+ * read it and boots on defaults - allowed by the owner, 21/11/2026.
  * Cheap enough to call on every change; main.c calls it a second after
  * the last one.
  */

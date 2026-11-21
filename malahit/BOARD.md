@@ -521,6 +521,16 @@ is not a weak signal but no signal.
 VHF sub-band switch: VHF1 = RF1 (0x00), B4/5 = RF2 (0x01), L band = RF3
 (0x02), VHF2 = RF4 (0x03).
 
+**Which filter for which frequency** (21/11/2026, from the schematic and
+the factory firmware, not swept on the bench): the schematic labels the
+two VHF filters "VHF1 50MHz - 120MHz" and "VHF2 120MHz - 250MHz", VHF2
+feeding the MSi001's B3 input; the factory firmware switches the
+MSi001's path at 60 / 120 / 250 MHz (AM / VHF / B3, RE report 5.4). So
+VHF1 = **0x28** with the VHF path for 60-120 MHz, VHF2 = **0x2B** with
+B3 for 120-250. `msi001_band_for()` and `msi001_bpf_for()` use exactly
+these edges, both on the tuner's frequency. Register 0 read back from
+the shadow on the radio: VHF_MODE at 100 MHz, B3_MODE at 145.
+
 Confirmed by sweeping all 64 combinations against the 10 MHz generator.
 Exactly two paths pass strongly and they are the two whose passbands
 border 10 MHz — 0x14 (the 0–12 filter) and 0x0C (the 12–30 filter) — at

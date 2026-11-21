@@ -6,6 +6,35 @@ says what the next session should do and what it must not trust.
 
 ## START HERE — end of the 21/11/2026 night session; next: the rest of step 9
 
+**Since, from RAM - NOT in flash, flash is still `df61818` below:**
+
+- **The frequency keypad** (`PORTING.md` step 33) - a tap on the
+  frequency opens upstream's `ui_kbd.c` at 480 x 320, kHz/MHz tune, out
+  of range clamps to 30 MHz / 100 kHz.
+- **Suavizado** (step 34) - the trace's average between frames, on the
+  Espectro page, measured on the radio.
+- **The FRAM record is VERSION 4** (step 34): 64-byte slots at 0x4100.
+  **The owner allowed breaking compatibility with older firmware**, so
+  an image before this one boots on DEFAULTS over it - and the radio's
+  FRAM holds v4 now (seq 156). Writing the new image to flash puts that
+  right; a RAM load of an OLDER commit, from here on, comes up on
+  defaults and is not a fault. New firmware still reads v1-3 at 0x4000.
+
+- **VHF to 180 MHz and WFM** (step 35) - the owner chose "VHF + tuner
+  on the dial": MSi001 AM/VHF/B3 paths and VHF1/VHF2 filters on the
+  factory firmware's edges (60/120/250), upstream's WFM hook, the tuner
+  ON the dial in WFM and 12 kHz under it otherwise. Every path checked
+  over SWD (registers, filter mask, timing, back to 10 MHz AM at 94 dB).
+
+Checked on the glass over SWD (`ui_tap` + `grab.py`), and **WFM heard
+by the owner on an antenna: plays fine, mono** (upstream's WFM is mono
+by design - demod_am.h, its WFM note). Not checked on the radio: that
+the WFM low-pass (BW chip 15/8/4 k) survives a reboot - same FRAM path
+as the rest, byte 27 of record v4.
+
+Step 9 is done. Next: write all this to flash (the owner's
+DFU), then step 10 or whatever the owner picks.
+
 **In flash: `df61818`** - `build_flash/bringup.bin`, 169 248 bytes,
 sha256 `077fda85…`, SELFTEST 0, clean build; written over DFU without
 `:leave`, read back identical, left with the 4-byte `:leave` upload.
@@ -27,19 +56,19 @@ measurements):
 
 **Next session - what is left of step 9:**
 
-1. **The frequency keypad** - `ui_kbd.c`, opened by a tap on the
+1. ~~**The frequency keypad**~~ - DONE from RAM, step 33. Was:
+   `ui_kbd.c`, opened by a tap on the
    frequency (`ui_top_freq_hit()` already answers). Same job as ui_det:
    its geometry is 800 px literals; `#ifndef` them with the old values,
    prove the DEEPSDR renders identical (`out/kbd 0` and `out/kbd 1`:
    render them before the edit, keep the PPMs, compare after), lay it
    out in `deepsdr-ui make malahit-menus`,
    then `src/menus.c` + `radio_band_go()`-style tuning.
-2. **WFM** - upstream's WFM hook takes 512 frames at 192 kHz, exactly
+2. ~~**WFM**~~ - DONE from RAM, step 35, heard by the owner. Was: upstream's WFM hook takes 512 frames at 192 kHz, exactly
    this port's chunk, but demodulates the station at 0 Hz while this
    port parks the LO 12 kHz below the dial (am.h). Either tune WFM with
    the LO on the dial, or mix it - decide first, with the owner.
-3. **Smoothing** (upstream's third continuous setting) - the port's
-   spectrum smoothing API first.
+3. ~~**Smoothing**~~ - DONE from RAM, step 34, with the record v4.
 
 **How this session worked, and it is worth keeping:** nobody needs to be
 at the bench to test the UI - `tools/grab.py` reads the panel's GRAM
