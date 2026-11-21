@@ -80,8 +80,9 @@ int i2c3_write_read(uint8_t addr7,
                     const uint8_t *wdata, uint32_t wlen,
                     uint8_t *rdata, uint32_t rlen);
 
-/* Drive the controller's reset line low, then release it. */
-void i2c3_touch_reset(void);
+/* Drive the controller's reset line low for 10 ms, release it, and
+ * wait wake_ms with the bus silent. */
+void i2c3_touch_reset(uint32_t wake_ms);
 
 /* 1 while the IRQ line says a finger is present (it is active low). */
 int i2c3_touch_irq_asserted(void);

@@ -917,6 +917,21 @@ Each step should end with something visible on the radio.
    the run, and every other panel function waits for the queue to
    empty before it touches the bus. 118 455 transfers on the radio, no
    failure, no stall, no audio underrun.
+22. **The touch at power-on.** *Done, 21/11/2026, in flash* — four
+   cold boots of step 21's image: two found the touch controller at
+   once, one on the second attempt (+1.8 s), one never (touch dead
+   until the next power-on). Both bad ones had SDA stuck from the 5th read of an
+   identify poll that began 120 ms after the reset - inside the
+   FT6236's wake-up, which its datasheet puts at 300 ms (`Trsi`).
+   `test_touch_wake()` reproduced it warm, 2 lost of 20, and measured
+   the two fixes apart: a bus recovery inside the poll cures the
+   symptom (0 lost, still 3 stuck), waiting the datasheet's 300 ms
+   removes it (0 stuck). Both are in: `FT_WAKE_MS` and the recovery,
+   ~135 ms more boot. And `gpio_af_od()` wrote `AFR` last, so every
+   power-on pulsed SCL and SDA low through MCO1/MCO2 at AF0 - the
+   "bus recovered, -1 clocks" printed on four cold boots of four.
+   Three cold boots of the fix: no such line, touch found on the first
+   read, boot 2 753 ms each.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

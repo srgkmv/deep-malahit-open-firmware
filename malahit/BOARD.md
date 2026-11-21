@@ -1165,6 +1165,29 @@ the first fifteen bytes:
 
 Event is 00 press, 01 lift, 10 contact, 11 none.
 
+**Do not speak to it for 300 ms after its reset** - the datasheet's
+`Trsi`, "time of starting to report point after resetting", and on
+this unit a measured fact, 21/11/2026. Released from reset, it ACKs its
+address almost at once, answers zeros for ~170 ms, and the read that
+lands on the moment its I2C really comes alive - the 5th of a 10 ms
+poll begun 120 ms after the reset - can leave it holding SDA mid-byte.
+Warm, 20 resets per variant, interleaved:
+
+| after the reset | not found | SDA stuck | mean |
+|---|---|---|---|
+| 120 ms, poll, no recovery | 2 / 20 | 3 / 20 | 629 ms (max 3 660) |
+| 120 ms, poll, bus recovered when SDA sticks | 0 / 20 | 3 / 20 | 184 ms |
+| 300 ms, then the same poll | 0 / 20 | 0 / 20 | 311 ms |
+
+Cold, the same afternoon, on the 120 ms code: two power-ons of four
+had SDA stuck from the 5th/6th read, and one never found the part.
+`touch.c` waits `FT_WAKE_MS` = 300 now, and keeps the recovery.
+
+**`PA8`/`PC9` are MCO1/MCO2 at AF0**, which is what `AFR` reads on a
+cold chip. Switch `MODER` to alternate function before `AFR` holds 4
+and both lines are pulled low for a few bus cycles - a START and a
+STOP on the touch bus at every power-on. `i2c3.c` writes `AFR` first.
+
 **Set G_MODE (0xA4) to 0x00.** It powers up at 0x01, "interrupt trigger
 mode", where INT gives a pulse per report instead of sitting low while a
 finger is down. Code that samples the pin level misses the pulses

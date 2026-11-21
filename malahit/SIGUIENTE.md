@@ -4,6 +4,43 @@ Rewritten 19/11/2026, updated 21/11/2026 (twice). `WORKING.md` is still the file
 to read first; this one only says what the next session should do and
 what it must not trust.
 
+## 21/11/2026, later: the touch at power-on — measured, fixed, in git and in flash
+
+**In git and in flash.** `build_flash/bringup.bin`, 100 576 bytes,
+sha256 `c10ada62…`, written over DFU ~12:27, read back identical, left
+with the 4-byte `:leave`. `PORTING.md` step 22, `BOARD.md` "Touch —
+FT6236".
+
+**Three cold boots after the write, all alike:** no `I2C3 : bus
+recovered` line (the AFR-before-MODER fix: the recovery now needs 0
+clocks at a power-on), touch found, boot **2 753 ms** each time. Read
+over SWD after the last: 1 identify read, SDA never low, 0 recoveries,
+1 attempt.
+
+The owner did three more cold boots of `deba396`: boot times 8 479,
+2 647 and 2 647 ms. The first of them: `*** no answer at 0x38 ***`,
+touch dead for the session, SDA stuck from the 6th read. With the
+first one that makes two bad power-ons of four, both stuck at read 5-6.
+And `I2C3 : bus recovered, -1 clocks` on all four.
+
+`test_touch_wake()` (`TOUCH_WAKE_TEST=n`, off by default) reproduced it
+warm and separated the fixes - 20 resets each, interleaved:
+
+| after the reset | not found | SDA stuck | mean |
+|---|---|---|---|
+| 120 ms, no recovery (deba396) | 2 / 20 | 3 / 20 | 629 ms |
+| 120 ms + recovery in the poll | 0 / 20 | 3 / 20 | 184 ms |
+| 300 ms + recovery (the fix) | 0 / 20 | 0 / 20 | 311 ms |
+
+Built for that run with `make BUILD_DIR=<scratch> OPT="-O2 -g3
+-DTOUCH_WAKE_TEST=20"` and loaded to RAM - a test image never lands in
+`build/` or `build_flash/`.
+
+Three cold boots are three; the bad rate on the old code was two in
+four cold and two in twenty warm, so a bad boot from here on would mean
+a second cause - read the touch counters over SWD (`s_dbg_*` in
+`touch.c`, addresses from `build_flash/bringup.elf`) before reloading.
+
 ## 21/11/2026, afternoon: the panel on DMA — frame ~80 -> ~47 ms, in git and in flash
 
 **In git and in flash.** `build_flash/bringup.bin`, 100 392 bytes,
@@ -61,10 +98,8 @@ and that console line, say whether it is every cold start or some.
   has not been run.
 
 **Next, in order of what the radio gains:**
-1. **The touch at power-on**: a few more cold boots first (above), and
-   if it repeats, why the FT6236 holds SDA low from the fifth read of
-   the first identify - the recovery runs BEFORE the reset pulse, and
-   the reset itself may be what leaves it mid-byte.
+1. ~~**The touch at power-on**~~ - measured, fixed and cold-booted, see
+   the section above.
 2. **Remember the dial and the volume** across power-offs - FM25W256
    FRAM on SPI2, `BOARD.md` section 6, no driver yet. The same FRAM
    could keep the crash record.

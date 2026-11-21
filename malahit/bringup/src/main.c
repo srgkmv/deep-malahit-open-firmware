@@ -4935,6 +4935,96 @@ static uint8_t rf_autorange(void)
 #include "touch.h"
 
 /*
+ * THE TOUCH CONTROLLER'S WAKE-UP, MEASURED - 21/11/2026.
+ *
+ * Four cold boots of the first panel-DMA image: two found the FT6236 at
+ * once, one only on touch_init()'s second attempt (+1.8 s) and one not
+ * at all ("no answer at 0x38", touch dead until the next power-on). The
+ * two bad ones had SDA stuck low from the 5th or 6th identify read on -
+ * read over SWD, see SIGUIENTE.md - and the good ones answered on the
+ * 6th: the poll, starting 120 ms after the reset, was reading straight
+ * through the part's wake-up, and the read that met the moment its I2C
+ * came alive could leave it holding SDA. Nothing then recovered the bus
+ * until the second attempt.
+ *
+ * Two changes, and this says which one does the work: n cycles each of
+ *
+ *   120 ms, no recovery in the poll   what the boot did until today
+ *   120 ms, recovery in the poll      the safety net alone
+ *   300 ms, recovery in the poll      the datasheet's Trsi, and the net
+ *
+ * interleaved so that a drift lands on all three alike. A cycle is the
+ * whole of touch_init(): the reset pulse, the wait, the poll, and the
+ * second attempt if the first fails. The MCU is warm, which is not a
+ * cold boot - but the reset pulse is what the poll races, and it is
+ * the same pulse either way.
+ *
+ * TOUCH_WAKE_TEST is the number of cycles per variant; 0 leaves it out.
+ * A good cycle is ~0.2-0.4 s, a bad one up to ~3.6 s.
+ */
+#ifndef TOUCH_WAKE_TEST
+#define TOUCH_WAKE_TEST 0
+#endif
+
+static void test_touch_wake(uint32_t n)
+{
+    static const struct {
+        uint32_t    wake_ms;
+        int         recover;
+        const char *name;
+    } k[] = {
+        { 120U, 0, "120 ms, no recovery" },
+        { 120U, 1, "120 ms + recovery  " },
+        { 300U, 1, "300 ms + recovery  " },
+    };
+    enum { NV = sizeof k / sizeof k[0] };
+    uint32_t failed[NV] = { 0U }, stuck[NV] = { 0U }, second[NV] = { 0U };
+    uint32_t ms_sum[NV] = { 0U }, ms_max[NV] = { 0U };
+
+    console_printf("\nTest - the touch controller after its reset: %u "
+                   "cycles per variant\n", n);
+    console_printf("================================================"
+                   "==============\n");
+
+    for (uint32_t i = 0; i < n * NV; i++) {
+        uint32_t v  = i % NV;
+
+        board_watchdog_feed();
+
+        uint32_t t0 = board_millis();
+        int      ok = touch_init_cfg(k[v].wake_ms, k[v].recover);
+        uint32_t ms = board_millis() - t0;
+        int16_t  lo = touch_dbg_sda_low_at();
+
+        if (!ok)                       { failed[v]++; }
+        if (lo >= 0)                   { stuck[v]++; }
+        if (touch_dbg_attempts() > (uint8_t)1U) { second[v]++; }
+        ms_sum[v] += ms;
+        if (ms > ms_max[v]) { ms_max[v] = ms; }
+
+        console_printf("  %2u  %s | %s  reads %3u  SDA low at %3d  "
+                       "recoveries %2u  attempts %u  %4u ms\n",
+                       i / NV, k[v].name, ok ? "found  " : "*** NO ***",
+                       (uint32_t)touch_dbg_tries(), (int32_t)lo,
+                       (uint32_t)touch_dbg_recovers(),
+                       (uint32_t)touch_dbg_attempts(), ms);
+    }
+
+    console_printf("\n  variant              | not found | SDA stuck | "
+                   "2nd attempt | mean ms | max ms\n");
+    for (uint32_t v = 0; v < NV; v++) {
+        console_printf("  %s  |  %2u / %2u  |  %2u / %2u  |   %2u / %2u   "
+                       "|  %5u  | %5u\n", k[v].name, failed[v], n,
+                       stuck[v], n, second[v], n, ms_sum[v] / n, ms_max[v]);
+    }
+    console_printf("\n");
+
+    /* And leave it as the boot would have: identified, polling mode. */
+    (void)touch_init();
+}
+
+
+/*
  * THE DISPLAY RANGE, in upstream's uncalibrated dB - the same 40..130
  * the spectrum has been drawn with since step 6, named now that three
  * different pieces of the screen have to agree about it. The gutter
@@ -6719,6 +6809,9 @@ int main(void)
          * and would be alarming at a power-on. */
         console_printf("I2C3      : bus recovered, %d clocks\n",
                        i2c3_recover_clocks());
+    }
+    if (TOUCH_WAKE_TEST) {
+        test_touch_wake(TOUCH_WAKE_TEST);
     }
     if (touch_init()) {
         console_printf("Touch     : FT6236 at 0x38, cipher 0x%02x "

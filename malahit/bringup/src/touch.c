@@ -24,8 +24,8 @@ static int read_reg(uint8_t reg, uint8_t *buf, uint32_t n)
 /*
  * WAIT FOR THE IDENTITY, DO NOT ASSUME THE DELAY WAS ENOUGH.
  *
- * i2c3_touch_reset() releases the reset line and waits 120 ms, which
- * is not enough: measured on this radio, the controller ACKs its
+ * i2c3_touch_reset() released the reset line and waited 120 ms (until
+ * 21/11/2026 - FT_WAKE_MS below), which is not enough: measured on this radio, the controller ACKs its
  * address almost at once but answers 0x00 to CIPHER and VENDOR for
  * about another 200 ms. An address probe therefore finds it and every
  * register read is a zero - a device that is present and says nothing
@@ -45,6 +45,29 @@ static int read_reg(uint8_t reg, uint8_t *buf, uint32_t n)
  * the next one, in whichever direction costs more.
  */
 #define FT_ID_TRIES    60U      /* x 10 ms = 600 ms, well past the 200 */
+
+/*
+ * AND THE POLL STARTS AFTER THE DATASHEET'S WAKE TIME, NOT BEFORE IT -
+ * 21/11/2026.
+ *
+ * The poll above began 120 ms after the reset, so its first ~5 reads
+ * were made while the controller was still waking - the window in
+ * which it ACKs and answers zeros. Four cold boots that afternoon:
+ * two found it at once (the 6th read, SDA never low), one needed the
+ * second attempt (+1.8 s) and one never found it at all (+5.8 s, "no
+ * answer at 0x38", touch dead for the session). Both bad ones had SDA
+ * stuck low from the 5th or 6th read on, with that read failing: the
+ * read that lands on the moment the part's I2C comes alive can leave
+ * it mid-byte, holding SDA, and every read after it then fails without
+ * a START.
+ *
+ * FT6236 datasheet, reset timing: Trsi, "time of starting to report
+ * point after resetting", 300 ms minimum. So the bus stays silent for
+ * that long and the poll follows - a deadline still, for the unit that
+ * is slower than its datasheet. test_touch_wake() in main.c measures
+ * this against the old 120 ms.
+ */
+#define FT_WAKE_MS     300U
 
 /*
  * BOTH IDs, AND BOTH NON-ZERO.
@@ -71,22 +94,29 @@ static uint8_t s_dbg_after_reset;
 static int16_t s_dbg_sda_low_at = -1;
 static uint8_t s_dbg_rc_at;
 static uint16_t s_dbg_tries;
+static uint16_t s_dbg_recovers;
+static uint8_t s_dbg_attempts;
 
 uint8_t  touch_dbg_after_reset(void) { return s_dbg_after_reset; }
 int16_t  touch_dbg_sda_low_at(void)  { return s_dbg_sda_low_at; }
 uint8_t  touch_dbg_rc_at(void)       { return s_dbg_rc_at; }
 uint16_t touch_dbg_tries(void)       { return s_dbg_tries; }
+uint16_t touch_dbg_recovers(void)    { return s_dbg_recovers; }
+uint8_t  touch_dbg_attempts(void)    { return s_dbg_attempts; }
 
-static int ft_identify(void)
+static int ft_identify(int recover)
 {
     uint32_t t;
 
+    s_dbg_attempts++;
+
     for (t = 0U; t < FT_ID_TRIES; t++) {
         int rc = read_reg(FT_CIPHER, &s_chip_id, 1U);
+        int sda_low = ((i2c3_line_levels() & 1U) == 0U);
 
         s_dbg_tries++;
 
-        if ((i2c3_line_levels() & 1U) == 0U && s_dbg_sda_low_at < 0) {
+        if (sda_low && s_dbg_sda_low_at < 0) {
             s_dbg_sda_low_at = (int16_t)s_dbg_tries;
             s_dbg_rc_at      = (uint8_t)rc;
         }
@@ -97,6 +127,19 @@ static int ft_identify(void)
             && s_chip_id != 0x00U) {
             return 1;
         }
+
+        /*
+         * ONE STUCK READ MUST NOT POISON THE REST. A failed read that
+         * leaves SDA low means the part is holding the line mid-byte,
+         * and no START can be made until it is clocked free - so every
+         * remaining try of this loop used to fail the same way, and
+         * the bus was only recovered between the two attempts. Clock
+         * it free here, at once.
+         */
+        if (recover && sda_low) {
+            (void)i2c3_bus_recover();
+            s_dbg_recovers++;
+        }
         board_delay_ms(10);
     }
     return 0;
@@ -104,10 +147,25 @@ static int ft_identify(void)
 
 int touch_init(void)
 {
-    i2c3_touch_reset();
+    return touch_init_cfg(FT_WAKE_MS, 1);
+}
+
+int touch_init_cfg(uint32_t wake_ms, int recover)
+{
+    /* Per call, so that a test calling this many times reads each
+     * call's own story - and the boot's single call reads the same. */
+    s_dbg_sda_low_at = -1;
+    s_dbg_rc_at      = 0U;
+    s_dbg_tries      = 0U;
+    s_dbg_recovers   = 0U;
+    s_dbg_attempts   = 0U;
+    s_chip_id        = 0U;
+    s_vendor_id      = 0U;
+
+    i2c3_touch_reset(wake_ms);
     s_dbg_after_reset = (uint8_t)i2c3_line_levels();
 
-    if (!ft_identify()) {
+    if (!ft_identify(recover)) {
         /*
          * ONE MORE TRY, WITH THE BUS CLOCKED FREE IN BETWEEN.
          *
@@ -124,8 +182,8 @@ int touch_init(void)
          * the lines were doing.
          */
         (void)i2c3_bus_recover();
-        i2c3_touch_reset();
-        if (!ft_identify()) { return 0; }
+        i2c3_touch_reset(wake_ms);
+        if (!ft_identify(recover)) { return 0; }
     }
 
     /*

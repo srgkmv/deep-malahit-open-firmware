@@ -29,9 +29,23 @@
 #define TOUCH_IRQ_PORT  GPIOC
 #define TOUCH_IRQ_PIN   8U
 
+/*
+ * EVERYTHING ELSE FIRST, MODER LAST - 21/11/2026.
+ *
+ * It was MODER first and AFR last, and on a cold chip AFR is 0: for the
+ * few bus cycles in between, PA8 was AF0 = MCO1 and PC9 AF0 = MCO2, and
+ * an MCO with no clock routed to it drives low. Two short pulls to
+ * ground on SCL and SDA at every power-on - a START and a STOP to
+ * anything listening - and i2c3_bus_recover(), reading SDA straight
+ * after handing the pins back, caught the line still rising and
+ * reported "-1 clocks" on every cold boot, four of four. Warm loads
+ * never showed it, because the previous image had left AFR at 4.
+ */
 static void gpio_af_od(GPIO_TypeDef *port, uint32_t pin, uint32_t af)
 {
-    port->MODER = (port->MODER & ~(3UL << (pin * 2U))) | (2UL << (pin * 2U));
+    port->AFR[pin >> 3U] =
+          (port->AFR[pin >> 3U] & ~(0xFUL << ((pin & 7U) * 4U)))
+        | (af << ((pin & 7U) * 4U));
     port->OTYPER |= (1UL << pin);                    /* open drain */
     port->OSPEEDR |= (3UL << (pin * 2U));
     /* Weak internal pull-ups as a safety net. The flex should carry
@@ -39,9 +53,7 @@ static void gpio_af_od(GPIO_TypeDef *port, uint32_t pin, uint32_t af)
      * they stop a disconnected line from floating and reading as a
      * stuck-low bus, which looks like a very different fault. */
     port->PUPDR = (port->PUPDR & ~(3UL << (pin * 2U))) | (1UL << (pin * 2U));
-    port->AFR[pin >> 3U] =
-          (port->AFR[pin >> 3U] & ~(0xFUL << ((pin & 7U) * 4U)))
-        | (af << ((pin & 7U) * 4U));
+    port->MODER = (port->MODER & ~(3UL << (pin * 2U))) | (2UL << (pin * 2U));
 }
 
 /*
@@ -255,14 +267,14 @@ void i2c3_init(void)
     s_lv[2] = (uint8_t)i2c3_line_levels();
 }
 
-void i2c3_touch_reset(void)
+void i2c3_touch_reset(uint32_t wake_ms)
 {
     TOUCH_RST_PORT->BSRR = (1UL << (TOUCH_RST_PIN + 16U));
-    board_delay_ms(10);
+    board_delay_ms(10);                 /* Trst, 5 ms minimum */
     TOUCH_RST_PORT->BSRR = (1UL << TOUCH_RST_PIN);
-    /* Controllers in this class want tens of milliseconds before they
-     * will answer. Being generous costs nothing once at startup. */
-    board_delay_ms(120);
+    /* How long the controller gets before anybody speaks to it is the
+     * caller's - touch.c, FT_WAKE_MS, says why it matters. */
+    board_delay_ms(wake_ms);
 }
 
 int i2c3_touch_irq_asserted(void)

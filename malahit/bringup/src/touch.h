@@ -90,11 +90,23 @@ uint8_t touch_vendor_id(void);
  *   sda_low_at    the attempt at which SDA was first found low,
  *                 or -1 if it never was
  *   rc_at         whether the read on that attempt reported success
- *   tries         how many attempts were made in total
+ *   tries         how many reads were made in total
+ *
+ * All of them describe the LAST call only.
  */
 uint8_t  touch_dbg_after_reset(void);
 int16_t  touch_dbg_sda_low_at(void);
 uint8_t  touch_dbg_rc_at(void);
 uint16_t touch_dbg_tries(void);
+uint16_t touch_dbg_recovers(void);  /* bus recoveries inside the poll */
+uint8_t  touch_dbg_attempts(void);  /* 1, or 2 if the first failed */
+
+/*
+ * touch_init() with its two choices exposed, for test_touch_wake():
+ * how long the bus stays silent after the reset, and whether a read
+ * that leaves SDA low is followed at once by a bus recovery.
+ * touch_init() is touch_init_cfg(300, 1).
+ */
+int touch_init_cfg(uint32_t wake_ms, int recover);
 
 #endif /* MALAHIT_TOUCH_H */
