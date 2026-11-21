@@ -67,9 +67,17 @@ eleven steps generated from its main.c, a band's own step on choosing
 it, the band pill following the dial. Firmware older than 93eaba6
 cannot read a v3 record and boots on defaults.
 
-**Open in step 9:** Ajustes (no settings screen yet); the frequency
-keypad (`ui_kbd.c`, tap on the frequency); WFM (upstream's WFM wants the
-station at 0 Hz, this port keeps it 12 kHz off the LO).
+**Ajustes works and is kept in the FRAM** (`PORTING.md` steps 30-31,
+from RAM): 13 settings on upstream's three pages, the 18 themes
+generated from upstream, stored as an extension of the v3 record that
+the flash's older firmware does not see - checked on the radio by
+loading 93eaba6 over it.
+
+**Open in step 9:** ui_det.c for the continuous ones
+(squelch, NR strength, smoothing - its geometry is 800-px literals, the
+same #ifndef job as ui_cfg); the frequency keypad (`ui_kbd.c`, tap on
+the frequency); WFM (upstream's WFM wants the station at 0 Hz, this port
+keeps it 12 kHz off the LO).
 
 ## 21/11/2026, evening: step 8 started, upstream's modes run
 

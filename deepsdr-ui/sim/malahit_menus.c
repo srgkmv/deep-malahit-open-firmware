@@ -21,6 +21,7 @@
 #include "ui_cfg.h"
 #include "ui_grid.h"
 #include "bandas_tabla.h"
+#include "temas_tabla.h"
 #include <string.h>
 
 /* Las caras con las que se pintan, las mismas que en ui_cfg.c y
@@ -178,12 +179,47 @@ static void pasos(void)
     escribe("pasos");
 }
 
+/*
+ * AJUSTES: la rejilla 3 x 3 de ui_cfg, el nombre arriba en pequeño y el
+ * valor abajo en grande. El valor se pinta con gfx2_text() desde x + 8 y
+ * NO se recorta, asi que uno largo invade la celda de al lado: se miden
+ * los que mas varian - los nombres de los 18 temas y de todas las paletas
+ * del waterfall - contra lo que queda en la celda.
+ */
+static void ajustes(void)
+{
+    ui_cfg_state_t st;
+    int i, pal_n = spectrum_palette_count();
+    int16_t hueco = (int16_t)(UIC_CELL_W - UIC_NOM_X - 4);
+
+    for (i = 0; i < SIM_TEMA_COUNT; i++) {
+        cabe("tema", k_sim_temas[i].nombre, &font_ui_11, hueco);
+    }
+    for (i = 0; i < pal_n; i++) {
+        cabe("paleta", spectrum_palette_nombre((uint8_t)i), &font_ui_11, hueco);
+    }
+
+    memset(&st, 0, sizeof st);
+    st.cat[0] = "Radio"; st.cat[1] = "Pantalla"; st.cat[2] = "Espectro";
+    st.cats = 3; st.cat_sel = 1; st.denso = 0;
+    st.marcada = 0xFF; st.cursor = 0; st.pressed = -1;
+    st.n = 4;
+    st.cel[0].nombre = "Tema";    st.cel[0].valor = k_sim_temas[1].nombre;
+    st.cel[1].nombre = "Paleta";  st.cel[1].valor = spectrum_palette_nombre(0);
+    st.cel[2].nombre = "Estilo";  st.cel[2].valor = "Relleno";
+    st.cel[3].nombre = "Volumen"; st.cel[3].valor = "-46 dB";
+    fondo_principal();
+    ui_cfg_draw(&st);
+    escribe("ajustes");
+}
+
 int main(void)
 {
     printf("menus del Malahit, 480 x 320\n");
     modos();
     bandas();
     pasos();
+    ajustes();
     if (ui_grid_recortes()) {
         printf("  ui_grid: %u renglones recortados\n",
                (unsigned)ui_grid_recortes());

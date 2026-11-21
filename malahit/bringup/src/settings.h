@@ -47,7 +47,29 @@ typedef struct {
     uint8_t  mode;          /* v3: upstream's demod_mode_t */
     uint8_t  has_mode;      /* 0: a v1/v2 record - no mode, and step_idx
                                indexes the OLD five-step table */
+
+    /*
+     * THE SETTINGS SCREEN (src/menus.c, Ajustes), in the slot's last
+     * 8 bytes - an EXTENSION to a version-3 record, not a version 4: see
+     * settings.c. Values as the modules hold them; menus.c packs and
+     * applies them, and range-checks on the way in.
+     */
+    uint8_t  has_aj;        /* 0: no valid extension - keep defaults */
+    uint8_t  aj_agc;        /* agc_profile_t */
+    uint8_t  aj_estilo;     /* spectrum_style_t */
+    uint8_t  aj_flags;      /* SET_AJ_* below */
+    uint8_t  aj_tema;       /* index into the generated theme table */
+    uint8_t  aj_paleta;     /* spectrum_palette_t */
+    uint8_t  aj_bw;         /* 2 bits a filter family: quick preset 0-2,
+                               3 = as the demodulator left it */
 } settings_t;
+
+#define SET_AJ_NB_MASK      0x03U   /* blanker level 0-3 */
+#define SET_AJ_NOTCH_F_SH   2U      /* notch strength 0-3, bits 2-3 */
+#define SET_AJ_NOTCH_ON     0x10U
+#define SET_AJ_NR_ON        0x20U
+#define SET_AJ_PUENTE       0x40U
+#define SET_AJ_TRAZA_W      0x80U
 
 #define SETTINGS_ADDR   0x4000U
 
@@ -64,8 +86,9 @@ int settings_load(settings_t *out);
 uint32_t settings_version(void);
 
 /*
- * Write `s` to the other slot and read it back - always as version 3,
- * `has_rf` and `has_mode` ignored. Returns 1 if the read-back is what was written.
+ * Write `s` to the other slot and read it back - always as version 3
+ * with the settings-screen extension, `has_rf`, `has_mode` and `has_aj`
+ * ignored. Returns 1 if the read-back is what was written.
  * Cheap enough to call on every change; main.c calls it a second after
  * the last one.
  */

@@ -2,6 +2,7 @@
 #define MALAHIT_MENUS_H
 
 #include <stdint.h>
+#include "settings.h"      /* src/ - settings_t */
 
 /*
  * THE MENU SCREENS - step 9, 21/11/2026.
@@ -29,7 +30,8 @@ typedef enum {
     MENU_NONE = 0,
     MENU_MODO,
     MENU_BANDAS,
-    MENU_PASO
+    MENU_PASO,
+    MENU_AJUSTES
 } menu_t;
 
 /* Which screen is up; MENU_NONE when the spectrum is showing. The main
@@ -58,6 +60,14 @@ void menu_knob_press(void);
 int         menu_band_at(uint32_t hz);
 const char *menu_band_name(int k);
 
+/* The settings screen in the FRAM record (settings.h, the extension):
+ * read what is in force, and apply a loaded record in two halves - the
+ * display before the first paint, the demodulator after its init. */
+void        menu_ajustes_get(settings_t *s);
+void        menu_ajustes_apply_pantalla(const settings_t *s);
+void        menu_ajustes_apply_radio(const settings_t *s);
+const char *menu_tema_nombre(void);
+
 /* ---- provided by main.c ------------------------------------------ */
 
 /* Upstream's demod_mode_t as an int. Sets the demodulator, the header's
@@ -76,6 +86,24 @@ uint32_t    radio_dial_hz(void);
 uint32_t    radio_step_count(void);
 uint32_t    radio_step_get(void);
 void        radio_step_set(uint32_t i);
+
+/* For the settings screen: values to show and what a tap does, for the
+ * settings whose state is main.c's. */
+const char *radio_agc_text(void);
+void        radio_agc_cycle(void);
+const char *radio_bw_text(void);
+void        radio_bw_cycle(void);
+int         radio_preamp(void);
+void        radio_preamp_toggle(void);
+const char *radio_att_text(void);
+const char *radio_vol_text(void);
+void        radio_knob2_rf(int rf);
+void        radio_repaint_all(void);
+
+/* The filter of each family as upstream's quick preset it equals, 2 bits
+ * a family (3 = none of them, leave it); and back. */
+uint8_t     radio_bw_pack(void);
+void        radio_bw_unpack(uint8_t packed);
 
 /* After a screen closes: the spectrum area belongs to the radio again,
  * and has to be painted whole. */

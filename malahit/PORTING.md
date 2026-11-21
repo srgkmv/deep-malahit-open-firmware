@@ -1037,6 +1037,37 @@ Each step should end with something visible on the radio.
    - the narrowest band whose edges hold the dial, or "Bandas". Checked:
    41 m + USB saved, reloaded, came back USB on 7.300 with a 5 kHz step.
    Firmware older than this rejects a v3 record and boots on defaults.
+30. **Ajustes: upstream's settings screen, with what this port can
+   honour.** *21/11/2026, from RAM, seen on the glass* - upstream's
+   k_ajustes[] shape (name, page, id; one function for the value, one
+   for the tap) in `src/menus.c`, on upstream's pages and names, values
+   in upstream's words: Radio - AGC, Ancho, Notch (off + four strengths),
+   Reducción, Blanker (off + three), Preamplif., Atenuador; Pantalla -
+   Tema, Paleta, Estilo, Volumen; Espectro - Puente, Traza. A tap or the
+   knob's press steps an enumeration and the screen stays open; ATT and
+   Volumen hand the small knob over. The THEMES are upstream's k_temas[]
+   - 18 of them, each a UI palette and a waterfall palette - generated
+   from its main.c by deepsdr-ui's `gen_temas.py`, as the bands are;
+   choosing one repaints the whole radio (light ones included, checked
+   on the panel). The host render measures all 18 theme names and every
+   waterfall palette against the cell: 0 overflow. Not kept in the FRAM
+   yet; the continuous ones upstream has (squelch, NR strength,
+   smoothing) wait for ui_det.c.
+31. **Ajustes kept in the FRAM - without breaking the older firmware.**
+   *21/11/2026, from RAM* - theme, waterfall palette, style, bridge,
+   white trace, AGC, each family's quick filter, notch (on + strength),
+   blanker, NR: an EXTENSION in the slot's last 8 bytes, not a record
+   version 4. The base stays version 3 with its own CRC, so firmware
+   that knows only version 3 reads it as before and never looks further;
+   the extension has its own check (16 bits of a CRC-32 over the base
+   AND itself), so one left under a base an older image has rewritten is
+   ignored. Proven on the radio both ways: the flash's own commit
+   (93eaba6), built in a worktree and loaded over this FRAM, came up on
+   the stored dial and mode; the new image after it came back with its
+   theme, AGC, filter and notch. Applied in two halves - the display
+   before the first paint, the demodulator after demod_am_init() (which
+   resets the notch and the NR) - and then the baseline is taken, so a
+   boot does not save back what it read.
    Checked with nobody at the glass: `ui_tap` injects a finger over SWD
    and **`tools/grab.py` reads the panel's own GRAM back** (RAMRD over
    SPI3's MISO, one dummy byte, 9 s a screen) - every screen above was

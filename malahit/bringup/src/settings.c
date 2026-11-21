@@ -21,6 +21,26 @@
  * settings_version() and maps an older index through its hertz. Older
  * firmware rejects a version-3 record and boots on defaults - it does
  * not misread it.
+ *
+ * THE EXTENSION (21/11/2026, the settings screen) is the slot's last 8
+ * bytes, past the 24 of the record, and the version byte STAYS 3. That is
+ * the point: firmware that knows version 3 and nothing more reads and
+ * checks its 24 bytes as always and never looks further, so loading an
+ * older image - which this project does over SWD every hour - keeps the
+ * dial, the mode and the rest. A version 4 would have sent it to
+ * defaults, which is exactly what version 3 did to the image before it.
+ *
+ *   24  ext_ver  1
+ *   25  AGC profile (bits 0-1) | spectrum style (bits 2-3)
+ *   26  SET_AJ_* flags: blanker, notch, NR, bridge, white trace
+ *   27  theme index      28  waterfall palette
+ *   29  filter presets, 2 bits a family
+ *   30  CRC-32 of bytes 0-29, low 16 bits
+ *
+ * The check covers the base record too, so an extension left behind by
+ * a newer image under a base an OLDER image has since rewritten (it
+ * writes 24 bytes, not 32) fails, and is ignored - its settings were
+ * about another record.
  */
 #define SLOT_BYTES      32U
 #define REC_MAGIC       0x31484C4DU     /* "MLH1" */
@@ -41,6 +61,21 @@ typedef struct {
 } rec_t;
 
 _Static_assert(sizeof(rec_t) == 24U, "the record is 24 bytes on the FRAM");
+
+typedef struct {
+    rec_t    base;
+    uint8_t  ext_ver;
+    uint8_t  agc_estilo;
+    uint8_t  flags;
+    uint8_t  tema;
+    uint8_t  paleta;
+    uint8_t  bw;
+    uint16_t check;
+} slot_t;
+
+_Static_assert(sizeof(slot_t) == SLOT_BYTES, "the extension fills the slot");
+
+#define EXT_VERSION  1U
 
 static int      s_slot = -1;            /* where the newest record is */
 static uint32_t s_seq;
@@ -88,16 +123,24 @@ static uint32_t slot_addr(int slot)
     return SETTINGS_ADDR + (uint32_t)slot * SLOT_BYTES;
 }
 
+static uint16_t ext_check(const slot_t *sl)
+{
+    return (uint16_t)crc32_of((const uint8_t *)sl, 30U);
+}
+
 int settings_load(settings_t *out)
 {
-    rec_t r[2];
+    slot_t sl[2];
+    rec_t  r[2];
 
     /* 15 MHz: inside the part's 20, and the probe in main.c
      * (test_fram()) showed nothing in this footprint but FRAM. */
     fram_init(3U);
 
-    fram_read(slot_addr(0), (uint8_t *)&r[0], sizeof r[0]);
-    fram_read(slot_addr(1), (uint8_t *)&r[1], sizeof r[1]);
+    fram_read(slot_addr(0), (uint8_t *)&sl[0], sizeof sl[0]);
+    fram_read(slot_addr(1), (uint8_t *)&sl[1], sizeof sl[1]);
+    r[0] = sl[0].base;
+    r[1] = sl[1].base;
 
     int ok0 = rec_ok(&r[0]);
     int ok1 = rec_ok(&r[1]);
@@ -126,12 +169,27 @@ int settings_load(settings_t *out)
     out->preamp   = out->has_rf ? r[pick].preamp : 0U;
     out->has_mode = (r[pick].version >= 3U);
     out->mode     = out->has_mode ? r[pick].mode : 0U;
+
+    {
+        const slot_t *e = &sl[pick];
+
+        out->has_aj = (uint8_t)(r[pick].version >= 3U
+                                && e->ext_ver == EXT_VERSION
+                                && e->check == ext_check(e));
+        out->aj_agc    = (uint8_t)(e->agc_estilo & 3U);
+        out->aj_estilo = (uint8_t)((e->agc_estilo >> 2) & 3U);
+        out->aj_flags  = e->flags;
+        out->aj_tema   = e->tema;
+        out->aj_paleta = e->paleta;
+        out->aj_bw     = e->bw;
+    }
     return 1;
 }
 
 int settings_save(const settings_t *s)
 {
-    rec_t w, back;
+    slot_t ws, back;
+    rec_t  w;
     int   slot = (s_slot == 0) ? 1 : 0;     /* the other one */
 
     memset(&w, 0, sizeof w);
@@ -146,10 +204,20 @@ int settings_save(const settings_t *s)
     w.preamp   = s->preamp;
     w.crc      = crc32_of((const uint8_t *)&w, 20U);
 
-    fram_write(slot_addr(slot), (const uint8_t *)&w, sizeof w);
+    memset(&ws, 0, sizeof ws);
+    ws.base       = w;
+    ws.ext_ver    = EXT_VERSION;
+    ws.agc_estilo = (uint8_t)((s->aj_agc & 3U) | ((s->aj_estilo & 3U) << 2));
+    ws.flags      = s->aj_flags;
+    ws.tema       = s->aj_tema;
+    ws.paleta     = s->aj_paleta;
+    ws.bw         = s->aj_bw;
+    ws.check      = ext_check(&ws);
+
+    fram_write(slot_addr(slot), (const uint8_t *)&ws, sizeof ws);
     fram_read(slot_addr(slot), (uint8_t *)&back, sizeof back);
 
-    if (memcmp(&w, &back, sizeof w) != 0) {
+    if (memcmp(&ws, &back, sizeof ws) != 0) {
         /* The old slot still holds the last good record, and s_slot
          * still points at it: the next save tries this slot again. */
         s_save_errors++;

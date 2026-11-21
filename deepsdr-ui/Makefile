@@ -250,7 +250,7 @@ out/malahit_ui_grid.o: ../User/ui_grid.c ../User/ui_grid.h $(MALAHIT_HDRS)
 	@mkdir -p out
 	$(CC) $(CFLAGS) $(GFX2) $(MALAHIT_LAYOUT) $(MALAHIT_FONTS_TOP) -c -o $@ $<
 
-out/malahit_menus.o: sim/malahit_menus.c sim/principal.c sim/bandas_tabla.h $(MALAHIT_HDRS)
+out/malahit_menus.o: sim/malahit_menus.c sim/principal.c sim/bandas_tabla.h sim/temas_tabla.h $(MALAHIT_HDRS)
 	@mkdir -p out
 	$(CC) $(CFLAGS) $(GFX2) -Isim $(MALAHIT_LAYOUT) $(MALAHIT_FONTS_TOP) -c -o $@ $<
 
@@ -265,7 +265,7 @@ out/malahit_menus: out/malahit_menus.o sim/lcd_sim.c ../User/gfx.c ../User/spect
 .PHONY: malahit-menus
 malahit-menus: out/malahit_menus
 	./out/malahit_menus
-	@for f in modos bandas pasos; do \
+	@for f in modos bandas pasos ajustes; do \
 	    python3 -c "from PIL import Image; Image.open('out/malahit_'+'$$f'+'.ppm').save('out/malahit_'+'$$f'+'.png')"; \
 	done
 

@@ -408,6 +408,14 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_grid.c
 #
 BANDAS_TABLA = $(BUILD_DIR)/bandas_tabla.h
 BANDAS_DUMP  = ../../deepsdr-ui/tools/bandas_dump.py
+#
+# AND THE THEMES, the same way: k_temas[] - the UI palette and the
+# waterfall palette each theme pairs - out of upstream's main.c by the
+# script the host render uses (deepsdr-ui/tools/gen_temas.py), for the
+# settings screen's Tema.
+#
+TEMAS_TABLA  = $(BUILD_DIR)/temas_tabla.h
+TEMAS_GEN    = ../../deepsdr-ui/tools/gen_temas.py
 # (The rule that makes it is further down, beside up_encoder2.o, and for
 # the same reason: up here it was the first target, so `make` built the
 # table and stopped.)
@@ -622,6 +630,9 @@ $(BUILD_DIR)/menus.o: $(BANDAS_TABLA)
 $(BUILD_DIR)/menus.o: CFLAGS += -I$(BUILD_DIR)
 $(BUILD_DIR)/main.o: $(BANDAS_TABLA)
 $(BUILD_DIR)/main.o: CFLAGS += -I$(BUILD_DIR)
+$(TEMAS_TABLA): $(UPSTREAM_DIR)/main.c $(TEMAS_GEN) | $(BUILD_DIR)
+	python3 $(TEMAS_GEN) ../.. $@
+$(BUILD_DIR)/menus.o: $(TEMAS_TABLA)
 
 $(BUILD_DIR)/%.o: %.S $(BUILD_RULES) | $(BUILD_DIR)
 	$(AS) -c $(ASFLAGS) $< -o $@

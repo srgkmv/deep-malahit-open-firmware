@@ -7,6 +7,13 @@
 #include "console.h"
 #include "demod_am.h"      /* DEMOD_MODE_* */
 #include "bandas_tabla.h"  /* GENERATED from ../../User/main.c, see reglas.mk */
+#include "temas_tabla.h"   /* GENERATED from ../../User/main.c: the themes */
+#include "spectrum.h"      /* ../../User - palette, style, bridge, trace */
+#include "anotch.h"        /* ../../User - the automatic notch */
+#include "nb.h"            /* ../../User - the noise blanker */
+#include "nr_ss.h"         /* ../../User - the noise reduction */
+#include "palette.h"       /* g_pal */
+#include "settings.h"      /* src/ - the FRAM record, not upstream's */
 
 /* What ui_cfg.c draws the range line in, defined once in fonts_menu.c. */
 extern const gfx2_font_t font_ui_10;
@@ -234,6 +241,208 @@ static void pasos_rellena(void)
 }
 
 /* ------------------------------------------------------------------ */
+/* SETTINGS                                                            */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Upstream's settings screen is a table, k_ajustes[] in its main.c: a
+ * name, a page and an id, and two functions that give each id its value
+ * and its action. This is the same shape with the settings this port
+ * can actually honour - the ones whose module is grafted - on the same
+ * pages under the same names, and the values in upstream's words. A tap
+ * (or the knob's press on the cursor) steps an enumerated value, as
+ * upstream's does; the two the small knob owns - ATT and volume - hand
+ * it over instead. Not kept in the FRAM yet.
+ */
+typedef enum {
+    AJ_AGC, AJ_BW, AJ_NOTCH, AJ_NR, AJ_NB, AJ_PRE, AJ_ATT,
+    AJ_TEMA, AJ_PALETA, AJ_ESTILO, AJ_VOL,
+    AJ_PUENTE, AJ_TRAZA
+} aj_id_t;
+
+enum { AJ_PAG_RADIO = 0, AJ_PAG_PANTALLA, AJ_PAG_ESPECTRO, AJ_PAGS };
+
+static const char *const k_aj_pags[AJ_PAGS] = { "Radio", "Pantalla", "Espectro" };
+
+static const struct { const char *nombre; uint8_t pag; uint8_t id; } k_aj[] = {
+    { "AGC",         AJ_PAG_RADIO,    AJ_AGC    },
+    { "Ancho (BW)",  AJ_PAG_RADIO,    AJ_BW     },
+    { "Notch",       AJ_PAG_RADIO,    AJ_NOTCH  },
+    { "Reducción",   AJ_PAG_RADIO,    AJ_NR     },
+    { "Blanker",     AJ_PAG_RADIO,    AJ_NB     },
+    { "Preamplif.",  AJ_PAG_RADIO,    AJ_PRE    },
+    { "Atenuador",   AJ_PAG_RADIO,    AJ_ATT    },
+    { "Tema",        AJ_PAG_PANTALLA, AJ_TEMA   },
+    { "Paleta",      AJ_PAG_PANTALLA, AJ_PALETA },
+    { "Estilo",      AJ_PAG_PANTALLA, AJ_ESTILO },
+    { "Volumen",     AJ_PAG_PANTALLA, AJ_VOL    },
+    { "Puente",      AJ_PAG_ESPECTRO, AJ_PUENTE },
+    { "Traza",       AJ_PAG_ESPECTRO, AJ_TRAZA  },
+};
+#define N_AJ ((uint8_t)(sizeof k_aj / sizeof k_aj[0]))
+
+/* Upstream's k_notch_nombres[] and k_nb_nombres[] (User/main.c). */
+static const char *const k_notch_nom[4] = { "Suave", "Normal", "Fuerte", "A saco" };
+static const char *const k_nb_nom[4]    = { "Apagado", "Suave", "Medio", "Fuerte" };
+
+static uint8_t s_aj_pag;
+static uint8_t s_aj_of_cel[UIC_CELLS];
+static uint8_t s_tema;                   /* index into k_sim_temas[]; 0 at boot */
+
+static const char *aj_valor(uint8_t id)
+{
+    switch (id) {
+    case AJ_AGC:    return radio_agc_text();
+    case AJ_BW:     return radio_bw_text();
+    case AJ_NOTCH:  return anotch_activo() ? k_notch_nom[anotch_fuerza() & 3U]
+                                           : "Apagado";
+    case AJ_NR:     return nr_ss_get_enabled() ? "Activo" : "Apagado";
+    case AJ_NB:     return k_nb_nom[nb_get_nivel() & 3U];
+    case AJ_PRE:    return radio_preamp() ? "Activo" : "Apagado";
+    case AJ_ATT:    return radio_att_text();
+    case AJ_TEMA:   return k_sim_temas[s_tema].nombre;
+    case AJ_PALETA: return spectrum_palette_nombre((uint8_t)spectrum_get_palette());
+    case AJ_ESTILO:
+        switch (spectrum_get_style()) {
+        case SPECTRUM_STYLE_HEATMAP: return "Relleno";
+        case SPECTRUM_STYLE_LINE:    return "Línea";
+        default:                     return "Contorno";
+        }
+    case AJ_VOL:    return radio_vol_text();
+    case AJ_PUENTE: return spectrum_get_bridge() ? "Unido" : "Suelto";
+    case AJ_TRAZA:  return spectrum_get_heatmap_trace_white() ? "Blanca" : "Del color";
+    default:        return "";
+    }
+}
+
+static void ajustes_rellena(void)
+{
+    uint8_t i, n = 0U;
+
+    memset(&s_cfg, 0, sizeof s_cfg);
+    for (i = 0U; i < AJ_PAGS; i++) { s_cfg.cat[i] = k_aj_pags[i]; }
+    s_cfg.cats    = AJ_PAGS;
+    s_cfg.cat_sel = s_aj_pag;
+    s_cfg.denso   = 0U;                 /* 3 x 3: name small, value big */
+    s_cfg.marcada = 0xFFU;
+    s_cfg.cursor  = -1;
+    s_cfg.pressed = -1;
+    for (i = 0U; i < N_AJ && n < (uint8_t)(UIC_COLS * UIC_ROWS); i++) {
+        if (k_aj[i].pag != s_aj_pag) { continue; }
+        s_cfg.cel[n].nombre = k_aj[i].nombre;
+        s_cfg.cel[n].valor  = aj_valor(k_aj[i].id);
+        s_cfg.cel[n].extra  = 0;
+        s_aj_of_cel[n]      = i;
+        n++;
+    }
+    s_cfg.n = n;
+}
+
+static void menu_dibuja(void);
+
+static void aj_toca(uint8_t id)
+{
+    switch (id) {
+    case AJ_AGC:   radio_agc_cycle(); break;
+    case AJ_BW:    radio_bw_cycle();  break;
+    case AJ_NOTCH:
+        /* upstream's five: off, then the four strengths */
+        if (!anotch_activo())            { anotch_set_fuerza(0U); anotch_set_activo(1U); }
+        else if (anotch_fuerza() < 3U)   { anotch_set_fuerza((uint8_t)(anotch_fuerza() + 1U)); }
+        else                             { anotch_set_activo(0U); }
+        break;
+    case AJ_NR:    nr_ss_set_enabled(nr_ss_get_enabled() ? 0U : 1U); radio_act_refresh(); break;
+    case AJ_NB:    nb_set_nivel((uint8_t)((nb_get_nivel() + 1U) & 3U)); break;
+    case AJ_PRE:   radio_preamp_toggle(); break;
+    case AJ_ATT:   radio_knob2_rf(1); break;
+    case AJ_VOL:   radio_knob2_rf(0); break;
+    case AJ_TEMA:
+        s_tema = (uint8_t)((s_tema + 1U) % (uint8_t)SIM_TEMA_COUNT);
+        g_pal  = k_sim_temas[s_tema].pal;
+        spectrum_set_palette(k_sim_temas[s_tema].wf);
+        console_printf("  tema -> %s\n", k_sim_temas[s_tema].nombre);
+        radio_repaint_all();            /* everything, in the new colours */
+        ajustes_rellena();
+        menu_dibuja();
+        return;
+    case AJ_PALETA:
+        spectrum_set_palette((spectrum_palette_t)
+            (((uint8_t)spectrum_get_palette() + 1U) % spectrum_palette_count()));
+        break;
+    case AJ_ESTILO:
+        spectrum_set_style((spectrum_style_t)(((uint8_t)spectrum_get_style() + 1U) % 3U));
+        break;
+    case AJ_PUENTE: spectrum_set_bridge(spectrum_get_bridge() ? 0U : 1U); break;
+    case AJ_TRAZA:
+        spectrum_set_heatmap_trace_white(spectrum_get_heatmap_trace_white() ? 0U : 1U);
+        break;
+    default: break;
+    }
+}
+
+/*
+ * THE SETTINGS SCREEN IN THE FRAM - the extension of the settings record
+ * (settings.c). Read from the modules that hold each value, so the record
+ * says what is in force and not what this file thinks it set; applied in
+ * two halves because the boot needs them at two different moments.
+ */
+void menu_ajustes_get(settings_t *s)
+{
+    uint8_t f = (uint8_t)(nb_get_nivel() & SET_AJ_NB_MASK);
+
+    f |= (uint8_t)((anotch_fuerza() & 3U) << SET_AJ_NOTCH_F_SH);
+    if (anotch_activo())                    { f |= SET_AJ_NOTCH_ON; }
+    if (nr_ss_get_enabled())                { f |= SET_AJ_NR_ON; }
+    if (spectrum_get_bridge())              { f |= SET_AJ_PUENTE; }
+    if (spectrum_get_heatmap_trace_white()) { f |= SET_AJ_TRAZA_W; }
+
+    s->has_aj    = 1U;
+    s->aj_agc    = (uint8_t)demod_am_get_agc_profile();
+    s->aj_estilo = (uint8_t)spectrum_get_style();
+    s->aj_flags  = f;
+    s->aj_tema   = s_tema;
+    s->aj_paleta = (uint8_t)spectrum_get_palette();
+    s->aj_bw     = radio_bw_pack();
+}
+
+/* What the screen shows - before the first paint, so a stored theme is
+ * the first thing drawn rather than a repaint over the default. */
+void menu_ajustes_apply_pantalla(const settings_t *s)
+{
+    if (!s->has_aj) { return; }
+    if (s->aj_tema < (uint8_t)SIM_TEMA_COUNT) {
+        s_tema = s->aj_tema;
+        g_pal  = k_sim_temas[s_tema].pal;
+        spectrum_set_palette(k_sim_temas[s_tema].wf);
+    }
+    /* After the theme: Paleta can be set apart from it, and was saved
+     * as it was in force. */
+    if (s->aj_paleta < spectrum_palette_count()) {
+        spectrum_set_palette((spectrum_palette_t)s->aj_paleta);
+    }
+    if (s->aj_estilo < 3U) { spectrum_set_style((spectrum_style_t)s->aj_estilo); }
+    spectrum_set_bridge((s->aj_flags & SET_AJ_PUENTE) ? 1U : 0U);
+    spectrum_set_heatmap_trace_white((s->aj_flags & SET_AJ_TRAZA_W) ? 1U : 0U);
+}
+
+/* What the demodulator does - AFTER demod_am_init(), which resets the
+ * notch and the NR. */
+void menu_ajustes_apply_radio(const settings_t *s)
+{
+    if (!s->has_aj) { return; }
+    if (s->aj_agc <= (uint8_t)AGC_PROFILE_FAST) {
+        demod_am_set_agc_profile((agc_profile_t)s->aj_agc);
+    }
+    nb_set_nivel((uint8_t)(s->aj_flags & SET_AJ_NB_MASK));
+    anotch_set_fuerza((uint8_t)((s->aj_flags >> SET_AJ_NOTCH_F_SH) & 3U));
+    anotch_set_activo((s->aj_flags & SET_AJ_NOTCH_ON) ? 1U : 0U);
+    nr_ss_set_enabled((s->aj_flags & SET_AJ_NR_ON) ? 1U : 0U);
+    radio_bw_unpack(s->aj_bw);
+}
+
+const char *menu_tema_nombre(void) { return k_sim_temas[s_tema].nombre; }
+
+/* ------------------------------------------------------------------ */
 
 menu_t menu_open_id(void) { return s_open; }
 
@@ -242,6 +451,8 @@ static void dibuja(void)
     if (s_open == MENU_PASO) { ui_grid_draw(&s_grid); }
     else                     { ui_cfg_draw(&s_cfg); }
 }
+
+static void menu_dibuja(void) { dibuja(); }
 
 void menu_close(void)
 {
@@ -261,13 +472,15 @@ void menu_toggle(menu_t m)
     case MENU_MODO:   modos_rellena(); break;
     case MENU_BANDAS: bandas_familia_inicial(); bandas_rellena(); break;
     case MENU_PASO:   pasos_rellena(); break;
+    case MENU_AJUSTES: ajustes_rellena(); break;
     default:          menu_close(); return;
     }
     s_open = m;
     dibuja();
     radio_act_refresh();
     console_printf("  menu -> %s\n", m == MENU_MODO ? "Modo"
-                                   : m == MENU_BANDAS ? "Bandas" : "Paso");
+                                   : m == MENU_BANDAS ? "Bandas"
+                                   : m == MENU_PASO ? "Paso" : "Ajustes");
 }
 
 int menu_touch_down(uint16_t x, uint16_t y, int nuevo)
@@ -324,13 +537,34 @@ static void elige(int8_t h)
     s_cfg.pressed = -1;
 
     if (h >= UIC_HIT_CAT0) {
-        /* Another family: the same screen with other cells. */
-        s_fam_sel = s_fam_of_cat[h - UIC_HIT_CAT0];
-        if (s_open == MENU_BANDAS) { bandas_rellena(); }
+        /* Another family / page: the same screen with other cells. */
+        if (s_open == MENU_BANDAS) {
+            s_fam_sel = s_fam_of_cat[h - UIC_HIT_CAT0];
+            bandas_rellena();
+        } else if (s_open == MENU_AJUSTES) {
+            s_aj_pag = (uint8_t)(h - UIC_HIT_CAT0);
+            ajustes_rellena();
+        }
         ui_cfg_draw(&s_cfg);
         return;
     }
     if (h >= (int8_t)s_cfg.n) { return; }
+
+    if (s_open == MENU_AJUSTES) {
+        /* A setting stays open after a change, as upstream's does: the
+         * value just changed is the thing to look at. */
+        uint8_t id = k_aj[s_aj_of_cel[h]].id;
+        int8_t  cur = s_cfg.cursor;
+
+        aj_toca(id);
+        if (id == AJ_TEMA) { return; }  /* already repainted whole */
+        s_cfg.cel[h].valor = aj_valor(id);
+        s_cfg.cursor = cur;
+        ui_cfg_draw_one(&s_cfg, h);
+        console_printf("  ajuste: %s -> %s\n", k_aj[s_aj_of_cel[h]].nombre,
+                       s_cfg.cel[h].valor);
+        return;
+    }
 
     if (s_open == MENU_MODO) {
         radio_mode_set(k_modos[h].mode);

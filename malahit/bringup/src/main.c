@@ -5873,7 +5873,10 @@ static int settings_same(const settings_t *a, const settings_t *b)
 {
     return a->dial_hz == b->dial_hz && a->vol_db == b->vol_db
         && a->step_idx == b->step_idx && a->rf_gr == b->rf_gr
-        && a->preamp == b->preamp && a->mode == b->mode;
+        && a->preamp == b->preamp && a->mode == b->mode
+        && a->aj_agc == b->aj_agc && a->aj_estilo == b->aj_estilo
+        && a->aj_flags == b->aj_flags && a->aj_tema == b->aj_tema
+        && a->aj_paleta == b->aj_paleta && a->aj_bw == b->aj_bw;
 }
 
 static void settings_now(settings_t *out)
@@ -5886,6 +5889,7 @@ static void settings_now(settings_t *out)
     out->has_rf   = 1U;
     out->mode     = (uint8_t)demod_am_get_mode();
     out->has_mode = 1U;
+    menu_ajustes_get(out);              /* the settings screen's values */
 }
 
 static void settings_tick(void)
@@ -6537,6 +6541,38 @@ static void bw_cycle(void)
     console_printf("  BW -> %s\n", s_top.bw);
 }
 
+/* Each family's filter as the quick preset it equals, 2 bits a family,
+ * 3 = none of them - for the FRAM (menus.c, menu_ajustes_get()). */
+uint8_t radio_bw_pack(void)
+{
+    uint8_t out = 0U, fam;
+
+    for (fam = 0U; fam < (uint8_t)FIL_FAM_N && fam < 4U; fam++) {
+        uint16_t lo = 0U, hi = 0U;
+        uint8_t  k, q = 3U;
+
+        demod_am_get_filtro(fam, &lo, &hi);
+        for (k = 0U; k < 3U; k++) {
+            if (k_fil_quick[k].lo == lo && k_fil_quick[k].hi == hi) { q = k; }
+        }
+        out |= (uint8_t)(q << (fam * 2U));
+    }
+    return out;
+}
+
+void radio_bw_unpack(uint8_t packed)
+{
+    uint8_t fam;
+
+    for (fam = 0U; fam < (uint8_t)FIL_FAM_N && fam < 4U; fam++) {
+        uint8_t q = (uint8_t)((packed >> (fam * 2U)) & 3U);
+
+        if (q < 3U) {
+            demod_am_set_filtro(fam, k_fil_quick[q].lo, k_fil_quick[q].hi);
+        }
+    }
+}
+
 const char *radio_mode_name(int mode)
 {
     return (mode >= 0 && mode <= 5) ? k_mode_names[mode] : "?";
@@ -6609,6 +6645,65 @@ void radio_step_set(uint32_t i)
     radio_act_refresh();
 }
 
+/*
+ * FOR THE SETTINGS SCREEN (src/menus.c, MENU_AJUSTES): what it shows and
+ * what a tap does, for the settings whose state lives in this file. The
+ * ones that are upstream modules' own (notch, blanker, NR, the spectrum's
+ * palette and style) menus.c sets directly.
+ */
+static void act_values(void);
+
+static const char *const k_agc_long[4] = { "Sin AGC", "Lenta", "Media", "Rápida" };
+
+const char *radio_agc_text(void)
+{
+    agc_profile_t p = demod_am_get_agc_profile();
+    return k_agc_long[(p <= AGC_PROFILE_FAST) ? (uint32_t)p : 0U];
+}
+void        radio_agc_cycle(void)  { agc_cycle(); }
+const char *radio_bw_text(void)    { top_sync_chips(); return s_top_bw; }
+void        radio_bw_cycle(void)   { bw_cycle(); }
+int         radio_preamp(void)     { return s_rf_preamp ? 1 : 0; }
+
+void radio_preamp_toggle(void)
+{
+    s_rf_preamp = !s_rf_preamp;
+    msi001_preamp(s_rf_preamp);
+    console_printf("  preamp -> %s\n", s_rf_preamp ? "ON" : "OFF");
+}
+
+/* The pill's "-59" with its unit, or upstream's word for none. */
+const char *radio_att_text(void)
+{
+    static char t[12];
+    uint32_t    i = 0U, k = 0U;
+
+    rf_att_fmt();
+    if (s_att_txt[0] != '-') { return "Apagado"; }
+    while (s_att_txt[k] != '\0' && i < 8U) { t[i++] = s_att_txt[k++]; }
+    t[i++] = ' '; t[i++] = 'd'; t[i++] = 'B'; t[i] = '\0';
+    return t;
+}
+const char *radio_vol_text(void)   { act_values(); return s_act_vol; }
+
+/* Which control the small knob turns: 1 the RF gain, 0 the volume. */
+void radio_knob2_rf(int rf)
+{
+    s_knob2_rf = rf ? 1 : 0;
+    knob2_fmt();
+    s_top.knob_value = s_knob2_txt;
+    ui_top_draw_status(&s_top);
+    console_printf("  small knob -> %s\n", s_knob2_rf ? "RF gain" : "volume");
+}
+
+/* A new theme: everything is repainted in it. The caller redraws its
+ * menu on top. */
+void radio_repaint_all(void)
+{
+    ui_paint_all();
+    spectrum_invalida();
+}
+
 void radio_screen_restore(void)
 {
     /* The menu painted over the trace, the waterfall, the ruler and the
@@ -6673,7 +6768,7 @@ static void act_values(void)
     s_act.active[2] = (uint8_t)(m == MENU_PASO);
     s_act.active[3] = 0U;
     s_act.active[4] = nr_ss_get_enabled() ? 1U : 0U;
-    s_act.active[5] = 0U;
+    s_act.active[5] = (uint8_t)(m == MENU_AJUSTES);
 }
 
 /*
@@ -6707,7 +6802,7 @@ static void act_release(int8_t b)
         radio_act_refresh();
         break;
     default:
-        console_printf("  Ajustes: no settings screen yet\n");
+        menu_toggle(MENU_AJUSTES);
         break;
     }
 }
@@ -7860,6 +7955,12 @@ int main(void)
 
     /* What the FRAM holds is now the starting point: nothing is saved
      * until something changes from it. */
+    /* The settings screen's display half - theme, palette, style - before
+     * the first paint, so a stored theme is what is drawn first. */
+    if (s_boot_have && s_boot_set.has_aj) {
+        menu_ajustes_apply_pantalla(&s_boot_set);
+    }
+
     settings_now(&s_set_saved);
     s_set_seen = s_set_saved;
 
@@ -7920,6 +8021,21 @@ int main(void)
     console_printf("Mode      : %s%s\n", radio_mode_name(radio_mode_get()),
                    (s_boot_have && s_boot_set.has_mode) ? ", from the FRAM"
                                                         : "");
+
+    /* And its demodulator half, now that demod_am_init() - which resets
+     * the notch and the NR - has run. */
+    if (s_boot_have && s_boot_set.has_aj) {
+        menu_ajustes_apply_radio(&s_boot_set);
+    }
+    console_printf("Ajustes   : %s - tema %s, AGC %s, BW %s\n",
+                   (s_boot_have && s_boot_set.has_aj) ? "from the FRAM"
+                                                     : "defaults",
+                   menu_tema_nombre(), radio_agc_text(), radio_bw_text());
+
+    /* Everything the FRAM held is in force: THAT is the baseline, so the
+     * boot does not save back what it has just read. */
+    settings_now(&s_set_saved);
+    s_set_seen = s_set_saved;
     s_band_name = (const char *)1;      /* force the first sync to draw */
     band_pill_sync();
     s_top.mode = radio_mode_name(radio_mode_get());
