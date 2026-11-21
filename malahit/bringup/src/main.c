@@ -53,6 +53,8 @@
 #include "grab.h"         /* screenshots off the panel, over SWD */
 #include "menus.h"        /* step 9: the mode, band and step screens */
 #include "idioma.h"       /* ../../User - upstream: tr(), T(), idioma() */
+#include "spec_snap.h"    /* ../../User - upstream: a tap lands on the signal */
+#include "backlight.h"    /* ../../User - upstream's API, src/backlight.c */
 #include "bandas_tabla.h" /* GENERATED from ../../User/main.c: the steps */
 #include "demod_am.h"     /* ../../User - upstream: DEMOD_MODE_*, for the menus */
 #include "nr_ss.h"        /* ../../User - upstream: the Ruido button */
@@ -5911,7 +5913,7 @@ static int settings_same(const settings_t *a, const settings_t *b)
         && a->aj_paleta == b->aj_paleta && a->aj_bw == b->aj_bw
         && a->aj_sql == b->aj_sql && a->aj_nr == b->aj_nr
         && a->aj_suav == b->aj_suav && a->aj_wfm_bw == b->aj_wfm_bw
-        && a->aj_idioma == b->aj_idioma;
+        && a->aj_idioma == b->aj_idioma && a->aj_brillo == b->aj_brillo;
 }
 
 static void settings_now(settings_t *out)
@@ -6776,6 +6778,21 @@ int radio_suav_set(int pct)
     return pct;
 }
 
+void radio_fmt_khz(uint32_t hz, char *out, uint32_t n) { ui_fmt_khz(hz, out, n); }
+
+void radio_filtro_get(uint16_t *lo, uint16_t *hi)
+{
+    demod_am_get_filtro(demod_am_filtro_familia(), lo, hi);
+}
+
+/* Upstream's fil_pon(), and the BW chip after it. */
+void radio_filtro_set(uint16_t lo, uint16_t hi)
+{
+    demod_am_set_filtro(demod_am_filtro_familia(), lo, hi);
+    top_sync_chips();
+    if (menu_open_id() == MENU_NONE) { ui_top_draw_status(&s_top); }
+}
+
 uint32_t radio_dial_go(uint32_t hz)
 {
     if (hz < TUNE_MIN_HZ) { hz = TUNE_MIN_HZ; }
@@ -7049,6 +7066,187 @@ __attribute__((noinline)) void ui_tap(int x, int y)
 }
 
 /*
+ * AND A FINGER THAT MOVES - swd-call ... ui_swipe <x0> <x1> <y>: eight
+ * polls from x0 to x1 at height y, then the lift, through ui_touch() like
+ * a real drag. For the spectrum's drag-to-tune, which a single tap cannot
+ * test.
+ */
+#define SWIPE_POLLS 8U
+static volatile uint16_t s_sw_x0, s_sw_x1, s_sw_y;
+static volatile uint8_t  s_sw_n;
+
+__attribute__((noinline)) void ui_swipe(int x0, int x1, int y)
+{
+    s_sw_x0 = (uint16_t)x0;
+    s_sw_x1 = (uint16_t)x1;
+    s_sw_y  = (uint16_t)y;
+    s_sw_n  = SWIPE_POLLS;
+}
+
+/*
+ * AND A FINGER THAT STAYS - swd-call ... ui_hold <x> <y> <ms>: down at
+ * (x, y) for that long, then the lift. For the gestures that are a
+ * duration, the memory screen's two-second save first.
+ */
+static volatile uint16_t s_hold_x, s_hold_y;
+static volatile uint32_t s_hold_until;
+static volatile uint8_t  s_hold_on;
+
+__attribute__((noinline)) void ui_hold(int x, int y, int ms)
+{
+    s_hold_x     = (uint16_t)x;
+    s_hold_y     = (uint16_t)y;
+    s_hold_until = board_millis() + (uint32_t)ms;
+    s_hold_on    = 1U;
+}
+
+/*
+ * TOUCHING THE SPECTRUM TUNES THE RADIO - upstream's spec_tap_tune_to_x()
+ * and spec_drag_tune_apply() (User/main.c), on this port's window.
+ *
+ *   a TAP     tunes to where the finger was, and through upstream's
+ *             spec_snap.c it lands ON the signal near it - the carrier in
+ *             AM, the edge of the voice in USB/LSB - rather than on the
+ *             step grid. Nothing worth snapping to: the step grid, as the
+ *             knob would put it.
+ *   a DRAG    pans: the content follows the finger, so a drag right
+ *             tunes DOWN, in whole steps, the remainder carried.
+ *
+ * A press is a drag once it has travelled more than 6 px from where it
+ * started (upstream's SPEC_TAP_MOVE_THRESHOLD_PX): a finger is never
+ * still, and a tap that wobbled must not move the dial.
+ *
+ * The zone is the trace AND the waterfall - upstream's is the trace only,
+ * on an 800 x 480 panel where the waterfall is 72 rows; here it is 92 rows
+ * of the 233 the two share, too much glass to leave dead. Same x mapping
+ * in both: the waterfall's columns are the trace's bins.
+ *
+ * The window is PAN_SHOWN bins, 375 Hz each, centred on the dial whatever
+ * the mode's offset (s_pan_lo) - so a pixel is a frequency without asking
+ * where the tuner is. The snap reads the SMOOTHED trace, as upstream's
+ * reads s_db_traza: what is drawn is what the finger aimed at.
+ */
+#define SPEC_TAP_MOVE_PX    6
+
+static uint8_t  s_sp_active, s_sp_moved;
+static uint16_t s_sp_x0, s_sp_prev;
+static float    s_sp_accum;
+
+/* Upstream's tune_mueve_pasos(): `pasos` steps from f, the first one only
+ * as far as the grid - so a dragged dial lands on the step grid, as the
+ * knob's does upstream. */
+static int64_t tune_mueve_pasos(int64_t f, int32_t pasos, int64_t paso_hz)
+{
+    int64_t resto;
+
+    if (paso_hz <= 0 || pasos == 0) { return f; }
+    resto = f % paso_hz;
+    if (resto < 0) { resto += paso_hz; }
+    if (resto != 0) {
+        f -= resto;
+        if (pasos > 0) { f += paso_hz; pasos--; }
+        else           { pasos++; }
+    }
+    return f + (int64_t)pasos * paso_hz;
+}
+
+static int spec_en_zona(uint16_t x, uint16_t y)
+{
+    return x >= SPC_TRACE_X && x < SPC_TRACE_X + SPC_TRACE_W
+        && y >= SPC_Y && y < SPC_WF_Y + SPC_WF_ROWS;
+}
+
+static void spec_tap_tune(uint16_t x)
+{
+    int32_t  px = (int32_t)x - (int32_t)SPC_TRACE_X;
+    int      m  = radio_mode_get();
+    uint8_t  eng = 0U;
+    float    bin, b;
+    int64_t  f, paso = (int64_t)TUNE_STEP_HZ;
+
+    if (px < 0) { px = 0; }
+    if (px > (int32_t)SPC_TRACE_W - 1) { px = (int32_t)SPC_TRACE_W - 1; }
+    bin = ((float)px + 0.5f) * (float)PAN_SHOWN / (float)SPC_TRACE_W;
+
+    if (s_db_traza_lista) {
+        snap_modo_t sm = (m == (int)DEMOD_MODE_USB) ? SNAP_USB
+                       : (m == (int)DEMOD_MODE_LSB) ? SNAP_LSB : SNAP_PICO;
+
+        b = spec_snap_bin(s_db_traza, PAN_SHOWN, bin, sm, &eng);
+    } else {
+        b = bin;
+    }
+    f = (int64_t)s_tuned_hz
+      + (int64_t)(((double)b - (double)(PAN_SHOWN / 2U)) * (double)PAN_BIN_HZ);
+
+    /* Off the grid only when it landed on a signal: there the exact
+     * frequency is the point, and rounding would undo it. */
+    if (!eng && paso > 0) {
+        int64_t rem = f % paso;
+
+        if (rem < 0) { rem += paso; }
+        f -= rem;
+        if (rem * 2 >= paso) { f += paso; }
+    }
+    if (f < (int64_t)TUNE_MIN_HZ) { f = (int64_t)TUNE_MIN_HZ; }
+    if (f > (int64_t)TUNE_MAX_HZ) { f = (int64_t)TUNE_MAX_HZ; }
+    if ((uint32_t)f != s_tuned_hz && dial_tune(f)) {
+        console_printf("  spectrum tap at x %u: %s %u Hz\n", (uint32_t)x,
+                       eng ? "on the signal," : "no signal, the grid:",
+                       s_tuned_hz);
+    }
+}
+
+static void spec_drag_tune(uint16_t x, uint16_t prev_x)
+{
+    int32_t dx   = (int32_t)x - (int32_t)prev_x;
+    float   step = (float)TUNE_STEP_HZ;
+    int32_t steps;
+
+    if (dx == 0 || step <= 0.0f) { return; }
+    /* Right is DOWN: the content moves with the finger. */
+    s_sp_accum -= (float)dx * ((float)PAN_SHOWN_HZ / (float)SPC_TRACE_W);
+    steps = (int32_t)(s_sp_accum / step);
+    if (steps == 0) { return; }
+    s_sp_accum -= (float)steps * step;
+    (void)dial_tune(tune_mueve_pasos((int64_t)s_tuned_hz, steps, (int64_t)TUNE_STEP_HZ));
+}
+
+/* A press, or a finger still down: returns 1 if the spectrum owns it. */
+static int spec_gesto(uint16_t x, uint16_t y, uint8_t nuevo)
+{
+    if (nuevo) {
+        s_sp_active = (uint8_t)(menu_open_id() == MENU_NONE && spec_en_zona(x, y));
+        s_sp_moved  = 0U;
+        s_sp_x0 = s_sp_prev = x;
+        s_sp_accum  = 0.0f;
+        return s_sp_active;
+    }
+    if (!s_sp_active) { return 0; }
+    {
+        int32_t d = (int32_t)x - (int32_t)s_sp_x0;
+
+        if (d < 0) { d = -d; }
+        if (d > SPEC_TAP_MOVE_PX) { s_sp_moved = 1U; }
+    }
+    if (s_sp_moved) { spec_drag_tune(x, s_sp_prev); }
+    s_sp_prev = x;
+    return 1;
+}
+
+/* The lift: a press that never moved is a tap - at where it STARTED,
+ * as upstream's, because the lift's coordinates are not to be trusted. */
+static void spec_suelta(void)
+{
+    if (s_sp_active && !s_sp_moved) { spec_tap_tune(s_sp_x0); }
+    if (s_sp_active && s_sp_moved) {
+        console_printf("  spectrum drag: dial %u Hz\n", s_tuned_hz);
+    }
+    s_sp_active = 0U;
+    s_sp_moved  = 0U;
+}
+
+/*
  * WHAT THE FINGER LANDED ON, reported to the console.
  *
  * Nothing is wired to an action - there is no band list, no menu and
@@ -7094,11 +7292,28 @@ static void ui_touch(void)
         n        = 1U;
         pt[0].x  = s_tap_x;
         pt[0].y  = s_tap_y;
+    } else if (s_hold_on) {             /* ui_hold(), from the bench */
+        if ((int32_t)(board_millis() - s_hold_until) >= 0) {
+            s_hold_on = 0U;             /* this poll is the lift */
+        } else {
+            n       = 1U;
+            pt[0].x = s_hold_x;
+            pt[0].y = s_hold_y;
+        }
+    } else if (s_sw_n != 0U) {          /* ui_swipe(), from the bench */
+        uint32_t k = SWIPE_POLLS - s_sw_n;
+
+        s_sw_n--;
+        n       = 1U;
+        pt[0].x = (uint16_t)((int32_t)s_sw_x0 + ((int32_t)s_sw_x1 - (int32_t)s_sw_x0)
+                             * (int32_t)k / (int32_t)(SWIPE_POLLS - 1U));
+        pt[0].y = s_sw_y;
     }
 
     if (n == 0U) {
         s_was_down = 0U;
         menu_touch_up();
+        spec_suelta();
         if (s_down >= 0) {
             int8_t was = s_down;
             s_down = -1;
@@ -7131,7 +7346,7 @@ static void ui_touch(void)
                 ui_act_draw_one(&s_act, (uint8_t)b);
                 console_printf("  touch (%3u,%3u) -> boton %d \"%s\"\n",
                                (uint32_t)x, (uint32_t)y, (int32_t)b,
-                               k_act_names[b]);
+                               k_act_names[b][IDIOMA_ES]);
             }
             return;
         }
@@ -7145,6 +7360,9 @@ static void ui_touch(void)
 
         /* An open menu owns its area. */
         if (menu_touch_down(x, y, nuevo)) { return; }
+
+        /* With none open, the spectrum and the waterfall tune. */
+        if (spec_gesto(x, y, nuevo)) { return; }
 
         /* Everything above the action bar, once per press. */
         if (!nuevo) { return; }
@@ -7172,6 +7390,12 @@ static void ui_touch(void)
             if (h == UI_TOP_HIT_BW)  { bw_cycle();  return; }
             if (h == UI_TOP_HIT_NONE && ui_top_band_hit(x, y)) {
                 menu_toggle(MENU_BANDAS);
+                return;
+            }
+            /* MEM: the memory channels, and again to close them - as
+             * upstream's chip does when no scan is running. */
+            if (h == UI_TOP_HIT_NONE && ui_top_mem_hit(x, y)) {
+                menu_toggle(MENU_MEM);
                 return;
             }
             /* The frequency: upstream's keypad. Its zone is ui_top.c's,
@@ -7402,7 +7626,7 @@ int main(void)
      */
     spi3_init(SPI3_DIV8);
     ili9488_init(ILI9488_FMT_18BIT);
-    board_backlight(1);
+    backlight_init();                   /* on, at 100 % until the FRAM says */
     s_panel_up = 1;
     console_printf("Panel     : SPI3 at %u Hz, 18 bpp, 480x320 - up early, "
                    "so the\n", spi3_hz());
@@ -8247,7 +8471,7 @@ int main(void)
      */
     demod_init();
     grab_init();
-    __asm__ volatile ("" :: "r"(ui_tap));   /* swd-call's, see ui_tap() */
+    __asm__ volatile ("" :: "r"(ui_tap), "r"(ui_swipe), "r"(ui_hold));   /* swd-call's, see ui_tap() */
 
     /*
      * UPSTREAM'S DEMODULATOR IS WHAT PLAYS, from step 9 on: the mode
@@ -8282,6 +8506,9 @@ int main(void)
                    radio_suav_pct(),
                    (s_boot_have && s_boot_set.has_suav) ? ""
                        : " (a record before version 4: suavizado is the default)");
+
+    /* The memory channels: upstream's MEM.CSV, kept in the FRAM. */
+    menu_mem_init();
 
     /* Everything the FRAM held is in force: THAT is the baseline, so the
      * boot does not save back what it has just read. */

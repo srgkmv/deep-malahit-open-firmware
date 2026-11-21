@@ -232,7 +232,7 @@ static void detalle(void)
         "abajo del todo: abierto siempre", "encendida (botón Ruido)",
         "apagada: se enciende con Ruido",
         "reducción de ganancia del sintonizador",
-        "% promediado entre fotogramas" };
+        "% promediado entre fotogramas", "% de la luz de la pantalla" };
     int16_t hueco = (int16_t)(UID_BTN_X1 - UID_VAL_GAP
                               - (UID_BTN_X0 + UID_BTN_W + UID_VAL_GAP));
     ui_det_state_t st;
@@ -365,7 +365,7 @@ static void ingles(void)
     static const char *const nombres_en[] = {
         "AGC", "Bandwidth", "Notch", "Squelch", "Noise red.", "Blanker", "Preamp",
         "Attenuator", "Theme", "Palette", "Style", "Volume", "Smoothing", "Bridge",
-        "Trace", "Language" };
+        "Trace", "Language", "Brightness" };
     static const char *const valores_en[] = {
         "No AGC", "Slow", "Medium", "Fast", "Gentle", "Normal", "Strong", "Maximum",
         "Off", "On", "Filled", "Line", "Outline", "Joined", "Loose", "White",
@@ -375,7 +375,7 @@ static void ingles(void)
     static const char *const pies_en[] = {
         "at the bottom: always open", "on (Noise button)",
         "off: the Noise button turns it on", "the tuner's gain reduction",
-        "% averaged between frames" };
+        "% averaged between frames", "% of the screen's light" };
     static const char *const teclas_en[] = { "Delete", "Clear", "Back", "kHz", "MHz" };
     static const char *const barra_en[] = {
         "Bands", "Mode", "Step", "Volume", "Noise", "Settings", "on", "off" };
@@ -471,9 +471,51 @@ static void ingles(void)
     idioma_pon(IDIOMA_ES);
 }
 
+/*
+ * MEM: el banco de memorias de upstream (banco.c) como lo pinta
+ * src/menus.c, mem_rellena(): los cuatro bancos en la columna, en los dos
+ * idiomas, y en cada celda la frecuencia, el modo y el numero.
+ */
+static void memorias(void)
+{
+    static const char *const bancos[2][4] = {
+        { "HF", "Aviones", "Marina", "Repetidores" },
+        { "HF", "Aircraft", "Marine", "Repeaters" } };
+    static const char *const frecs[] = { "104.300,00", "9.600,00", "179.999,99", "libre", "empty" };
+    int16_t hueco_cat = (int16_t)(UIC_SIDE_W - UIC_CAT_TXT_X - UIC_CAT_TXT_R);
+    ui_cfg_state_t st;
+    unsigned i, l;
+    static char num[15][3];
+
+    for (l = 0; l < 2; l++) {
+        for (i = 0; i < 4; i++) { cabe("banco", bancos[l][i], &font_ui_11, hueco_cat); }
+    }
+    for (i = 0; i < sizeof frecs / sizeof frecs[0]; i++) {
+        cabe("memoria", frecs[i], &font_ui_11, UIC_DCELL_W - 2);
+    }
+
+    memset(&st, 0, sizeof st);
+    for (i = 0; i < 4; i++) { st.cat[i] = bancos[0][i]; }
+    st.cats = 4; st.cat_sel = 0; st.denso = 1;
+    st.marcada = 1; st.cursor = -1; st.pressed = -1;
+    st.n = 15;
+    for (i = 0; i < 15; i++) {
+        num[i][0] = (char)('0' + (i + 1) / 10); num[i][1] = (char)('0' + (i + 1) % 10); num[i][2] = 0;
+        st.cel[i].extra = num[i];
+        st.cel[i].nombre = "libre"; st.cel[i].valor = "";
+    }
+    st.cel[0].nombre = "9.600,00";   st.cel[0].valor = "AM";
+    st.cel[1].nombre = "104.300,00"; st.cel[1].valor = "WFM";
+    st.cel[2].nombre = "7.074,00";   st.cel[2].valor = "USB";
+    fondo_principal();
+    ui_cfg_draw(&st);
+    escribe("memorias");
+}
+
 int main(void)
 {
     printf("menus del Malahit, 480 x 320\n");
+    memorias();
     modos();
     bandas();
     pasos();

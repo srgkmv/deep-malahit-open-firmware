@@ -17,6 +17,10 @@
 #include "ui_det.h"        /* ../../User - upstream: one continuous setting */
 #include "ui_kbd.h"        /* ../../User - upstream: the frequency keypad */
 #include "idioma.h"        /* ../../User - upstream: tr(), T(), idioma() */
+#include "banco.h"         /* ../../User - upstream: the memory channels */
+#include "bip.h"           /* ../../User - upstream: the pips */
+#include "board.h"         /* src/ - board_millis(), for the long press */
+#include "backlight.h"     /* ../../User - upstream's API, src/backlight.c */
 
 /* What ui_cfg.c draws the range line in, defined once in fonts_menu.c. */
 extern const gfx2_font_t font_ui_10;
@@ -279,7 +283,7 @@ typedef enum {
     AJ_AGC, AJ_BW, AJ_NOTCH, AJ_SQL, AJ_NR, AJ_NB, AJ_PRE, AJ_ATT,
     AJ_TEMA, AJ_PALETA, AJ_ESTILO, AJ_VOL,
     AJ_SUAV, AJ_PUENTE, AJ_TRAZA,
-    AJ_IDIOMA
+    AJ_IDIOMA, AJ_BRILLO
 } aj_id_t;
 
 /*
@@ -314,6 +318,7 @@ static const struct { texto_t nombre; uint8_t pag; uint8_t id; } k_aj[] = {
     { T("Paleta", "Palette"),          AJ_PAG_PANTALLA, AJ_PALETA },
     { T("Estilo", "Style"),            AJ_PAG_PANTALLA, AJ_ESTILO },
     { T("Volumen", "Volume"),          AJ_PAG_PANTALLA, AJ_VOL    },
+    { T("Brillo", "Brightness"),       AJ_PAG_PANTALLA, AJ_BRILLO },   /* upstream's: after Volumen */
     { T("Suavizado", "Smoothing"),     AJ_PAG_ESPECTRO, AJ_SUAV   },   /* upstream's place: before Puente */
     { T("Puente", "Bridge"),           AJ_PAG_ESPECTRO, AJ_PUENTE },
     { T("Traza", "Trace"),             AJ_PAG_ESPECTRO, AJ_TRAZA  },
@@ -341,7 +346,12 @@ static const texto_t k_nb_nom[4] = {
  * moved onto the grid the FRAM stores it on (settings.h). Suavizado:
  * upstream's 0..95 % in 5s (SPECTRUM_SMOOTH_* in its main.c).
  */
-enum { DET_NINGUNO = 0, DET_SQL, DET_NR, DET_VOL, DET_ATT, DET_SUAV };
+enum { DET_NINGUNO = 0, DET_SQL, DET_NR, DET_VOL, DET_ATT, DET_SUAV, DET_BRILLO };
+
+/* Upstream's knob on Brillo: 20..100 % in 5s (BACKLIGHT_STEP and the
+ * clamp in its tune_encoder_poll()); backlight.c's own floor is 10. */
+#define BRILLO_MIN   20
+#define BRILLO_STEP   5
 
 #define SQL_FLOOR_DB   (-10)
 #define SQL_CEIL_DB      60
@@ -405,6 +415,10 @@ static const char *aj_valor(uint8_t id)
         static char b[8];               /* its own: a page's values all live at once */
         return num_txt(b, (int32_t)radio_suav_pct(), " %");
     }
+    case AJ_BRILLO: {
+        static char b[8];
+        return num_txt(b, (int32_t)backlight_get_percent(), " %");
+    }
     case AJ_PUENTE: return spectrum_get_bridge() ? tr("Unido", "Joined") : tr("Suelto", "Loose");
     case AJ_TRAZA:  return spectrum_get_heatmap_trace_white() ? tr("Blanca", "White")
                                                               : tr("Del color", "Palette");
@@ -465,6 +479,12 @@ static void det_fmt(void)
         s_dst.valor  = num_txt(s_det_val, -(int32_t)radio_att_db(), " dB");
         s_dst.pie    = tr("reducción de ganancia del sintonizador", "the tuner's gain reduction");
         break;
+    case DET_BRILLO:
+        /* The number alone, as Suavizado's: no '%' in font_num_31. */
+        s_dst.titulo = tr("Brillo", "Brightness");
+        s_dst.valor  = num_txt(s_det_val, (int32_t)backlight_get_percent(), 0);
+        s_dst.pie    = tr("% de la luz de la pantalla", "% of the screen's light");
+        break;
     case DET_SUAV:
         /* The number alone: font_num_31 has no '%' (nor has upstream's
          * font_num_44, so upstream's own page draws "25 " here), so the
@@ -503,6 +523,14 @@ static void det_add(int32_t d)
     /* "+" is more gain, so the shown "-59 dB" goes UP: less reduction. */
     case DET_ATT: (void)radio_att_set(radio_att_db() - (int)d); break;
     case DET_SUAV: (void)radio_suav_set(radio_suav_pct() + 5 * (int)d); break;
+    case DET_BRILLO: {
+        int32_t v = (int32_t)backlight_get_percent() + d * BRILLO_STEP;
+
+        if (v < BRILLO_MIN) { v = BRILLO_MIN; }
+        if (v > 100)        { v = 100; }
+        backlight_set_percent((uint8_t)v);
+        break;
+    }
     default: break;
     }
     det_fmt();
@@ -551,6 +579,7 @@ static void aj_toca(uint8_t id)
     case AJ_ATT:   det_open(DET_ATT); return;
     case AJ_VOL:   det_open(DET_VOL); return;
     case AJ_SUAV:  det_open(DET_SUAV); return;
+    case AJ_BRILLO: det_open(DET_BRILLO); return;
     case AJ_IDIOMA:
         /* As upstream's idioma_cambiar(): the other one, and everything
          * painted again in it - this screen included. */
@@ -617,6 +646,7 @@ void menu_ajustes_get(settings_t *s)
     s->has_suav  = 1U;
     s->aj_wfm_bw = (uint8_t)(demod_am_get_audio_bw() + 1U);
     s->aj_idioma = (uint8_t)(idioma() + 1U);
+    s->aj_brillo = backlight_get_percent();
 }
 
 /* What the screen shows - before the first paint, so a stored theme is
@@ -636,6 +666,9 @@ void menu_ajustes_apply_pantalla(const settings_t *s)
     }
     if (s->aj_estilo < 3U) { spectrum_set_style((spectrum_style_t)s->aj_estilo); }
     if (s->has_suav) { (void)radio_suav_set((int)s->aj_suav); }   /* clamps */
+    if (s->aj_brillo >= (uint8_t)BRILLO_MIN && s->aj_brillo <= 100U) {
+        backlight_set_percent(s->aj_brillo);
+    }
     if (s->aj_idioma >= 1U && s->aj_idioma <= IDIOMA_N) {
         radio_idioma((uint8_t)(s->aj_idioma - 1U));
     }
@@ -681,6 +714,174 @@ const char *menu_tema_nombre(void)
     return idioma() == IDIOMA_EN ? k_sim_temas[s_tema].nombre_en : k_sim_temas[s_tema].nombre;
 }
 uint32_t    menu_nr_strength(void) { return s_nr_strength; }
+
+/* ------------------------------------------------------------------ */
+/* THE MEMORY CHANNELS                                                 */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Upstream's bank of memories (banco.c, compiled in place): four banks of
+ * fifteen, each memory the frequency, the mode, the step and the filter's
+ * two cuts - what it takes to be back listening exactly as before, not
+ * only on the frequency. Upstream's screen, on ui_cfg.c: the banks in the
+ * column, the memories in the grid, each cell its frequency, its mode and
+ * its number. And upstream's gestures:
+ *
+ *   a short tap on a memory   recalls it and closes the screen
+ *   a short tap on an empty   the "no" pip, and the screen stays
+ *   two seconds on any cell   SAVES the radio as it is into it, with the
+ *                             "done" pip - "saving over a memory is
+ *                             destructive, so it has to cost more than
+ *                             brushing the screen" (upstream, 4 s, then 3,
+ *                             then 2 at its owner's word)
+ *
+ * The bank names are upstream's k_banco_nombres[]. Upstream renames them
+ * by editing MEM.CSV on a PC; this board has no disk to edit, so they stay
+ * upstream's - a name in the FRAM's copy of the file would still be read.
+ *
+ * Kept in the FRAM as upstream's own MEM.CSV, written at once on every
+ * save (src/memfram.c). Upstream's 16th cell, SCAN, is not here yet.
+ */
+static const texto_t k_banco_nombres[BANCO_N] = {
+    T("HF", "HF"), T("Aviones", "Aircraft"), T("Marina", "Marine"),
+    T("Repetidores", "Repeaters")
+};
+
+#define MEM_LARGO_MS  2000U             /* upstream's CFG_LARGO_MS */
+
+static uint8_t  s_mem_bk;               /* the bank on screen */
+static char     s_mem_txt[BANCO_MEM_N][16];     /* "07" and, from [3], "9.600,00" */
+static uint32_t s_press_ms;             /* when the press on a cell began */
+static uint8_t  s_largo;                /* this press has saved already */
+static char     s_mem_csv[3072];        /* upstream's BANCO_CSV_MIN is 2560 */
+static uint32_t s_pasos_hz[N_PASOS];    /* banco_pasos_pon(): the file keeps hertz */
+
+static const char *mem_banco_nombre(uint8_t b)
+{
+    const char *n = banco_nombre(b);
+
+    return (n[0] != '\0') ? n : k_banco_nombres[b][idioma()];
+}
+
+static void mem_rellena(void)
+{
+    uint8_t i;
+
+    memset(&s_cfg, 0, sizeof s_cfg);
+    for (i = 0U; i < (uint8_t)BANCO_N; i++) { s_cfg.cat[i] = mem_banco_nombre(i); }
+    s_cfg.cats    = (uint8_t)BANCO_N;
+    s_cfg.cat_sel = s_mem_bk;
+    s_cfg.denso   = 1U;                 /* 4 x 4, as the band screen */
+    s_cfg.marcada = 0xFFU;
+    s_cfg.cursor  = -1;
+    s_cfg.pressed = -1;
+    for (i = 0U; i < (uint8_t)BANCO_MEM_N; i++) {
+        char       *t = s_mem_txt[i];
+        banco_mem_t m;
+
+        /* The number always, full or empty: it is what a memory is
+         * called by, and where the finger has to stay two seconds. */
+        t[0] = (char)('0' + (i + 1U) / 10U);
+        t[1] = (char)('0' + (i + 1U) % 10U);
+        t[2] = '\0';
+        s_cfg.cel[i].extra = t;
+        if (!banco_lee(s_mem_bk, i, &m)) {
+            s_cfg.cel[i].nombre = tr("libre", "empty");
+            s_cfg.cel[i].valor  = "";
+        } else {
+            radio_fmt_khz(m.hz, &t[3], (uint32_t)(sizeof s_mem_txt[i] - 3U));
+            s_cfg.cel[i].nombre = &t[3];
+            s_cfg.cel[i].valor  = radio_mode_name((int)m.modo);
+            /* The one playing now: the frequency AND the mode. */
+            if (m.hz == radio_dial_hz() && (int)m.modo == radio_mode_get()) {
+                s_cfg.marcada = i;
+            }
+        }
+    }
+    s_cfg.n = (uint8_t)BANCO_MEM_N;
+}
+
+static void mem_graba(uint8_t bk, uint8_t c)
+{
+    static const char *serie[BANCO_N];
+    banco_mem_t m;
+    uint8_t     b;
+
+    memset(&m, 0, sizeof m);
+    m.hz   = radio_dial_hz();
+    m.modo = (uint8_t)radio_mode_get();
+    m.paso = (uint8_t)radio_step_get();
+    radio_filtro_get(&m.fil_lo, &m.fil_hi);
+    if (!banco_graba(bk, c, &m)) { bip_error(); return; }
+
+    /* The default names and the line that explains them, translated, just
+     * before writing - upstream's order, so a file written after a change
+     * of language has them in it. */
+    for (b = 0U; b < (uint8_t)BANCO_N; b++) { serie[b] = k_banco_nombres[b][idioma()]; }
+    banco_nombres_pon(serie, (uint8_t)BANCO_N,
+                      tr("Para ponerle nombre a un banco, quita la almohadilla"
+                         " y escribe el tuyo:",
+                         "To name a bank, remove the hash and write your own:"));
+    if (banco_guarda(s_mem_csv, (uint32_t)sizeof s_mem_csv)) {
+        bip_listo();
+        console_printf("  MEM: bank %u memory %u <- %u Hz %s (FRAM slot %d, seq %u)\n",
+                       (uint32_t)bk + 1U, (uint32_t)c + 1U, m.hz,
+                       radio_mode_name((int)m.modo), memfram_slot(), memfram_seq());
+    } else {
+        /* Kept in RAM, which is what matters for using it; said. */
+        bip_error();
+        console_printf("  *** MEM: bank %u memory %u kept, but NOT written to the FRAM ***\n",
+                       (uint32_t)bk + 1U, (uint32_t)c + 1U);
+    }
+}
+
+/* Upstream's mem_recupera(): the mode first, then the dial, the step and
+ * the filter - the filter last because it is the mode's family's. */
+static int mem_recupera(uint8_t bk, uint8_t c)
+{
+    banco_mem_t m;
+
+    if (!banco_lee(bk, c, &m)) { return 0; }
+    if ((int)m.modo != radio_mode_get()) { radio_mode_set((int)m.modo); }
+    if (radio_dial_go(m.hz) == 0U) { return 0; }
+    if ((uint32_t)m.paso < radio_step_count()) { radio_step_set((uint32_t)m.paso); }
+    if (m.fil_hi > m.fil_lo) { radio_filtro_set(m.fil_lo, m.fil_hi); }
+    console_printf("  MEM: bank %u memory %u -> %u Hz %s\n", (uint32_t)bk + 1U,
+                   (uint32_t)c + 1U, m.hz, radio_mode_name((int)m.modo));
+    return 1;
+}
+
+/* The finger is still on a cell: two seconds of it save. Once a press. */
+static void mem_largo_poll(void)
+{
+    if (s_open != MENU_MEM || s_pressed < 0 || s_largo) { return; }
+    if (s_pressed >= (int8_t)BANCO_MEM_N) { return; }          /* the column */
+    if ((uint32_t)(board_millis() - s_press_ms) < MEM_LARGO_MS) { return; }
+    s_largo = 1U;
+    mem_graba(s_mem_bk, (uint8_t)s_pressed);
+    {
+        int8_t h = s_pressed;
+
+        mem_rellena();
+        s_cfg.pressed = h;              /* still under the finger */
+        ui_cfg_draw_one(&s_cfg, h);
+    }
+}
+
+void menu_mem_init(void)
+{
+    uint32_t i;
+    int      n = 0;
+
+    for (i = 0U; i < (uint32_t)N_PASOS; i++) { s_pasos_hz[i] = (uint32_t)paso_tabla[i].hz; }
+    banco_init();
+    banco_pasos_pon(s_pasos_hz, (uint8_t)N_PASOS);
+    (void)banco_carga(s_mem_csv, (uint32_t)sizeof s_mem_csv);
+    for (i = 0U; i < (uint32_t)BANCO_N; i++) { n += (int)banco_usadas((uint8_t)i); }
+    console_printf("Memories  : %d in use, %s\n", n,
+                   memfram_slot() >= 0 ? "MEM.CSV from the FRAM (memfram.c)"
+                                       : "none in the FRAM yet");
+}
 
 /* ------------------------------------------------------------------ */
 /* THE FREQUENCY KEYPAD                                                */
@@ -887,6 +1088,7 @@ void menu_toggle(menu_t m)
     case MENU_BANDAS: bandas_familia_inicial(); bandas_rellena(); break;
     case MENU_PASO:   pasos_rellena(); break;
     case MENU_AJUSTES: ajustes_rellena(); break;
+    case MENU_MEM:    mem_rellena(); break;
     default:          menu_close(); return;
     }
     s_open = m;
@@ -894,7 +1096,8 @@ void menu_toggle(menu_t m)
     radio_act_refresh();
     console_printf("  menu -> %s\n", m == MENU_MODO ? "Modo"
                                    : m == MENU_BANDAS ? "Bandas"
-                                   : m == MENU_PASO ? "Paso" : "Ajustes");
+                                   : m == MENU_PASO ? "Paso"
+                                   : m == MENU_MEM ? "MEM" : "Ajustes");
 }
 
 /*
@@ -933,7 +1136,7 @@ int menu_touch_down(uint16_t x, uint16_t y, int nuevo)
 
     if (s_open == MENU_NONE) { return 0; }
     if (y < UIG_Y || y >= UIG_Y + UIG_H) { return 0; }
-    if (!nuevo) { return 1; }
+    if (!nuevo) { mem_largo_poll(); return 1; }
 
     /* Decided on the press and kept to the lift, as upstream's
      * kbd_touch(): the lift's coordinates are not to be trusted. */
@@ -972,7 +1175,9 @@ int menu_touch_down(uint16_t x, uint16_t y, int nuevo)
         s_cfg.pressed = h;
         ui_cfg_draw_one(&s_cfg, h);
     }
-    s_pressed = h;
+    s_pressed  = h;
+    s_press_ms = board_millis();
+    s_largo    = 0U;
     return 1;
 }
 
@@ -989,6 +1194,14 @@ void menu_touch_up(void)
         s_kbd.pressed = -1;
         ui_kbd_draw_one(&s_kbd, h);
         kbd_apply((uint8_t)h);
+        return;
+    }
+
+    /* A press that saved is done: the lift must not recall as well. */
+    if (s_open == MENU_MEM && s_largo) {
+        s_largo = 0U;
+        s_cfg.pressed = -1;
+        ui_cfg_draw_one(&s_cfg, h);
         return;
     }
 
@@ -1025,11 +1238,22 @@ static void elige(int8_t h)
         } else if (s_open == MENU_AJUSTES) {
             s_aj_pag = (uint8_t)(h - UIC_HIT_CAT0);
             ajustes_rellena();
+        } else if (s_open == MENU_MEM) {
+            s_mem_bk = (uint8_t)(h - UIC_HIT_CAT0);
+            mem_rellena();
         }
         ui_cfg_draw(&s_cfg);
         return;
     }
     if (h >= (int8_t)s_cfg.n) { return; }
+
+    if (s_open == MENU_MEM) {
+        /* A memory closes the screen, as a band or a mode does; an empty
+         * one says no and stays, for the finger to come back and save. */
+        if (mem_recupera(s_mem_bk, (uint8_t)h)) { menu_close(); }
+        else { bip_error(); ui_cfg_draw_one(&s_cfg, h); }
+        return;
+    }
 
     if (s_open == MENU_AJUSTES) {
         /* A setting stays open after a change, as upstream's does: the
@@ -1113,15 +1337,16 @@ void menu_knob(int32_t d)
     {
         int32_t t = (was < 0) ? cursor_ini() : (int32_t)was + d;
 
-        if (s_open == MENU_BANDAS && (t >= (int32_t)s_cfg.n || t < 0)
+        if ((s_open == MENU_BANDAS || s_open == MENU_MEM)
+            && (t >= (int32_t)s_cfg.n || t < 0)
             && s_cfg.cats > 1U) {
             uint8_t c = s_cfg.cat_sel;
 
             if (t >= (int32_t)s_cfg.n && c + 1U < s_cfg.cats)   { c++; t = 0; }
             else if (t < 0 && c > 0U)                          { c--; t = 999; }
             if (c != s_cfg.cat_sel) {
-                s_fam_sel = s_fam_of_cat[c];
-                bandas_rellena();
+                if (s_open == MENU_MEM) { s_mem_bk = c; mem_rellena(); }
+                else { s_fam_sel = s_fam_of_cat[c]; bandas_rellena(); }
                 if (t > (int32_t)s_cfg.n - 1) { t = (int32_t)s_cfg.n - 1; }
                 s_cfg.cursor = (int8_t)t;
                 ui_cfg_draw(&s_cfg);

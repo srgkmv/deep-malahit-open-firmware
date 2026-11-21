@@ -51,8 +51,8 @@ void board_rail_on_early(void);
 
 /*
  * Panel backlight: PB8 -> R27/R28 -> Q1 (IRLML2502) -> the panel's LED
- * anode. Plain on/off here. PB8 can do PWM later through TIM4_CH3 (AF2) or
- * TIM16_CH1 (AF1); brightness control is not a bring-up problem.
+ * anode. On/off here; the brightness is src/backlight.c's, upstream's API
+ * on TIM16_CH1 (AF1), since 22/11/2026.
  */
 void board_backlight(int on);
 

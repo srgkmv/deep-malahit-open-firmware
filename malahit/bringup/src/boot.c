@@ -422,6 +422,9 @@ void boot_power_tick(void)
 
         s_key_armed = 1U;
         s_key_ms    = 0U;
+        /* The backlight pin may be TIM16's (src/backlight.c), and BSRR
+         * does nothing to a pin in alternate function: an output first. */
+        GPIOB->MODER = (GPIOB->MODER & ~(3UL << 16U)) | (1UL << 16U);
         GPIOB->BSRR = (1UL << (8U + 16U));      /* backlight */
         GPIOE->BSRR = (1UL << (1U + 16U));      /* speaker amplifier */
         return;
@@ -475,6 +478,7 @@ void boot_power_park(void)
 
     RCC->AHB4ENR |= RCC_AHB4ENR_GPIOBEN | RCC_AHB4ENR_GPIOEEN;
     (void)RCC->AHB4ENR;
+    GPIOB->MODER = (GPIOB->MODER & ~(3UL << 16U)) | (1UL << 16U);  /* TIM16's? an output */
     GPIOB->BSRR = (1UL << (8U + 16U));      /* backlight */
     GPIOE->BSRR = (1UL << (1U + 16U));      /* speaker amplifier */
 

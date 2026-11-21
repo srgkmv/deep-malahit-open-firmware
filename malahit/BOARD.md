@@ -175,7 +175,7 @@ Other power control:
 |---|---|---|
 | `PREAMP` | `PE0` | Q7 (2N7002) → Q3 (IRLML6402) → `5V_PREAMP` |
 | `Vspk_ON` | `PE1` | Q8 (2N7002) → Q4 (IRLML6402) → `Vskp_CODEC` (speaker amp supply) |
-| `SPI_LCD_BL` | `PB8` | R27/R28 → Q1 (IRLML2502) → panel LED anode. PWM capable: TIM4_CH3 (AF2) or TIM16_CH1 (AF1) |
+| `SPI_LCD_BL` | `PB8` | R27/R28 → Q1 (IRLML2502) → panel LED anode. PWM capable: TIM4_CH3 (AF2) or TIM16_CH1 (AF1) — **TIM16_CH1, 20 kHz, active high, since 22/11/2026** (`src/backlight.c`); no spur from it measured at 50 % |
 
 Battery / charger:
 

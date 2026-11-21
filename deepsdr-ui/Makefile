@@ -274,7 +274,7 @@ out/malahit_menus: out/malahit_menus.o sim/lcd_sim.c ../User/gfx.c ../User/spect
 .PHONY: malahit-menus
 malahit-menus: out/malahit_menus
 	./out/malahit_menus
-	@for f in modos bandas pasos ajustes detalle teclado teclado_vacio pasos_en ajustes_en; do \
+	@for f in modos bandas pasos ajustes detalle teclado teclado_vacio pasos_en ajustes_en memorias; do \
 	    python3 -c "from PIL import Image; Image.open('out/malahit_'+'$$f'+'.ppm').save('out/malahit_'+'$$f'+'.png')"; \
 	done
 

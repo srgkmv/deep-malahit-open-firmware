@@ -1,4 +1,5 @@
 #include "stm32h7xx.h"
+#include "backlight.h"    /* ../../User - upstream's API, src/backlight.c */
 #include "board.h"
 #include "boot.h"
 #include "clock.h"
@@ -347,7 +348,9 @@ void board_power_on(void)
     board_delay_ms(50);
 }
 
+/* On and off; the brightness in between is src/backlight.c's, once
+ * backlight_init() has handed the pin to TIM16. */
 void board_backlight(int on)
 {
-    BL_PORT->BSRR = on ? (1UL << BL_PIN) : (1UL << (BL_PIN + 16U));
+    if (on) { backlight_wake(); } else { backlight_sleep(); }
 }

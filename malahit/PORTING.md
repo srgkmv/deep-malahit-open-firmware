@@ -1207,6 +1207,68 @@ Each step should end with something visible on the radio.
    Found on the way: a full repaint draws the action bar as `s_act`
    holds it, and the names were set only when the bar was refreshed -
    the first try left the bar in Spanish under an English header.
+37. **Touching the spectrum tunes.** *22/11/2026, from RAM, on the air* -
+   upstream's spec_tap_tune_to_x() and spec_drag_tune_apply() on this
+   port's window, with upstream's `spec_snap.c` compiled in place (a
+   pure function; its host bench `snaptest` passes). A TAP lands on the
+   signal near the finger - the carrier, or the voice's edge in USB/LSB -
+   or, with nothing there, on the step grid; a DRAG pans, the content
+   following the finger, in whole steps with the remainder carried and
+   the first step onto the grid (upstream's tune_mueve_pasos()). A press
+   becomes a drag past 6 px, upstream's threshold. The zone is the trace
+   AND the waterfall (upstream's is the trace only, but the waterfall
+   here is 92 of the 233 rows). A pixel is a frequency without asking
+   where the tuner is: the window is centred on the dial in every mode.
+   `swd-call ... ui_swipe x0 x1 y` drags a finger from the bench.
+   **On the air, 31 m at night, the carrier positions read from the
+   trace over SWD first**: a tap 3 px beside the carrier at +4.5 kHz
+   tuned 9 604 566 Hz - the station, not the 5 kHz grid; a tap on empty
+   spectrum, 9 665 000 - the grid, as computed; a 100 px drag left
+   9 700 000 (+38.2 kHz, seven 5 kHz steps), and back right on the
+   waterfall 9 665 000. Found on the way, from step 36 and IN FLASH: the
+   console printed garbage for the action bar's button name (a T() pair
+   handed to %s; console_printf() has no format attribute, so nothing
+   warned) - console only, fixed here.
+38. **The memory channels, MEM.CSV in the FRAM.** *22/11/2026, from RAM,
+   on the radio* - upstream's banco.c compiled in place, unmodified: four
+   banks of fifteen, each memory the frequency, mode, step and filter.
+   banco.c reaches its disk through two calls, and `src/memfram.c`
+   answers them from the FRAM for MEM.CSV alone - two 3 kB slots at
+   0x4200, header and CRC-32, newest valid wins, written data first and
+   header last and read back: so the file in the FRAM is UPSTREAM'S own
+   CSV, written and parsed by upstream's code. Upstream's screen and
+   gestures in `src/menus.c`: the MEM chip in the header opens and closes
+   it; banks in the column (upstream's HF / Aircraft / Marine /
+   Repeaters, both languages); a tap recalls and closes, a tap on an
+   empty cell gives the "no" pip and stays, TWO SECONDS on a cell save
+   with the "done" pip; the knob runs across cells and banks, its press
+   recalls. Upstream's 16th cell, SCAN, is not here yet. Host render
+   `memorias`, 0 overflows; `swd-call ... ui_hold x y ms` holds a finger
+   from the bench. **Checked on the radio**: a hold saved 104.3 MHz WFM
+   (FRAM slot 0, seq 1), another 9.6 MHz AM (slot 1, seq 2); the CSV in
+   RAM read back over SWD is upstream's format line for line; a tap on 01
+   from AM put the radio back in WFM with the tuner on the dial and the
+   100 kHz step; reloaded, "Memories: 2 in use, MEM.CSV from the FRAM",
+   and both recall.
+39. **Brightness.** *22/11/2026, from RAM, on the radio* - upstream's
+   backlight API (User/backlight.h: percent, a 10 % floor, 20 kHz) on this
+   board's pin: `src/backlight.c`, TIM16_CH1 on PB8 (AF1), ACTIVE HIGH (Q1
+   is an N-channel gate; upstream's panel lights on a LOW pin). TIM16 is
+   reset and every register written. At 100 % CCR1 > ARR and the pin
+   never switches - the default is exactly the backlight this board had.
+   Brillo / Brightness on Pantalla after Volumen, upstream's place, a
+   detail page in upstream's knob range (20-100 % in 5s); in the FRAM,
+   record v4 byte 29 (0 = not stored, 100 %). `board_backlight()` goes
+   through it, and **the power-off in boot.c puts PB8 back to an output
+   before driving it low** - BSRR does nothing to a pin in alternate
+   function, so the backlight would no longer have gone dark at once
+   under a held power button (to be confirmed by a hand: the bench
+   cannot press it). On the radio: TIM16 CR1 0x81, ARR 11999, CCR1 12000
+   at 100 % and 6000 at 50 %, BDTR MOE, PB8 AF1; 70 % saved, reloaded,
+   came back 8400. **And no PWM spur**: 16 spectra at 50 % against 16 at
+   100 % and 16 at 50 % again, A/B in one run over swd-call, at a quiet
+   151 MHz - the k x 20 kHz bins within +/-2 dB, the same spread as 50 %
+   against itself, the floor's median 62.1 / 62.3 / 62.2 dB.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

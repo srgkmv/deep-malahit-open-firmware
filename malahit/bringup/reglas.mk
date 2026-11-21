@@ -404,6 +404,12 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_det.c
 # ui_kbd.c  the frequency keypad, a tap on the frequency (step 9,
 #           21/11/2026)
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_kbd.c
+# spec_snap.c  a tap on the spectrum lands on the signal near it (a pure
+#              function, upstream's sim/snaptest.c tests it)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/spec_snap.c
+# banco.c  the memory channels: four banks of fifteen, upstream's table
+#          and its MEM.CSV, kept in the FRAM by src/memfram.c (22/11/2026)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/banco.c
 #
 # THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]
 # out of User/main.c by the script the host render uses for the same

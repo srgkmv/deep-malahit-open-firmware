@@ -32,7 +32,8 @@ typedef enum {
     MENU_BANDAS,
     MENU_PASO,
     MENU_AJUSTES,
-    MENU_TECLADO        /* the frequency keypad: no button of its own */
+    MENU_TECLADO,       /* the frequency keypad: no button of its own */
+    MENU_MEM            /* the memory channels: the MEM chip in the header */
 } menu_t;
 
 /* Which screen is up; MENU_NONE when the spectrum is showing. The main
@@ -47,6 +48,14 @@ void menu_close(void);
 /* A tap on the frequency in the header: upstream's keypad (ui_kbd.c),
  * the entry empty. Over another screen it takes its place. */
 void menu_teclado_open(void);
+
+/* The memory channels (upstream's banco.c, MEM.CSV in the FRAM): load
+ * them at boot. The screen is menu_toggle(MENU_MEM). */
+void menu_mem_init(void);
+
+/* src/memfram.c: where MEM.CSV is, for the console (-1 none). */
+int      memfram_slot(void);
+uint32_t memfram_seq(void);
 
 /* A finger on the glass while a screen is up. `down` on every poll with
  * a contact, `up` once when it lifts. Returns 1 if the point was the
@@ -104,6 +113,11 @@ uint32_t    radio_dial_hz(void);
  * keypad clamps to its own. Returns the dial reached, 0 if the tuner
  * refused. */
 uint32_t    radio_dial_go(uint32_t hz);
+void        radio_fmt_khz(uint32_t hz, char *out, uint32_t n);  /* "9.600,00" */
+
+/* The filter's two cuts, of the family the mode in force uses. */
+void        radio_filtro_get(uint16_t *lo, uint16_t *hi);
+void        radio_filtro_set(uint16_t lo, uint16_t hi);
 
 /* The tuning step, by index into upstream's table (paso_tabla[] in the
  * generated bandas_tabla.h). */

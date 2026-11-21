@@ -34,6 +34,7 @@ directly — no copy, no fork, objects prefixed `up_` and `dsp_`:
 | `User/fonts_data.c` | glyph tables |
 | `User/demod_am.c` | 6992 |
 | `User/ui_cfg.c`, `User/ui_grid.c`, `User/ui_det.c`, `User/ui_kbd.c` | step 9, 21/11/2026 |
+| `User/spec_snap.c`, `User/banco.c` | steps 37-38, 22/11/2026, unmodified; banco.c's disk is `src/memfram.c` (MEM.CSV in the FRAM) |
 | `User/semibanda.c`, `nco.c`, `nco_tabla.c`, `nb.c`, `anotch.c`, `nr_ss.c`, `sam.c`, `rapido.c`, `bip.c` | step 8, 21/11/2026 |
 | `CMSIS/DSP/Source/**` | 9 files |
 

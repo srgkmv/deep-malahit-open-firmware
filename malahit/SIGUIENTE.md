@@ -18,6 +18,17 @@ The owner's state on the radio: 104.3 MHz, WFM, 100 kHz step, -46 dB,
 ATT 59, theme Dark, AGC Medium, WFM low-pass 15 k, smoothing 25 %,
 language English.
 
+**Since, from RAM (not in flash)**: step 37, touching the spectrum
+tunes (tap snaps to the signal, drag pans) - checked on the air; step
+38, the memory channels (MEM chip; upstream's banco.c, MEM.CSV in the
+FRAM at 0x4200) - two test memories left in bank 1: 01 = 104.3 WFM,
+02 = 9.6 AM. Upstream's SCAN cell still to do. Step 39, brightness
+(TIM16 PWM on PB8, Settings > Display > Brightness, FRAM byte 29) - the
+power-off's "dark at once" under a held button needs a hand to confirm.
+Next on the owner's list: RDS. The
+owner chose the order of what follows: spectrum touch (done), MEM in
+the FRAM, backlight brightness, then decoders one by one, RDS first.
+
 **Next: the owner picks** - step 9 has nothing left. Open small things:
 the WFM low-pass surviving a reboot was not checked on the radio (same
 FRAM path as the rest); WFM is mono, as upstream's is.
