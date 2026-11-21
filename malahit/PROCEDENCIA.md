@@ -33,6 +33,7 @@ directly — no copy, no fork, objects prefixed `up_` and `dsp_`:
 | `User/idioma.c` | 60 |
 | `User/fonts_data.c` | glyph tables |
 | `User/demod_am.c` | 6992 |
+| `User/ui_cfg.c`, `User/ui_grid.c` | step 9, 21/11/2026 |
 | `User/semibanda.c`, `nco.c`, `nco_tabla.c`, `nb.c`, `anotch.c`, `nr_ss.c`, `sam.c`, `rapido.c`, `bip.c` | step 8, 21/11/2026 |
 | `CMSIS/DSP/Source/**` | 9 files |
 
@@ -117,6 +118,17 @@ and each is recorded here so the divergence is never a surprise:
   no `-D` the DEEPSDR keeps PB7 — **verified by compiling `demod_am.o`
   with upstream's own GD32 command line before and after: identical
   disassembly, identical section sizes.**
+
+- `User/ui_grid.h`, `User/ui_grid.c`, `User/ui_cfg.h`, `User/ui_cfg.c`
+  — step 9, 21/11/2026: the menu geometry wrapped in `#ifndef` (the
+  zone, the cells, the gaps, the category column), and the literal
+  offsets inside the drawing - where each line of text sits in its cell,
+  the radii, the accent bar - turned into named `#ifndef` constants whose
+  defaults are the old literals, one by one. **Verified by rendering
+  nine DEEPSDR screens before and after - bands, settings, detail,
+  config, the four mode pages and the main screen - and comparing the
+  PPMs byte for byte: identical.** `deepsdr-ui/gfx2/` copies synced,
+  `copias_check.py` clean.
 
 `User/encoder.c` is also **compiled twice**, the second time with its
 public names renamed through `-D` so the board's second encoder gets its

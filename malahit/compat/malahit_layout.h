@@ -334,4 +334,63 @@
 #define ACT_VALUE_Y          15
 #define ACT_SOLO_Y            8
 
+/*
+ * THE MENU SCREENS - step 9, 21/11/2026: ui_grid.c (the step screen)
+ * and ui_cfg.c (modes, bands, settings), upstream's two menu engines.
+ *
+ * They cover what upstream's cover: the spectrum and the waterfall,
+ * between the status band and the action bar - 53..288 here, 104..421
+ * there - so the header, the S-meter and the six buttons stay in view.
+ *
+ * The type is ui_top's set (reglas.mk, MALAHIT_FONTS_TOP): titles in
+ * font_ui_11 (line box 14), data in font_ui_10 / 10b (13). Every offset
+ * below is that arithmetic, and the comment beside it says which.
+ */
+#define UIG_Y                53
+#define UIG_H               236     /* 53..288, the action bar at 290 */
+#define UIG_HDR_H            18
+#define UIG_MARGIN            5
+#define UIG_GAP               4
+#define UIG_CELL_W          114     /* 5 + 4*114 + 3*4 + 5 = 478 */
+#define UIG_CELL_H           59
+#define UIG_GRID_Y   (UIG_Y + UIG_HDR_H + 3)            /* 74 */
+#define UIG_NAV_H            22
+#define UIG_NAV_Y    (UIG_Y + UIG_H - UIG_NAV_H - 2)    /* 265 */
+#define UIG_CELL_R            6
+#define UIG_L3_Y1             5     /* 14 + 13 + 13 = 40 in 59 */
+#define UIG_L3_Y2            22
+#define UIG_L3_Y3            38
+#define UIG_L2_Y1            16     /* 14 + 13 = 27, centred in 59 */
+#define UIG_L2_Y2            32
+#define UIG_NAV_R             5
+#define UIG_NAV_TXT_Y         4     /* (22 - 13) / 2 */
+#define UIG_TIT_Y             2     /* (18 - 14) / 2 */
+#define UIG_PAG_Y             3
+
+#define UIC_SIDE_X            5
+#define UIC_SIDE_W           84     /* "Radiodifusión" in font_ui_11, and air */
+#define UIC_CAT_GAP           6
+#define UIC_GRID_X  (UIC_SIDE_X + UIC_SIDE_W + 6)       /* 95 */
+#define UIC_GRID_Y  (UIG_Y + 4)                         /* 57 */
+#define UIC_CELL_W          122     /* 3 x 122 + 2 x 6 = 378 <= 480-95-5 */
+#define UIC_CELL_H           72     /* 3 x 72 + 2 x 6 + 8 = 236 */
+#define UIC_GAP               6
+#define UIC_DCELL_W          92     /* 4 x 92 + 3 x 4 = 380: "18.068-18.168 kHz" is 89 */
+#define UIC_DCELL_H          54     /* 4 x 54 + 3 x 4 + 8 = 236 */
+#define UIC_DGAP              4
+#define UIC_CAT_R             6
+#define UIC_CEL_R             6
+#define UIC_BAR_X             5
+#define UIC_BAR_W             4
+#define UIC_BAR_H            22
+#define UIC_CAT_TXT_X        12
+#define UIC_CAT_TXT_R         6
+#define UIC_CAT_TXT_DY        7     /* half of font_ui_11's 14 */
+#define UIC_L3_Y1             4     /* 14 + 13 + 13 = 40 in 54 */
+#define UIC_L3_Y2            20
+#define UIC_L3_Y3            35
+#define UIC_NOM_X             8
+#define UIC_NOM_Y             8
+#define UIC_VAL_DY           26     /* the value's 14 rows end 12 above the bottom */
+
 #endif /* MALAHIT_LAYOUT_H */

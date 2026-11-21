@@ -68,16 +68,19 @@ static void categoria(gfx2_surf_t *s, const ui_cfg_state_t *st, uint8_t i)
         fondo = gfx2_rgb(PAL_SURF_0); borde = gfx2_rgb(PAL_LINE); tinta = gfx2_rgb(PAL_INK_DIM);
     }
 
-    gfx2_rrect(s, UIC_SIDE_X, y, UIC_SIDE_W, h, 9, fondo);
-    gfx2_rrect_outline(s, UIC_SIDE_X, y, UIC_SIDE_W, h, 9, 1, borde);
+    gfx2_rrect(s, UIC_SIDE_X, y, UIC_SIDE_W, h, UIC_CAT_R, fondo);
+    gfx2_rrect_outline(s, UIC_SIDE_X, y, UIC_SIDE_W, h, UIC_CAT_R, 1, borde);
     if (sel && !press) {
         /* Barra de acento: la categoria activa no depende SOLO del color, que
          * es lo que la haria indistinguible en deuteranopia. */
-        gfx2_rrect(s, (int16_t)(UIC_SIDE_X + 8), (int16_t)(y + h / 2 - 16),
-                   5, 32, 2, gfx2_rgb(PAL_ACCENT));
+        gfx2_rrect(s, (int16_t)(UIC_SIDE_X + UIC_BAR_X),
+                   (int16_t)(y + h / 2 - UIC_BAR_H / 2),
+                   UIC_BAR_W, UIC_BAR_H, 2, gfx2_rgb(PAL_ACCENT));
     }
-    gfx2_text_in(s, (int16_t)(UIC_SIDE_X + 18), (int16_t)(y + h / 2 - 10),
-                 (int16_t)(UIC_SIDE_W - 26), st->cat[i], &font_ui_18b, tinta,
+    gfx2_text_in(s, (int16_t)(UIC_SIDE_X + UIC_CAT_TXT_X),
+                 (int16_t)(y + h / 2 - UIC_CAT_TXT_DY),
+                 (int16_t)(UIC_SIDE_W - UIC_CAT_TXT_X - UIC_CAT_TXT_R),
+                 st->cat[i], &font_ui_18b, tinta,
                  GFX2_ALIGN_C);
 }
 
@@ -105,26 +108,26 @@ static void celda(gfx2_surf_t *s, const ui_cfg_state_t *st, uint8_t i)
         tinta = gfx2_rgb(PAL_INK_MUTE); tinta2 = gfx2_rgb(PAL_INK);
     }
 
-    gfx2_rrect(s, x, y, w, h, 10, fondo);
-    gfx2_rrect_outline(s, x, y, w, h, 10,
+    gfx2_rrect(s, x, y, w, h, UIC_CEL_R, fondo);
+    gfx2_rrect_outline(s, x, y, w, h, UIC_CEL_R,
                        (cursor && !press) ? 2 : 1,
                        (cursor && !press) ? gfx2_rgb(PAL_ACCENT) : borde);
 
     if (st->cel[i].extra) {
         /* Tres renglones (bandas): nombre destacado arriba, rango y modo
          * debajo. Aqui el nombre SI es lo que se busca. */
-        gfx2_text_in(s, x, (int16_t)(y + 6), w, st->cel[i].nombre,
+        gfx2_text_in(s, x, (int16_t)(y + UIC_L3_Y1), w, st->cel[i].nombre,
                      &font_ui_18b, press ? tinta : gfx2_rgb(PAL_INK), GFX2_ALIGN_C);
-        gfx2_text_in(s, x, (int16_t)(y + 30), w, st->cel[i].valor,
+        gfx2_text_in(s, x, (int16_t)(y + UIC_L3_Y2), w, st->cel[i].valor,
                      &font_ui_14, tinta, GFX2_ALIGN_C);
-        gfx2_text_in(s, x, (int16_t)(y + 49), w, st->cel[i].extra,
+        gfx2_text_in(s, x, (int16_t)(y + UIC_L3_Y3), w, st->cel[i].extra,
                      &font_ui_14b, tinta2, GFX2_ALIGN_C);
     } else {
         /* Dos renglones (ajustes): nombre arriba, pequeño; valor abajo,
          * grande. Ver el comentario de ui_cfg.h sobre por que en ese orden. */
-        gfx2_text(s, (int16_t)(x + 14), (int16_t)(y + 12), st->cel[i].nombre,
+        gfx2_text(s, (int16_t)(x + UIC_NOM_X), (int16_t)(y + UIC_NOM_Y), st->cel[i].nombre,
                   &font_ui_14, tinta);
-        gfx2_text(s, (int16_t)(x + 14), (int16_t)(y + h - 42),
+        gfx2_text(s, (int16_t)(x + UIC_NOM_X), (int16_t)(y + h - UIC_VAL_DY),
                   st->cel[i].valor, &font_ui_18b,
                   press ? tinta2 : (cursor ? gfx2_rgb(PAL_ACCENT) : tinta2));
     }

@@ -47,6 +47,12 @@ stty -F /dev/ttyUSB0 115200 raw -echo -crtscts
 cat /dev/ttyUSB0
 ```
 
+**ONE reader at a time.** Two `cat`s on the port split the bytes
+between them and both logs come out with every other character gone -
+which looks exactly like a firmware fault. A `timeout N cat` left
+running from the previous capture is the usual second reader:
+`pkill -f '^timeout [0-9]+ cat /dev/ttyUSB0$'` before starting one.
+
 Set `stty` **every time**. The port reverts to its defaults when the
 last reader closes, and the next `cat` then reads at the wrong rate —
 steady garbage at a steady rate, which looks nothing like the silence it
@@ -60,6 +66,8 @@ Other useful commands, all taking `ADAPTER=ft2232d`:
 | `swd.sh fault` | the last crash record |
 | `swd.sh clean` | quieten a crashed core |
 | `swd-call.sh <elf> <fn> [args]` | call one firmware function on the RUNNING radio, from the display loop, and let it carry on |
+| `tools/grab.py <elf> out.png` | **a screenshot of the panel itself**: its GRAM read back over SPI3's MISO (RAMRD, one leading dummy byte), 9 s a screen. What the glass holds, not what a PNG predicts |
+| `swd-call.sh <elf> ui_tap <x> <y>` | a finger on the glass for one poll, through the same `ui_touch()` as a real one: with `grab.py`, the UI can be checked with nobody at the bench |
 | `swd.sh -c init -c halt -c "mdw <addr> 1"` | read anything |
 
 ---

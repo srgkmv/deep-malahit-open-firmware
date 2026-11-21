@@ -993,6 +993,31 @@ Each step should end with something visible on the radio.
    And the memory: upstream's `.tcmram` - CPU-only on the GD32 too -
    now lives in the DTCM, so the RAM image is 460 kB of 512 with
    upstream in it and the SWD loop survives step 8.
+27. **Step 9: the action bar works - mode, band and step screens.**
+   *21/11/2026, from RAM, checked on the radio through its own panel* -
+   upstream's two menu engines, `ui_cfg.c` (category column + grid: the
+   mode and band screens) and `ui_grid.c` (paged grid: the step screen),
+   compiled in place at 480 x 320. Their geometry and the text offsets
+   inside their cells are `#ifndef` upstream now, with the old values as
+   defaults - nine DEEPSDR renders byte-identical before and after
+   (`PROCEDENCIA.md`) - and `compat/malahit_layout.h` gives this panel's.
+   Laid out on the PC first: deepsdr-ui `make malahit-menus` renders the
+   three screens over the main one and measures every label against its
+   cell (0 overflows). `src/menus.c` is the controller - the part of
+   upstream's `main.c` these screens need; the band table is upstream's,
+   generated from its `main.c` at build time by the host's own script.
+   Bandas, Modo and Paso open their screens (and close them, as
+   upstream's do); Ruido toggles upstream's NR; Volumen gives the small
+   knob back to the volume. In a menu the big knob moves upstream's
+   cursor (across families on the band screen) and its press chooses.
+   The status band's AGC chip steps OFF/SLW/MED/FST and the BW chip
+   upstream's three quick filters, both reading the demodulator's real
+   values; the band pill opens the band screen. Upstream's demodulator
+   is now what boots.
+   Checked with nobody at the glass: `ui_tap` injects a finger over SWD
+   and **`tools/grab.py` reads the panel's own GRAM back** (RAMRD over
+   SPI3's MISO, one dummy byte, 9 s a screen) - every screen above was
+   seen as the panel holds it, not as a PNG predicts it.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

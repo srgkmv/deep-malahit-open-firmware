@@ -50,6 +50,10 @@
 #include "enc2.h"         /* the same file again, for the small knob */
 #include "am.h"
 #include "demod.h"        /* upstream's demod_am.c, A/B against am.c */
+#include "grab.h"         /* screenshots off the panel, over SWD */
+#include "menus.h"        /* step 9: the mode, band and step screens */
+#include "demod_am.h"     /* ../../User - upstream: DEMOD_MODE_*, for the menus */
+#include "nr_ss.h"        /* ../../User - upstream: the Ruido button */
 #include "boot.h"         /* the power button, for the console */
 #include "agc.h"          /* ../../User/agc.c - upstream; the retune test
                            * computes the gain with ITS constants */
@@ -6026,7 +6030,7 @@ static int dial_tune(int64_t dial_hz)
     /* The ruler is centred on the dial, and so is the window of bins
      * the loop draws (PAN_LO). */
     s_chrome.center_hz = s_tuned_hz;
-    spec_chrome_draw(&s_chrome);
+    if (menu_open_id() == MENU_NONE) { spec_chrome_draw(&s_chrome); }
 
     /*
      * The band filter follows the frequency, or the signal goes away at
@@ -6436,6 +6440,257 @@ static void ui_wf_push(const float *db, uint32_t bins)
 }
 
 /*
+ * THE RADIO SIDE OF THE MENUS - step 9, 21/11/2026.
+ *
+ * src/menus.c draws upstream's screens and decides what was chosen; what
+ * a choice DOES is here, because the dial, the header, the step and the
+ * action bar all live in this file. See src/menus.h.
+ */
+static const char *const k_mode_names[] = { "AM", "USB", "LSB", "NFM",
+                                            "WFM", "SAM" };
+static const char *s_band_name;          /* the band pill, 0 = none chosen */
+static char        s_act_step[12];
+static char        s_act_vol[12];
+
+/*
+ * THE AGC AND BW CHIPS - upstream's top_sync() for these two, and its
+ * agc_profile_cycle() / audio_bw_cycle(): the AGC chip steps OFF -> SLW
+ * -> MED -> FST, the BW chip through upstream's three quick filters
+ * (k_fil_rapidos[] in User/main.c), widest to narrowest and round.
+ */
+static const char *const k_agc_names[4] = { "OFF", "SLW", "MED", "FST" };
+static const struct { uint16_t lo, hi; } k_fil_quick[3] = {
+    { 0U, 1800U }, { 0U, 2300U }, { 0U, 4000U }
+};
+static char s_top_bw[12];
+
+static void top_sync_chips(void)
+{
+    uint16_t lo = 0U, hi = 0U;
+    uint8_t  i  = 0U;
+    agc_profile_t p = demod_am_get_agc_profile();
+
+    s_top.agc = k_agc_names[(p <= AGC_PROFILE_FAST) ? (uint32_t)p : 0U];
+
+    demod_am_get_filtro(demod_am_filtro_familia(), &lo, &hi);
+    /* upstream's fil_format(): "0-4,0k", "0,3-2,7k" */
+    if (lo == 0U) { s_top_bw[i++] = '0'; }
+    else {
+        s_top_bw[i++] = (char)('0' + lo / 1000U);
+        s_top_bw[i++] = ',';
+        s_top_bw[i++] = (char)('0' + (lo / 100U) % 10U);
+    }
+    s_top_bw[i++] = '-';
+    s_top_bw[i++] = (char)('0' + (hi / 1000U) % 10U);
+    s_top_bw[i++] = ',';
+    s_top_bw[i++] = (char)('0' + (hi / 100U) % 10U);
+    s_top_bw[i++] = 'k';
+    s_top_bw[i]   = '\0';
+    s_top.bw = s_top_bw;
+}
+
+static void agc_cycle(void)
+{
+    agc_profile_t p = demod_am_get_agc_profile();
+
+    p = (p >= AGC_PROFILE_FAST) ? AGC_PROFILE_MANUAL : (agc_profile_t)(p + 1);
+    demod_am_set_agc_profile(p);
+    top_sync_chips();
+    ui_top_draw_status(&s_top);
+    console_printf("  AGC -> %s\n", s_top.agc);
+}
+
+static void bw_cycle(void)
+{
+    uint8_t  fam = demod_am_filtro_familia();
+    uint16_t lo = 0U, hi = 0U;
+    int      k, now = -1;
+
+    demod_am_get_filtro(fam, &lo, &hi);
+    for (k = 0; k < 3; k++) {
+        if (k_fil_quick[k].lo == lo && k_fil_quick[k].hi == hi) { now = k; }
+    }
+    k = (now <= 0) ? 2 : now - 1;
+    demod_am_set_filtro(fam, k_fil_quick[k].lo, k_fil_quick[k].hi);
+    top_sync_chips();
+    ui_top_draw_status(&s_top);
+    console_printf("  BW -> %s\n", s_top.bw);
+}
+
+const char *radio_mode_name(int mode)
+{
+    return (mode >= 0 && mode <= 5) ? k_mode_names[mode] : "?";
+}
+
+int radio_mode_get(void) { return (int)demod_am_get_mode(); }
+
+void radio_mode_set(int mode)
+{
+    /*
+     * A mode is upstream's demodulator by definition: am.c only knows AM.
+     * So choosing one - AM included - puts upstream's on the hook, which
+     * is also where the boot leaves it now (main(), after demod_init()).
+     */
+    if (!demod_path_get()) { demod_path(1); }
+    (void)demod_mode(mode);
+    s_top.mode = radio_mode_name(radio_mode_get());
+    top_sync_chips();                   /* the filter family follows the mode */
+    ui_top_draw(&s_top);
+    radio_act_refresh();
+}
+
+uint32_t radio_dial_hz(void) { return s_tuned_hz; }
+
+int radio_band_go(uint32_t hz, int mode, const char *name)
+{
+    if (hz < TUNE_MIN_HZ || hz > TUNE_MAX_HZ) { return 0; }
+    if (!dial_tune((int64_t)hz)) { return 0; }
+    s_band_name    = name;
+    s_top.band     = name;
+    s_top.en_banda = 1U;
+    if (mode >= 0) {
+        radio_mode_set(mode);           /* redraws the header and the bar */
+    } else {
+        ui_top_draw(&s_top);
+        radio_act_refresh();
+    }
+    return 1;
+}
+
+uint32_t radio_step_count(void)      { return (uint32_t)TUNE_STEP_N; }
+uint32_t radio_step_hz(uint32_t i)   { return (i < TUNE_STEP_N) ? k_tune_steps[i] : 0U; }
+uint32_t radio_step_get(void)        { return s_step_idx; }
+
+void radio_step_set(uint32_t i)
+{
+    if (i >= TUNE_STEP_N) { return; }
+    s_step_idx = (uint8_t)i;
+    tune_step_fmt();
+    s_top.knob_value = s_step_txt;
+    ui_top_draw_status(&s_top);
+    radio_act_refresh();
+}
+
+void radio_screen_restore(void)
+{
+    /* The menu painted over the trace, the waterfall, the ruler and the
+     * gutters; the cheapest whole answer is the full static repaint the
+     * boot does, and a trace that forgets what it drew last. */
+    ui_paint_all();
+    spectrum_invalida();
+}
+
+static void act_values(void);
+
+void radio_act_refresh(void)
+{
+    act_values();
+    ui_act_draw(&s_act);
+}
+
+/* Only the Volumen button: the small knob turns it a detent at a time,
+ * and the whole bar is 43 kB of SPI where one button is 7. */
+static void act_volume_refresh(void)
+{
+    act_values();
+    ui_act_draw_one(&s_act, 3U);
+}
+
+static void act_values(void)
+{
+    menu_t m = menu_open_id();
+    uint32_t i;
+
+    /* The step without its pill's "S " - the button already says Paso. */
+    for (i = 0U; s_step_txt[i] != '\0' && s_step_txt[i] != ' '; i++) { }
+    if (s_step_txt[i] == ' ') { i++; }
+    {
+        uint32_t k = 0U;
+        while (s_step_txt[i] != '\0' && k + 1U < sizeof s_act_step) {
+            s_act_step[k++] = s_step_txt[i++];
+        }
+        s_act_step[k] = '\0';
+    }
+    {
+        int v = s_vol_db, k = 0;
+        uint32_t n = (uint32_t)((v < 0) ? -v : v);
+        char d[4];
+        int nd = 0;
+
+        if (v < 0) { s_act_vol[k++] = '-'; }
+        do { d[nd++] = (char)('0' + n % 10U); n /= 10U; } while (n);
+        while (nd > 0) { s_act_vol[k++] = d[--nd]; }
+        s_act_vol[k++] = ' '; s_act_vol[k++] = 'd'; s_act_vol[k++] = 'B';
+        s_act_vol[k] = '\0';
+    }
+
+    s_act.value[0]  = s_band_name;
+    s_act.value[1]  = radio_mode_name(radio_mode_get());
+    s_act.value[2]  = s_act_step;
+    s_act.value[3]  = s_act_vol;
+    s_act.value[4]  = nr_ss_get_enabled() ? "activo" : "apagado";
+    s_act.value[5]  = 0;
+    s_act.active[0] = (uint8_t)(m == MENU_BANDAS);
+    s_act.active[1] = (uint8_t)(m == MENU_MODO);
+    s_act.active[2] = (uint8_t)(m == MENU_PASO);
+    s_act.active[3] = 0U;
+    s_act.active[4] = nr_ss_get_enabled() ? 1U : 0U;
+    s_act.active[5] = 0U;
+}
+
+/*
+ * A BUTTON OF THE ACTION BAR, ON RELEASE - upstream's own rule
+ * (demo_button_callback() acts on UI_EVENT_RELEASE), so a finger that
+ * slides off a button cancels it.
+ */
+static void act_release(int8_t b)
+{
+    switch (b) {
+    case 0: menu_toggle(MENU_BANDAS); break;
+    case 1: menu_toggle(MENU_MODO);   break;
+    case 2: menu_toggle(MENU_PASO);   break;
+    case 3:
+        /* Upstream points the big knob at the volume; here the small knob
+         * is the volume knob already, so the button gives it back to the
+         * volume when it was on the RF gain - the same toggle as its own
+         * press. */
+        s_knob2_rf = !s_knob2_rf;
+        knob2_fmt();
+        s_top.knob_value = s_knob2_txt;
+        ui_top_draw_status(&s_top);
+        console_printf("  small knob -> %s\n", s_knob2_rf ? "RF gain" : "volume");
+        break;
+    case 4:
+        /* Upstream's spectral-subtraction noise reduction, in its own
+         * demodulator - so it does nothing on am.c's path. */
+        nr_ss_set_enabled(nr_ss_get_enabled() ? 0U : 1U);
+        console_printf("  NR -> %s%s\n", nr_ss_get_enabled() ? "on" : "off",
+                       demod_path_get() ? "" : " (am.c is playing: no effect)");
+        radio_act_refresh();
+        break;
+    default:
+        console_printf("  Ajustes: no settings screen yet\n");
+        break;
+    }
+}
+
+/*
+ * A TAP FROM THE BENCH, OVER SWD - for checking the screens with nobody
+ * at the glass. swd-call.sh build/bringup.elf ui_tap <x> <y>: the next
+ * poll sees a finger at (x, y), the one after sees it lift, and both go
+ * through ui_touch() exactly as a real press does.
+ */
+static volatile uint16_t s_tap_x, s_tap_y;
+static volatile uint8_t  s_tap_n;
+
+__attribute__((noinline)) void ui_tap(int x, int y)
+{
+    s_tap_x = (uint16_t)x;
+    s_tap_y = (uint16_t)y;
+    s_tap_n = 1U;
+}
+
+/*
  * WHAT THE FINGER LANDED ON, reported to the console.
  *
  * Nothing is wired to an action - there is no band list, no menu and
@@ -6476,13 +6731,22 @@ static void ui_touch(void)
     touch_point_t  pt[TOUCH_MAX_POINTS];
     uint32_t       n = touch_poll(pt);
 
+    if (s_tap_n != 0U) {                /* ui_tap(), from the bench */
+        s_tap_n  = 0U;
+        n        = 1U;
+        pt[0].x  = s_tap_x;
+        pt[0].y  = s_tap_y;
+    }
+
     if (n == 0U) {
         s_was_down = 0U;
+        menu_touch_up();
         if (s_down >= 0) {
             int8_t was = s_down;
             s_down = -1;
             s_act.pressed = -1;
             ui_act_draw_one(&s_act, (uint8_t)was);
+            act_release(was);
         }
         return;
     }
@@ -6521,6 +6785,9 @@ static void ui_touch(void)
             ui_act_draw_one(&s_act, (uint8_t)was);
         }
 
+        /* An open menu owns its area. */
+        if (menu_touch_down(x, y, nuevo)) { return; }
+
         /* Everything above the action bar, once per press. */
         if (!nuevo) { return; }
 
@@ -6541,6 +6808,14 @@ static void ui_touch(void)
             console_printf("  touch (%3u,%3u)%s%s\n",
                            (uint32_t)x, (uint32_t)y,
                            que ? " -> " : "", que ? que : "");
+
+            /* What upstream does with them (its ui_top tap handling). */
+            if (h == UI_TOP_HIT_AGC) { agc_cycle(); return; }
+            if (h == UI_TOP_HIT_BW)  { bw_cycle();  return; }
+            if (h == UI_TOP_HIT_NONE && ui_top_band_hit(x, y)) {
+                menu_toggle(MENU_BANDAS);
+                return;
+            }
 
             /*
              * AND SAY IT ON THE PANEL, NOT ONLY DOWN THE CABLE.
@@ -7579,6 +7854,20 @@ int main(void)
      * the running radio. See src/demod.h.
      */
     demod_init();
+    grab_init();
+    __asm__ volatile ("" :: "r"(ui_tap));   /* swd-call's, see ui_tap() */
+
+    /*
+     * UPSTREAM'S DEMODULATOR IS WHAT PLAYS, from step 9 on: the mode
+     * screen needs it, and the owner heard every mode right on it
+     * (PORTING.md step 26). am.c stays in the image for the retune-click
+     * A/B - `swd-call ... demod_path 0` - until that is settled.
+     */
+    demod_path(1);
+    s_top.mode = radio_mode_name(radio_mode_get());
+    top_sync_chips();
+    ui_top_draw(&s_top);
+    radio_act_refresh();
 
     /*
      * AND THE CODEC COMES OFF MUTE, for the first time in this image's
@@ -7608,10 +7897,10 @@ int main(void)
                    "filter 4 kHz,\n", s_vol_db);
     console_printf("            audio 200 Hz - 4 kHz, upstream's AGC and "
                    "filter design.\n");
-    console_printf("            Upstream's demod_am.c is loaded beside it:"
-                   " swd-call\n");
-    console_printf("            demod_path 1|0, demod_mode, demod_report"
-                   " (src/demod.h).\n\n");
+    console_printf("            PLAYING NOW: upstream's demod_am.c (step 9);"
+                   " am.c kept\n");
+    console_printf("            for the A/B: swd-call demod_path 0|1,"
+                   " demod_report.\n\n");
 
     console_printf("  WHAT IS A STUB, AND WHY:\n");
     console_printf("    the clock counts UPTIME (no RTC driver). Mode,\n");
@@ -7694,7 +7983,9 @@ int main(void)
          */
         int32_t detents = encoder_take_delta();
 
-        if (detents != 0) {
+        if (detents != 0 && menu_open_id() != MENU_NONE) {
+            menu_knob(detents);             /* the menu's cursor, not the dial */
+        } else if (detents != 0) {
             /*
              * THE TUNER FOLLOWS THE DIAL ON EVERY CLICK, a fixed
              * AM_IF_HZ below it - see dial_tune().
@@ -7734,12 +8025,15 @@ int main(void)
          * "hold and turn" gesture does not ALSO change the step on
          * release, which is the thing the gesture was adjusting.
          */
-        if (encoder_take_press()) {
+        if (menu_open_id() != MENU_NONE && encoder_take_press()) {
+            menu_knob_press();              /* choose what the cursor is on */
+        } else if (encoder_take_press()) {
             s_press_n++;
             s_step_idx = (uint8_t)((s_step_idx + 1U) % TUNE_STEP_N);
             tune_step_fmt();
             s_top.knob_value = s_step_txt;
             ui_top_draw_status(&s_top);
+            radio_act_refresh();            /* the Paso button shows it too */
             console_printf("  step -> %s\n", s_step_txt);
         }
 
@@ -7765,6 +8059,7 @@ int main(void)
                 knob2_fmt();
                 s_top.knob_value = s_knob2_txt;
                 ui_top_draw_status(&s_top);
+                act_volume_refresh();
                 console_printf("  volume -> %d dB\n", s_vol_db);
             }
             g = 0;
@@ -7826,6 +8121,23 @@ int main(void)
         }
 
         settings_tick();
+
+        /*
+         * ONE PASS PER RECEIVE BLOCK WHILE A MENU IS UP. The loop is
+         * paced by its own drawing - the waterfall alone is 36 ms - and
+         * under a menu it draws nothing, so it ran several times a block
+         * and the console line it prints every pass filled the UART:
+         * 140 000 stalls in a few seconds of one open menu, 21/11/2026.
+         * Waiting for the next half keeps the pass rate, the console and
+         * the touch polling exactly what they are with the spectrum up.
+         */
+        if (menu_open_id() != MENU_NONE) {
+            static uint32_t s_menu_blk;
+            uint32_t t0 = board_millis();
+
+            while (sai1_blocks == s_menu_blk && (board_millis() - t0) < 60U) { }
+            s_menu_blk = sai1_blocks;
+        }
 
         /*
          * THE LIVE RING, NOT A FRESH POLL. capture_live() is a memcpy
@@ -7915,9 +8227,14 @@ int main(void)
          * receiver with an audio filter and are still not meaningful.
          */
         uint64_t d0 = board_cycles();
-        spectrum_draw(&s_db[PAN_LO], PAN_SHOWN,
-                      SPC_TRACE_X, SPC_TRACE_Y, SPC_TRACE_W, SPC_TRACE_H,
-                      UI_DB_MIN, UI_DB_MAX, 0, 0U, 0, 0);
+        /* Under an open menu the trace is not drawn - the screen is
+         * the menu's (src/menus.h) - but the waterfall keeps its rows,
+         * so it is current the moment the menu closes. */
+        if (menu_open_id() == MENU_NONE) {
+            spectrum_draw(&s_db[PAN_LO], PAN_SHOWN,
+                          SPC_TRACE_X, SPC_TRACE_Y, SPC_TRACE_W, SPC_TRACE_H,
+                          UI_DB_MIN, UI_DB_MAX, 0, 0U, 0, 0);
+        }
         uint32_t draw_us = (uint32_t)(((board_cycles() - d0) * 1000000U)
                                       / clock_sysclk_hz);
 
@@ -7943,9 +8260,11 @@ int main(void)
          */
         uint64_t w0 = board_cycles();
         ui_wf_push(&s_db[PAN_LO], PAN_SHOWN);
-        gfx2_wf_blit(SPC_TRACE_X, SPC_WF_Y, SPC_TRACE_W, SPC_WF_ROWS,
-                     s_wf, SPC_TRACE_W, s_wf_head,
-                     spectrum_colormap_lut());
+        if (menu_open_id() == MENU_NONE) {
+            gfx2_wf_blit(SPC_TRACE_X, SPC_WF_Y, SPC_TRACE_W, SPC_WF_ROWS,
+                         s_wf, SPC_TRACE_W, s_wf_head,
+                         spectrum_colormap_lut());
+        }
         uint32_t wf_us = (uint32_t)(((board_cycles() - w0) * 1000000U)
                                     / clock_sysclk_hz);
 

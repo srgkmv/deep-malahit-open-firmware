@@ -580,6 +580,26 @@ void ili9488_read_raw(uint8_t cmd, uint8_t *buf, uint32_t nbytes)
     CS_HIGH();
 }
 
+/*
+ * READ THE PANEL'S OWN MEMORY BACK - 21/11/2026, for screenshots.
+ *
+ * Window, then RAMRD (0x2E), then the bytes as they come: three a pixel
+ * in 18-bit mode, data in the top six bits of each. Whether a dummy
+ * byte leads them is NOT decided here - register reads on this panel
+ * turned out to have none, against most drivers' habit, so this hands
+ * back everything raw and the reader finds the phase (tools/grab.py
+ * reads one byte more than it needs for exactly that). Through
+ * spi3_read(), so at 3.75 MHz: 46 kB in about 100 ms.
+ */
+void ili9488_read_gram(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
+                       uint8_t *buf, uint32_t nbytes)
+{
+    if (w == 0U || h == 0U) { return; }
+    bus_idle();
+    raw_window(x, y, (uint16_t)(x + w - 1U), (uint16_t)(y + h - 1U));
+    ili9488_read_raw(0x2E, buf, nbytes);
+}
+
 uint32_t ili9488_read_reg(uint8_t cmd, uint32_t nbytes)
 {
     uint8_t buf[5] = { 0, 0, 0, 0, 0 };

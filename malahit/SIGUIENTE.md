@@ -4,7 +4,42 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 21/11/2026, evening: step 8 started, upstream's modes run
+## START HERE — 21/11/2026, night: step 9 - the action bar works
+
+**In flash: still `41a0523`.** Everything below is in the working tree,
+checked from RAM on the radio, and NOT committed yet - the owner asks.
+`PORTING.md` step 27 has the whole of it; in short:
+
+- **Bandas, Modo, Paso** open upstream's own screens (`ui_cfg.c`,
+  `ui_grid.c`) at 480 x 320, laid out on the PC first (deepsdr-ui
+  `make malahit-menus`, 0 labels overflowing) and then seen ON THE GLASS.
+  Choosing tunes / switches mode / sets the step and closes the screen.
+  Ruido = upstream's NR on/off, Volumen = small knob back to volume.
+  Big knob in a menu = cursor, its press = choose. AGC and BW chips
+  cycle; the band pill opens the band screen. Upstream's demodulator
+  boots (am.c still in the image: `demod_path 0` for the click A/B).
+- **The bench can now see the panel and touch it**: `tools/grab.py`
+  (the panel's GRAM over SPI3 MISO, 9 s a screenshot) and
+  `swd-call ... ui_tap x y`. Negative swd-call arguments must be given
+  as `0xFFFFFFFE`, not `-2` - OpenOCD silently does not set the register.
+- Upstream edits: `#ifndef` geometry + named text offsets in
+  `ui_grid.h/.c`, `ui_cfg.h/.c`; nine DEEPSDR renders byte-identical
+  before/after (`PROCEDENCIA.md`).
+
+**Memory is the next wall: the RAM image is 484 / 512 kB of AXI.** The
+lever is known and not pulled: the SAI rings (128 kB, `sai1.c`) into D2
+SRAM1-2, which DMA1 reaches - needs the SRAM clock bits and a careful
+look at `dma_reachable()`. Also cheap: `ui_top.o` still carries its own
+static copies of font_ui_10/10b (8 kB) - `src/fonts_menu.c` shows how.
+
+**Open in step 9:** Ajustes (no settings screen yet); the frequency
+keypad (`ui_kbd.c`, tap on the frequency); WFM (upstream's WFM wants the
+station at 0 Hz, this port keeps it 12 kHz off the LO); the mode and the
+band are not kept in the FRAM; the step list is this port's five, not
+upstream's eleven (changing it moves the meaning of the stored index -
+needs a settings record v3).
+
+## 21/11/2026, evening: step 8 started, upstream's modes run
 
 **What is in flash is still `41a0523`** (sha `214e3e8b…`). What is new
 was checked from RAM only: `PORTING.md` step 26.

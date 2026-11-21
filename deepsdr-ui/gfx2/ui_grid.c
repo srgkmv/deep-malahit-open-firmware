@@ -124,14 +124,14 @@ static void celda(gfx2_surf_t *s, const ui_grid_state_t *st, uint8_t i)
         tinta = gfx2_rgb(PAL_INK);      tinta2 = gfx2_rgb(PAL_INK_MUTE);
     }
 
-    gfx2_rrect(s, x, y, UIG_CELL_W, UIG_CELL_H, 8, fondo);
-    gfx2_rrect_outline(s, x, y, UIG_CELL_W, UIG_CELL_H, 8, 1, borde);
+    gfx2_rrect(s, x, y, UIG_CELL_W, UIG_CELL_H, UIG_CELL_R, fondo);
+    gfx2_rrect_outline(s, x, y, UIG_CELL_W, UIG_CELL_H, UIG_CELL_R, 1, borde);
     if (cursor && !press) {
         /* Donde apunta el MANDO. Contorno grueso, no relleno: asi se
          * distingue de "esta es tu banda ahora" (relleno tenue) y las dos
          * cosas pueden verse a la vez en la misma celda, que es justo lo que
          * pasa al abrir la pantalla. */
-        gfx2_rrect_outline(s, x, y, UIG_CELL_W, UIG_CELL_H, 8, 2,
+        gfx2_rrect_outline(s, x, y, UIG_CELL_W, UIG_CELL_H, UIG_CELL_R, 2,
                            gfx2_rgb(PAL_ACCENT));
     }
 
@@ -159,18 +159,18 @@ static void celda(gfx2_surf_t *s, const ui_grid_state_t *st, uint8_t i)
 
     if (c->l3) {
         /* Tres renglones: titulo, dato y dato secundario. */
-        gfx2_text_in(s, x, (int16_t)(y + 8), UIG_CELL_W, c->l1,
+        gfx2_text_in(s, x, (int16_t)(y + UIG_L3_Y1), UIG_CELL_W, c->l1,
                      &font_ui_18b, tinta, GFX2_ALIGN_C);
-        gfx2_text_in(s, x, (int16_t)(y + 33), UIG_CELL_W, c->l2,
+        gfx2_text_in(s, x, (int16_t)(y + UIG_L3_Y2), UIG_CELL_W, c->l2,
                      &font_ui_14, tinta2, GFX2_ALIGN_C);
-        gfx2_text_in(s, x, (int16_t)(y + 53), UIG_CELL_W, c->l3,
+        gfx2_text_in(s, x, (int16_t)(y + UIG_L3_Y3), UIG_CELL_W, c->l3,
                      &font_ui_14b, tinta2, GFX2_ALIGN_C);
     } else {
         /* Dos renglones: se centran en la altura de la celda en vez de
          * dejar el hueco del tercero abajo, que se veia descolgado. */
-        gfx2_text_in(s, x, (int16_t)(y + 15), UIG_CELL_W, c->l1,
+        gfx2_text_in(s, x, (int16_t)(y + UIG_L2_Y1), UIG_CELL_W, c->l1,
                      &font_ui_18b, tinta, GFX2_ALIGN_C);
-        gfx2_text_in(s, x, (int16_t)(y + 42), UIG_CELL_W, c->l2,
+        gfx2_text_in(s, x, (int16_t)(y + UIG_L2_Y2), UIG_CELL_W, c->l2,
                      &font_ui_14b, tinta2, GFX2_ALIGN_C);
     }
 }
@@ -193,11 +193,11 @@ static void boton_nav(gfx2_surf_t *s, const ui_grid_state_t *st,
         fondo = gfx2_rgb(PAL_SURF_2); borde = gfx2_rgb(PAL_LINE); tinta = gfx2_rgb(PAL_INK);
     }
 
-    gfx2_rrect(s, x, UIG_NAV_Y, w, UIG_NAV_H, 7, fondo);
+    gfx2_rrect(s, x, UIG_NAV_Y, w, UIG_NAV_H, UIG_NAV_R, fondo);
     if (habilitado) {
-        gfx2_rrect_outline(s, x, UIG_NAV_Y, w, UIG_NAV_H, 7, 1, borde);
+        gfx2_rrect_outline(s, x, UIG_NAV_Y, w, UIG_NAV_H, UIG_NAV_R, 1, borde);
     }
-    gfx2_text_in(s, x, (int16_t)(UIG_NAV_Y + 8), w, txt, &font_ui_14b, tinta,
+    gfx2_text_in(s, x, (int16_t)(UIG_NAV_Y + UIG_NAV_TXT_Y), w, txt, &font_ui_14b, tinta,
                  GFX2_ALIGN_C);
 }
 
@@ -212,7 +212,7 @@ static void draw_all(gfx2_surf_t *s, void *ctx)
     gfx2_fill(s, 0, UIG_Y, GFX2_W, UIG_H, gfx2_rgb(PAL_SURF_0));
 
     /* Cabecera: familia a la izquierda, pagina a la derecha. */
-    gfx2_text(s, UIG_MARGIN + 4, (int16_t)(UIG_Y + 6), st->titulo,
+    gfx2_text(s, UIG_MARGIN + 4, (int16_t)(UIG_Y + UIG_TIT_Y), st->titulo,
               &font_ui_18b, gfx2_rgb(PAL_INK));
     {
         /*
@@ -239,7 +239,7 @@ static void draw_all(gfx2_surf_t *s, void *ctx)
         #undef UIG_CIFRAS
         pg[k] = '\0';
     }
-    gfx2_text_in(s, 0, (int16_t)(UIG_Y + 9), (int16_t)(GFX2_W - UIG_MARGIN - 4),
+    gfx2_text_in(s, 0, (int16_t)(UIG_Y + UIG_PAG_Y), (int16_t)(GFX2_W - UIG_MARGIN - 4),
                  pg, &font_ui_14, gfx2_rgb(PAL_INK_MUTE), GFX2_ALIGN_R);
     gfx2_hline(s, UIG_MARGIN, (int16_t)(UIG_Y + UIG_HDR_H - 1),
                (int16_t)(GFX2_W - 2 * UIG_MARGIN), gfx2_rgb(PAL_LINE));

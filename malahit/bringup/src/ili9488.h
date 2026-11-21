@@ -149,6 +149,11 @@ uint32_t ili9488_read_reg(uint8_t cmd, uint32_t nbytes);
  */
 void ili9488_read_raw(uint8_t cmd, uint8_t *buf, uint32_t nbytes);
 
+/* The panel's memory, raw, for screenshots: RAMRD over a window.
+ * Leading dummy or not is left to the reader. See ili9488.c. */
+void ili9488_read_gram(uint16_t x, uint16_t y, uint16_t w, uint16_t h,
+                       uint8_t *buf, uint32_t nbytes);
+
 /* Microseconds taken by the last full-screen fill, for the throughput
  * number that decides the UI design. */
 uint32_t ili9488_last_fill_us(void);

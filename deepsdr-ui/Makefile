@@ -232,6 +232,43 @@ ref800-comprueba: out/ref800
 	  && echo "  IDENTICO: el DEEPSDR no ha cambiado ni un pixel" \
 	  || { echo "  *** DISTINTO: el cambio SI afecta al DEEPSDR ***"; exit 1; }
 
+#
+# LOS MENUS DEL MALAHIT - 21/11/2026, paso 9 del port.
+#
+# ui_cfg.c y ui_grid.c con la geometria de malahit_layout.h y las caras de
+# ui_top (MALAHIT_FONTS_TOP), que es como los compila la radio
+# (malahit/bringup/reglas.mk). Desde ../User y no desde gfx2/: aqui se
+# mira lo que va a la placa, y una copia que se quedara atras pintaria
+# otra cosa. sim/malahit_menus.c lleva las caras TOP porque mide con
+# ellas; el resto del enlace, las COMMON, como out/malahit.
+#
+out/malahit_ui_cfg.o: ../User/ui_cfg.c ../User/ui_cfg.h ../User/ui_grid.h $(MALAHIT_HDRS)
+	@mkdir -p out
+	$(CC) $(CFLAGS) $(GFX2) $(MALAHIT_LAYOUT) $(MALAHIT_FONTS_TOP) -c -o $@ $<
+
+out/malahit_ui_grid.o: ../User/ui_grid.c ../User/ui_grid.h $(MALAHIT_HDRS)
+	@mkdir -p out
+	$(CC) $(CFLAGS) $(GFX2) $(MALAHIT_LAYOUT) $(MALAHIT_FONTS_TOP) -c -o $@ $<
+
+out/malahit_menus.o: sim/malahit_menus.c sim/principal.c sim/bandas_tabla.h $(MALAHIT_HDRS)
+	@mkdir -p out
+	$(CC) $(CFLAGS) $(GFX2) -Isim $(MALAHIT_LAYOUT) $(MALAHIT_FONTS_TOP) -c -o $@ $<
+
+out/malahit_menus: out/malahit_menus.o sim/lcd_sim.c ../User/gfx.c ../User/spectrum.c \
+                   gfx2/gfx2.c gfx2/spec_chrome.c gfx2/ui_act.c \
+                   out/malahit_top.o out/malahit_fonts.o out/malahit_ui_cfg.o \
+                   out/malahit_ui_grid.o $(MALAHIT_HDRS)
+	@mkdir -p out
+	$(CC) $(CFLAGS) $(GFX2) $(MALAHIT_LAYOUT) $(MALAHIT_FONTS_COMMON) \
+	      -o $@ $(filter-out %.h,$^) $(LDLIBS)
+
+.PHONY: malahit-menus
+malahit-menus: out/malahit_menus
+	./out/malahit_menus
+	@for f in modos bandas pasos; do \
+	    python3 -c "from PIL import Image; Image.open('out/malahit_'+'$$f'+'.ppm').save('out/malahit_'+'$$f'+'.png')"; \
+	done
+
 .PHONY: malahit
 malahit: out/malahit
 	./out/malahit

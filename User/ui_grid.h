@@ -26,21 +26,75 @@
  * botones. Las celdas de 192x76 px son ~32 x 13 mm: de sobra para un dedo.
  */
 
+/*
+ * TODAS CON #ifndef, para que otra pantalla ponga las suyas sin tocar
+ * este fichero - el mismo patron que GFX2_W y las bandas de ui_top.h. Sin
+ * -D, el DEEPSDR recibe exactamente los numeros de siempre.
+ */
 /* Zona util del menu, la misma que usaban las pantallas anteriores. */
+#ifndef UIG_Y
 #define UIG_Y        104
+#endif
+#ifndef UIG_H
 #define UIG_H        318                    /* 104..421 */
+#endif
 
+#ifndef UIG_HDR_H
 #define UIG_HDR_H     32                    /* franja del titulo */
+#endif
 #define UIG_COLS       4
 #define UIG_ROWS       3
 #define UIG_CELLS    (UIG_COLS * UIG_ROWS)  /* 12 por pagina */
+#ifndef UIG_MARGIN
 #define UIG_MARGIN     7
+#endif
+#ifndef UIG_GAP
 #define UIG_GAP        6
+#endif
+#ifndef UIG_CELL_W
 #define UIG_CELL_W   192                    /* 7 + 4*192 + 3*6 + 7 = 800 */
+#endif
+#ifndef UIG_CELL_H
 #define UIG_CELL_H    76
+#endif
+#ifndef UIG_GRID_Y
 #define UIG_GRID_Y   (UIG_Y + UIG_HDR_H + 4)           /* 140 */
+#endif
+#ifndef UIG_NAV_H
 #define UIG_NAV_H     32
+#endif
+#ifndef UIG_NAV_Y
 #define UIG_NAV_Y    (UIG_Y + UIG_H - UIG_NAV_H - 2)   /* 388 */
+#endif
+
+/*
+ * DONDE VA CADA RENGLON DENTRO DE SU CAJA. Eran literales en ui_grid.c,
+ * medidos para font_ui_18b y font_ui_14 en celdas de 76; con otras letras
+ * u otra celda hay que poder moverlos sin editar el dibujo. Los valores
+ * por defecto son los literales de antes, uno por uno.
+ */
+#ifndef UIG_CELL_R
+#define UIG_CELL_R     8                    /* radio de la celda */
+#endif
+#ifndef UIG_L3_Y1
+#define UIG_L3_Y1      8                    /* tres renglones: titulo */
+#define UIG_L3_Y2     33                    /*   dato */
+#define UIG_L3_Y3     53                    /*   dato secundario */
+#endif
+#ifndef UIG_L2_Y1
+#define UIG_L2_Y1     15                    /* dos renglones: titulo */
+#define UIG_L2_Y2     42                    /*   dato */
+#endif
+#ifndef UIG_NAV_R
+#define UIG_NAV_R      7
+#endif
+#ifndef UIG_NAV_TXT_Y
+#define UIG_NAV_TXT_Y  8
+#endif
+#ifndef UIG_TIT_Y
+#define UIG_TIT_Y      6                    /* titulo de la cabecera */
+#define UIG_PAG_Y      9                    /* "1 de 3" */
+#endif
 
 /* Indices que devuelve ui_grid_hit(), ademas de 0..UIG_CELLS-1. */
 #define UIG_HIT_NONE   (-1)

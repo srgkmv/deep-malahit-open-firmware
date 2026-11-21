@@ -25,8 +25,12 @@
  * -lo estas buscando-, lo que quieres leer de un vistazo es cuanto vale.
  */
 
+#ifndef UIC_SIDE_X
 #define UIC_SIDE_X     6
+#endif
+#ifndef UIC_SIDE_W
 #define UIC_SIDE_W   164
+#endif
 /* Cinco desde el 23/09/2026: Pantalla se partio en "Pantalla" (como se ve)
  * y "Espectro" (que se mide). No hace falta tocar ninguna medida: cat_h()
  * reparte el alto entre las categorias que haya, y el banco de sim/config.c
@@ -47,8 +51,12 @@
 /* El valor con las cinco categorias de hoy, para lo que necesite una
  * constante. Quien dibuje o mida debe usar UIC_CAT_H_DE(). */
 #define UIC_CAT_H     UIC_CAT_H_DE(UIC_CATS)
+#ifndef UIC_CAT_GAP
 #define UIC_CAT_GAP    8
+#endif
+#ifndef UIC_CAT_Y
 #define UIC_CAT_Y     (UIG_Y + 6)                      /* 110 */
+#endif
 /* El boton "Cerrar" se ha ido: se sale pulsando otra vez "Ajustes" en la
  * barra de abajo, que ya se resalta mientras la pantalla esta abierta. Lo que
  * ocupaba se reparte entre las cuatro categorias, que pasan de 58 a 70 px de
@@ -77,23 +85,70 @@
  */
 #define UIC_COLS       3
 #define UIC_ROWS       3
+#ifndef UIC_CELL_W
 #define UIC_CELL_W   200
+#endif
+#ifndef UIC_CELL_H
 #define UIC_CELL_H    98
+#endif
+#ifndef UIC_GAP
 #define UIC_GAP        8
+#endif
 
 #define UIC_DCOLS      4
 #define UIC_DROWS      4
+#ifndef UIC_DCELL_W
 #define UIC_DCELL_W  150
+#endif
+#ifndef UIC_DCELL_H
 #define UIC_DCELL_H   72
+#endif
+#ifndef UIC_DGAP
 #define UIC_DGAP       5
+#endif
 
 #define UIC_CELLS     (UIC_DCOLS * UIC_DROWS)          /* 16, el mayor de los dos */
+#ifndef UIC_GRID_X
 #define UIC_GRID_X   (UIC_SIDE_X + UIC_SIDE_W + 8)     /* 178 */
+#endif
+#ifndef UIC_GRID_Y
 #define UIC_GRID_Y   (UIG_Y + 4)                       /* 108 */
+#endif
 
 #define UIC_HIT_NONE   (-1)
 #define UIC_HIT_CAT0   (UIC_CELLS)                     /* 16..20 */
 #define UIC_HIT_COUNT  (UIC_CELLS + UIC_CATS)
+
+/*
+ * DONDE VA CADA COSA DENTRO DE SU CAJA. Eran literales en ui_cfg.c,
+ * medidos para font_ui_18b/font_ui_14 y estas celdas; con otras letras u
+ * otra pantalla hay que poder moverlos sin editar el dibujo. #ifndef y con
+ * los valores de antes, uno por uno: sin -D, el DEEPSDR no cambia.
+ */
+#ifndef UIC_CAT_R
+#define UIC_CAT_R        9      /* radio del boton de categoria */
+#define UIC_CEL_R       10      /* radio de la celda */
+#endif
+#ifndef UIC_BAR_X
+#define UIC_BAR_X        8      /* barra de acento de la categoria activa */
+#define UIC_BAR_W        5
+#define UIC_BAR_H       32
+#endif
+#ifndef UIC_CAT_TXT_X
+#define UIC_CAT_TXT_X   18      /* texto de la categoria: desde la izquierda */
+#define UIC_CAT_TXT_R    8      /*   y lo que se deja a la derecha */
+#define UIC_CAT_TXT_DY  10      /*   media caja de linea por encima del centro */
+#endif
+#ifndef UIC_L3_Y1
+#define UIC_L3_Y1        6      /* tres renglones (bandas): nombre */
+#define UIC_L3_Y2       30      /*   rango */
+#define UIC_L3_Y3       49      /*   modo */
+#endif
+#ifndef UIC_NOM_X
+#define UIC_NOM_X       14      /* dos renglones (ajustes): margen izquierdo */
+#define UIC_NOM_Y       12      /*   el nombre, desde arriba */
+#define UIC_VAL_DY      42      /*   el valor, desde ABAJO */
+#endif
 
 typedef struct {
     const char *nombre;

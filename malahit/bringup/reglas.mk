@@ -181,6 +181,17 @@ MALAHIT_FONTS_TOP = -include font_num_31.h -include font_ui_10.h \
                     -Dfont_ui_14=font_ui_10 \
                     -Dfont_num_20=font_ui_11
 
+# THE MENUS' SET: ui_top's faces, but referred to rather than included.
+# The same renames as MALAHIT_FONTS_TOP minus the -include lines, so
+# each upstream `extern` of font_ui_14 and friends becomes an extern of
+# font_ui_10 and friends, defined once in src/fonts_menu.c. With the
+# -includes, every menu object carried its own static copy of the
+# glyphs - 8 kB each.
+MALAHIT_FONTS_MENU = -Dfont_ui_18b=font_ui_11 \
+                     -Dfont_ui_14b=font_ui_10b \
+                     -Dfont_ui_14=font_ui_10 \
+                     -Dfont_num_20=font_ui_11
+
 DSP_SOURCES  = $(wildcard $(DSP_DIR)/Source/FilteringFunctions/*.c)
 DSP_SOURCES += $(wildcard $(DSP_DIR)/Source/ComplexMathFunctions/*.c)
 
@@ -370,6 +381,36 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_top.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_act.c
 
 #
+# STEP 9: THE MENU SCREENS - 21/11/2026.
+#
+# ui_cfg.c   a column of categories and a grid of cells: upstream's mode
+#            and band screens (and its settings, later)
+# ui_grid.c  a paged grid with a title: the step screen
+#
+# Both laid out by compat/malahit_layout.h - their geometry and the
+# offsets inside their cells are #ifndef upstream now (PROCEDENCIA.md) -
+# and both drawn in ui_top's type, MALAHIT_FONTS_TOP: they sit between
+# the header and the action bar and should read like them. deepsdr-ui
+# `make malahit-menus` renders them on a PC with exactly these flags.
+# src/menus.c is the controller, the part of upstream's main.c these
+# three screens need.
+#
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_cfg.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_grid.c
+#
+# THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]
+# out of User/main.c by the script the host render uses for the same
+# purpose (deepsdr-ui/tools/bandas_dump.py), into the build directory.
+# A band added upstream reaches this radio at the next build, and the
+# PNG and the panel list the same bands.
+#
+BANDAS_TABLA = $(BUILD_DIR)/bandas_tabla.h
+BANDAS_DUMP  = ../../deepsdr-ui/tools/bandas_dump.py
+# (The rule that makes it is further down, beside up_encoder2.o, and for
+# the same reason: up here it was the first target, so `make` built the
+# table and stopped.)
+
+#
 # STEP 8: UPSTREAM'S DEMODULATOR - 21/11/2026.
 #
 # demod_am.c's #include closure is 106 files; what it needs to LINK is
@@ -545,6 +586,8 @@ $(BUILD_DIR)/%.o: %.c $(BUILD_RULES) | $(BUILD_DIR)
 CFLAGS_FONTS = $(MALAHIT_FONTS)
 $(BUILD_DIR)/up_fonts_data.o: CFLAGS_FONTS =
 $(BUILD_DIR)/up_ui_top.o:     CFLAGS_FONTS = $(MALAHIT_FONTS_TOP)
+$(BUILD_DIR)/up_ui_cfg.o:     CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
+$(BUILD_DIR)/up_ui_grid.o:    CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
 
 $(BUILD_DIR)/up_%.o: $(UPSTREAM_DIR)/%.c $(BUILD_RULES) | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $(CFLAGS_EXTRA_UPSTREAM) $(CFLAGS_FONTS) $< -o $@
@@ -569,6 +612,12 @@ $(BUILD_DIR)/up_encoder2.o: $(UPSTREAM_DIR)/encoder.c $(BUILD_RULES) | $(BUILD_D
 	      -DENC_B_PORT=GPIOC -DENC_B_PIN=GPIO_PIN_3 \
 	      -DENC_BTN_READ=adc_enc2_down \
 	      $< -o $@
+
+# The band table, generated - see BANDAS_TABLA above.
+$(BANDAS_TABLA): $(UPSTREAM_DIR)/main.c $(BANDAS_DUMP) | $(BUILD_DIR)
+	python3 $(BANDAS_DUMP) $(UPSTREAM_DIR)/main.c $@
+$(BUILD_DIR)/menus.o: $(BANDAS_TABLA)
+$(BUILD_DIR)/menus.o: CFLAGS += -I$(BUILD_DIR)
 
 $(BUILD_DIR)/%.o: %.S $(BUILD_RULES) | $(BUILD_DIR)
 	$(AS) -c $(ASFLAGS) $< -o $@
