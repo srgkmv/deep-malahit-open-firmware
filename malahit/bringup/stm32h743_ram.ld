@@ -31,6 +31,7 @@ ENTRY(Reset_Handler)
 MEMORY
 {
     AXISRAM (rwx) : ORIGIN = 0x24000000, LENGTH = 512K
+    DTCM    (rw)  : ORIGIN = 0x20000000, LENGTH = 128K
 }
 
 /*
@@ -124,6 +125,32 @@ SECTIONS
         _ebss = .;
         __bss_end__ = _ebss;
     } >AXISRAM
+
+    /*
+     * UPSTREAM'S .tcmram GOES IN THE DTCM - 21/11/2026.
+     *
+     * Upstream marks its CPU-only working state with this section name:
+     * on the GD32 it is the 64 kB TCM at 0x10000000, which no DMA can
+     * reach, so upstream already keeps every DMA buffer OUT of it. The
+     * H743's DTCM has exactly that property, so the section maps onto it
+     * one for one - and it is zero-wait, where AXI SRAM with the D-cache
+     * off is not.
+     *
+     * Until now it was an orphan in AXI SRAM, loaded as 20 kB of zeros.
+     * NOLOAD here, and the startup zeroes it (_stcmram/_etcmram), so it
+     * costs the loader nothing and the RAM image a single range still.
+     * What it buys is room: step 8's demod_am.c adds 11 kB more of it,
+     * and AXI SRAM would otherwise have been at 498 kB of 512.
+     */
+    .tcmram (NOLOAD) :
+    {
+        . = ALIGN(4);
+        _stcmram = .;
+        *(.tcmram)
+        *(.tcmram*)
+        . = ALIGN(4);
+        _etcmram = .;
+    } >DTCM
 
     ._user_heap_stack :
     {

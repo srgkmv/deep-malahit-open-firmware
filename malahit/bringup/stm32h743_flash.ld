@@ -38,6 +38,7 @@ MEMORY
 {
     FLASH   (rx)  : ORIGIN = 0x08000000, LENGTH = 1024K     /* bank 1 only */
     AXISRAM (rwx) : ORIGIN = 0x24000000, LENGTH = 512K
+    DTCM    (rw)  : ORIGIN = 0x20000000, LENGTH = 128K
 }
 
 /*
@@ -104,23 +105,11 @@ SECTIONS
         _edata = .;
     } >AXISRAM AT> FLASH
 
-    /*
-     * .tcmram GOES IN .bss HERE, and that is the one place this script
-     * has to think rather than copy. Upstream's fft.c puts its work
-     * buffers in a section of that name. In the RAM link it was an orphan
-     * of LOADED zeros - 20 712 bytes, all zero, checked - which the
-     * debugger wrote along with everything else. A flash image has no
-     * debugger to write them and the startup only copies .data, so an
-     * orphan here would boot full of whatever the RAM held. Inside .bss it
-     * is zeroed by the startup, which is what the RAM image had.
-     */
     .bss (NOLOAD) :
     {
         . = ALIGN(4);
         _sbss = .;
         __bss_start__ = _sbss;
-        *(.tcmram)
-        *(.tcmram*)
         *(.bss)
         *(.bss*)
         *(COMMON)
@@ -128,6 +117,23 @@ SECTIONS
         _ebss = .;
         __bss_end__ = _ebss;
     } >AXISRAM
+
+    /*
+     * .tcmram IN THE DTCM, exactly as in the RAM image - the reasoning is
+     * in stm32h743_ram.ld. It used to go inside .bss here, because an
+     * orphan would have booted full of whatever the RAM held: the startup
+     * only copied .data. It now zeroes _stcmram.._etcmram as well, so the
+     * section can live where upstream meant it to, in CPU-only RAM.
+     */
+    .tcmram (NOLOAD) :
+    {
+        . = ALIGN(4);
+        _stcmram = .;
+        *(.tcmram)
+        *(.tcmram*)
+        . = ALIGN(4);
+        _etcmram = .;
+    } >DTCM
 
     ._user_heap_stack (NOLOAD) :
     {

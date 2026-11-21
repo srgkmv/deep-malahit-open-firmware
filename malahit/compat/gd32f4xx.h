@@ -136,4 +136,42 @@ static inline void gpio_mode_set(GPIO_TypeDef *port, uint32_t mode,
     }
 }
 
+/*
+ * OUTPUT TYPE AND SPEED, AND SETTING A PIN - for demod_am_init(), which
+ * switches the speaker amplifier on. Step 8, 21/11/2026.
+ *
+ * The values are the GD32's, and they happen to be the H7's register
+ * encodings as well: OTYPER 0 push-pull / 1 open-drain; OSPEEDR 00 is
+ * the slowest edge on both parts (the GD32 calls it 2 MHz, ST "low").
+ * Only the slowest speed is defined, because that is all upstream asks
+ * for, and a define for a faster one would be a guess about which ST
+ * speed the GD32's 25/50 MHz should become.
+ */
+#define GPIO_OTYPE_PP       0UL
+#define GPIO_OTYPE_OD       1UL
+#define GPIO_OSPEED_2MHZ    0UL
+
+static inline void gpio_output_options_set(GPIO_TypeDef *port, uint32_t otype,
+                                           uint32_t speed, uint32_t pin_mask)
+{
+    for (uint32_t pin = 0; pin < 16U; pin++) {
+        if ((pin_mask & (1UL << pin)) == 0U) { continue; }
+
+        port->OTYPER  = (port->OTYPER & ~(1UL << pin)) | (otype << pin);
+        port->OSPEEDR = (port->OSPEEDR & ~(3UL << (pin * 2U)))
+                      | (speed << (pin * 2U));
+    }
+}
+
+/* BSRR, so no read-modify-write and nothing else on the port moves. */
+static inline void gpio_bit_set(GPIO_TypeDef *port, uint32_t pin_mask)
+{
+    port->BSRR = pin_mask;
+}
+
+static inline void gpio_bit_reset(GPIO_TypeDef *port, uint32_t pin_mask)
+{
+    port->BSRR = pin_mask << 16U;
+}
+
 #endif /* GD32F4XX_H */

@@ -49,6 +49,7 @@
 #include "encoder.h"      /* ../../User/encoder.c - upstream */
 #include "enc2.h"         /* the same file again, for the small knob */
 #include "am.h"
+#include "demod.h"        /* upstream's demod_am.c, A/B against am.c */
 #include "boot.h"         /* the power button, for the console */
 #include "agc.h"          /* ../../User/agc.c - upstream; the retune test
                            * computes the gain with ITS constants */
@@ -7572,6 +7573,14 @@ int main(void)
     am_enable(1);
 
     /*
+     * AND UPSTREAM'S, READY BUT NOT HOOKED - step 8. demod_init() sets
+     * up demod_am.c at this port's rates and touches no hook, so am.c is
+     * still what plays; `swd-call.sh ... demod_path 1` switches over in
+     * the running radio. See src/demod.h.
+     */
+    demod_init();
+
+    /*
      * AND THE CODEC COMES OFF MUTE, for the first time in this image's
      * normal operation.
      *
@@ -7598,7 +7607,11 @@ int main(void)
     console_printf("            headphones unmuted at %d dB. Channel "
                    "filter 4 kHz,\n", s_vol_db);
     console_printf("            audio 200 Hz - 4 kHz, upstream's AGC and "
-                   "filter design.\n\n");
+                   "filter design.\n");
+    console_printf("            Upstream's demod_am.c is loaded beside it:"
+                   " swd-call\n");
+    console_printf("            demod_path 1|0, demod_mode, demod_report"
+                   " (src/demod.h).\n\n");
 
     console_printf("  WHAT IS A STUB, AND WHY:\n");
     console_printf("    the clock counts UPTIME (no RTC driver). Mode,\n");

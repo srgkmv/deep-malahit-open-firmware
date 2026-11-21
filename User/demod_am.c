@@ -51,8 +51,13 @@
                     * arm_atan2_f32() (not present in this project's
                     * pruned CMSIS-DSP tree). */
 
+/* El pin que enciende el amplificador del altavoz. Con #ifndef para que
+ * otra placa diga donde lo tiene -en el Malahit es PE1, ver
+ * malahit/bringup/reglas.mk-; sin -D, el DEEPSDR sigue con PB7. */
+#ifndef SPK_EN_PORT
 #define SPK_EN_PORT GPIOB
 #define SPK_EN_PIN  GPIO_PIN_7
+#endif
 
 /*
  * EL FILTRO DE CANAL Y EL PASO BAJO DE AUDIO. Los dos son Butterworth

@@ -370,6 +370,60 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_top.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_act.c
 
 #
+# STEP 8: UPSTREAM'S DEMODULATOR - 21/11/2026.
+#
+# demod_am.c's #include closure is 106 files; what it needs to LINK is
+# these ten and the decoders switched off (src/decoders_off.c). Same
+# set as upstream's host bench, deepsdr-ui `make demod` (DEMOD_REALES),
+# and found again here by compiling it on this port's flags. agc.c and
+# audiofil.c, the other two of the bench's set, are already above.
+#
+#   demod_am.c   AM, SAM, USB, LSB, NFM (and WFM, not wired yet)
+#   semibanda.c  the half-band pair: 192 -> 96 kHz in, 96 -> 192 out
+#   nco.c, nco_tabla.c   the digital mix, for any offset that is not Fs/4
+#   nb.c         noise blanker        anotch.c  automatic notch
+#   nr_ss.c      spectral-subtraction noise reduction
+#   sam.c        synchronous AM's carrier loop
+#   rapido.c     the fast atan2 of the FM discriminator
+#   bip.c        the notification beep, mixed in at the end of the block
+#
+# src/demod.c is the plumbing, and the A/B switch against am.c.
+#
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/demod_am.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/semibanda.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/nco.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/nco_tabla.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/nb.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/anotch.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/nr_ss.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/sam.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/rapido.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/bip.c
+#
+# THE SPEAKER AMPLIFIER. demod_am_init() switches it on, and upstream's
+# pin is PB7 - not connected on this board (BOARD.md, pin 93). Ours is
+# PE1, Vspk_ON, which board.c already drives high; the #ifndef that
+# lets a board say so is the upstream edit in PROCEDENCIA.md.
+#
+DEFS += -DSPK_EN_PORT=GPIOE -DSPK_EN_PIN=GPIO_PIN_1
+#
+# __CORTEX_M, SAID ONCE AND THE SAME WAY core_cm7.h SAYS IT. Upstream's
+# trimmed CMSIS-DSP defines it as 0x04 when arm_math.h comes before the
+# device header - demod_am.c does that, through sam.h - and core_cm7.h
+# then redefines it to (7U): a warning on every build. Defined here with
+# core_cm7.h's exact tokens, the DSP header's #ifndef skips and the
+# redefinition is an identical one, which C allows silently. Nothing in
+# the DSP sources selects code on it beyond ">= 3", true either way.
+#
+DEFS += '-D__CORTEX_M=(7U)'
+#
+# HFDL_DIAG: hfdl_modo.h tests it with #if and upstream never defines it,
+# which is 0 by the rules of C and a warning by this build's -Wundef.
+# Said explicitly, with the value upstream already gets.
+#
+DEFS += -DHFDL_DIAG=0
+
+#
 # NOT added to C_SOURCES, and that is deliberate. Objects here are named
 # by $(notdir), and the upstream tree has its own main.c - 39 094 lines
 # of it - so putting User/ on the vpath made "build/main.o" ambiguous

@@ -32,6 +32,8 @@ directly — no copy, no fork, objects prefixed `up_` and `dsp_`:
 | `User/spec_rotulos.c` | 846 |
 | `User/idioma.c` | 60 |
 | `User/fonts_data.c` | glyph tables |
+| `User/demod_am.c` | 6992 |
+| `User/semibanda.c`, `nco.c`, `nco_tabla.c`, `nb.c`, `anotch.c`, `nr_ss.c`, `sam.c`, `rapido.c`, `bip.c` | step 8, 21/11/2026 |
 | `CMSIS/DSP/Source/**` | 9 files |
 
 Those are part of the same AGPL-3.0 work and raise no new licence
@@ -105,6 +107,16 @@ and each is recorded here so the divergence is never a surprise:
   classification on release and the "pressed and turned" consumption all
   keep working for a board whose button is a voltage. A second copy of
   any of them would have been the alternative.
+
+- `User/demod_am.c` — `SPK_EN_PORT`/`SPK_EN_PIN`, the speaker
+  amplifier's enable that `demod_am_init()` drives high, wrapped in
+  `#ifndef` (21/11/2026, step 8). Upstream's PB7 is not connected on
+  this board; ours is PE1, set from `bringup/reglas.mk`. The same
+  pattern as the encoder's pins, for the same reason: a driver that
+  writes a pin the board does not own is a fault nobody looks for. With
+  no `-D` the DEEPSDR keeps PB7 — **verified by compiling `demod_am.o`
+  with upstream's own GD32 command line before and after: identical
+  disassembly, identical section sizes.**
 
 `User/encoder.c` is also **compiled twice**, the second time with its
 public names renamed through `-D` so the board's second encoder gets its

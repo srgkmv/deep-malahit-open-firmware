@@ -381,6 +381,13 @@ Each step should end with something visible on the radio.
 8. **Graft the upstream DSP tree** mode by mode - which in practice
    means `demod_am.c` and the 106 files behind it, so it wants the
    display layer in place first. See the box under step 7.
+
+   > **Measured 21/11/2026: not the 106 files.** That is the closure
+   > of `#include`. What `demod_am.c` needs to LINK is ten modules,
+   > with the decoders it feeds answering "off" - `src/decoders_off.c`,
+   > 52 names. So the modes come first and each decoder is its own
+   > later graft: delete its stubs, add its `.c`, let the linker speak.
+   > Step 26 below.
 9. **Relayout the UI** at 480 × 320, in the simulator first.
 
    *Started, 02/11/2026, and it began with the part nobody budgeted
@@ -972,6 +979,20 @@ Each step should end with something visible on the radio.
    is no period. On the radio, the codec's own output, A/B in one run:
    residual from the tone -7.0 dB rms with the hold, -47.9 dB
    predicted; by ear, gone. `WORKING.md`, "The retune click, part two".
+26. **Step 8 begins: upstream's demodulator on the radio.** *21/11/2026,
+   from RAM, checked by the owner* — `demod_am.c` and nine modules
+   compiled in place, beside `am.c`, switched in the running radio
+   (`swd-call ... demod_path 1|0`, `demod_mode`, `src/demod.h`). The
+   census first: the 106-file figure is the `#include` closure; the
+   LINK closure is ten modules and 52 decoder hooks, the same set
+   upstream's own host bench stubs (`deepsdr-ui`, `make demod`). Four
+   compile errors on one spot - the speaker pin, an `#ifndef` upstream,
+   `PROCEDENCIA.md`. AM, SAM, USB, LSB and NFM all checked by ear by the
+   owner, "seems all fine"; in LSB the block interrupt costs 11.9 ms of 42.7 (am.c's AM:
+   9.0), worst 808 us per 512-frame call, no overrun, no lost audio.
+   And the memory: upstream's `.tcmram` - CPU-only on the GD32 too -
+   now lives in the DTCM, so the RAM image is 460 kB of 512 with
+   upstream in it and the SWD loop survives step 8.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

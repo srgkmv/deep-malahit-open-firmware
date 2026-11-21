@@ -257,6 +257,25 @@ LoopFillZerobss:
     cmp   r2, r4
     bcc   FillZerobss
 
+    /*
+     * 5b. Zero upstream's .tcmram, which lives in the DTCM (both linker
+     *     scripts say why). NOLOAD in both images, so nothing else will:
+     *     not the debugger, not the copy above. The DTCM is clocked by
+     *     the core itself, so it is usable this early, before SystemInit.
+     */
+    ldr   r2, =_stcmram
+    ldr   r4, =_etcmram
+    movs  r3, #0
+    b     LoopFillZeroTcm
+
+FillZeroTcm:
+    str   r3, [r2]
+    adds  r2, r2, #4
+
+LoopFillZeroTcm:
+    cmp   r2, r4
+    bcc   FillZeroTcm
+
     /* 6. Clocks and power, then us. */
     bl    SystemInit
     bl    main

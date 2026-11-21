@@ -4,7 +4,56 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — end of the 21/11/2026 session; the next one is step 8
+## START HERE — 21/11/2026, evening: step 8 started, upstream's modes run
+
+**What is in flash is still `41a0523`** (sha `214e3e8b…`). What is new
+was checked from RAM only: `PORTING.md` step 26.
+
+- **The census was the answer, and it was small.** `demod_am.c`'s
+  106-file closure is the `#include` one; to LINK it needs ten modules
+  and 52 decoder hooks answering "off" - exactly what upstream's host
+  bench stubs (`deepsdr-ui`, `make demod`, `sim/demod_stubs.c`). On this
+  port's flags: ten files clean, four errors in `demod_am.c` on one
+  spot (speaker pin, PB7 there, PE1 here: an `#ifndef` upstream,
+  GD32 disassembly identical before and after, `PROCEDENCIA.md`).
+- **Memory, settled without the owner's buttons:** upstream's `.tcmram`
+  is CPU-only by upstream's own rule (the GD32's TCM has no DMA either),
+  so it now lives in the DTCM, NOLOAD, zeroed by the startup (all six
+  objects' sections checked to be zeros). RAM image AXI 439 -> 409 kB
+  before the graft, **460 / 512 kB with it**, DTCM 32 / 128 kB. The SWD
+  RAM loop survives. Next lever when a decoder needs it: the 128 kB of
+  SAI rings into D2 SRAM.
+- **The graft:** `demod_am.c`, `semibanda.c`, `nco.c`, `nco_tabla.c`,
+  `nb.c`, `anotch.c`, `nr_ss.c`, `sam.c`, `rapido.c`, `bip.c` in place;
+  `src/demod.c` cuts each 8192-frame half into 16 upstream calls of 512;
+  `src/decoders_off.c` the stubs, type-checked against upstream's
+  headers. **am.c still boots**; upstream is switched in the running
+  radio: `swd-call.sh build/bringup.elf demod_path 1|0`,
+  `demod_mode 0..5` (no WFM), `demod_mix <hz>`, `demod_report`.
+- **On the radio, by the owner: every mode checked, "seems all fine"**
+  - by ear, on the generator; no measurement of the audio yet. So the
+  mix sign (+12000 Hz, predicted from the I/Q order) is right: wrong,
+  AM would have been silent on the dial.
+  `demod_report` in LSB: hook **11.9 ms of 42.7** (am.c's AM: 9.0),
+  worst 808 us per call, SAI overruns 0, sink errors 0, silent calls 0.
+  Frame 42.7 ms against 47.5 at the panel-DMA step, with MORE in the
+  interrupt - the DTCM is the likely reason and was NOT A/B'd.
+
+**Open, for the next session:**
+
+1. Commit (the owner asks for it), then decide whether upstream becomes
+   the boot path. Before that, by ear: the **retune click** - am.c has
+   the predicted fill (step 25), upstream's path has none, so tuning
+   with upstream on may click again.
+2. No mode UI yet: the mode is set over SWD only. The mode chip and
+   the buttons are step 9 territory.
+3. WFM is a separate upstream hook at another block size - not wired.
+4. `swd.sh id` HALTS the core (`whoami` starts with `halt`) and does not
+   resume. Run on the radio this session, the console was silent after
+   it - whether that was the cause was not established. Resume by hand,
+   or give `whoami` a `resume`.
+
+## The session before: end of 21/11/2026, afternoon — the plan for step 8
 
 **What is in flash is exactly `41a0523`** (sha `214e3e8b…`, 104 960
 bytes), verified by read-back and a cold boot. Nothing is open from
