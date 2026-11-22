@@ -863,7 +863,12 @@ const int16_t ui_digi_cols_wspr[UI_DIGI_COLS_WSPR_N] = { 8, 110, 260, 380, 500, 
  * sobra-. Aqui el pais va justo detras del mensaje y 60 px no le llegan.
  * Con la columna fija, el mensaje se recorta donde tiene que recortarse.
  */
-const int16_t ui_digi_cols_jtty[UI_DIGI_COLS_JTTY_N] = { 8, 62, 132, 176, 672 };
+/* #ifndef desde el 22/11/2026: el port del Malahit pone las suyas en
+ * malahit/compat/malahit_layout.h, para 480 px. Aqui, las de siempre. */
+#ifndef UDG_COLS_JTTY
+#define UDG_COLS_JTTY { 8, 62, 132, 176, 672 }
+#endif
+const int16_t ui_digi_cols_jtty[UI_DIGI_COLS_JTTY_N] = UDG_COLS_JTTY;
 
 /* Ver el comentario de UI_DIGI_COLS_IDENT_N en ui_digi.h. */
 const int16_t ui_digi_cols_ident[UI_DIGI_COLS_IDENT_N] = { 8, 120, 680 };
