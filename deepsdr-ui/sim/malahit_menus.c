@@ -365,7 +365,7 @@ static void ingles(void)
     static const char *const nombres_en[] = {
         "AGC", "Bandwidth", "Notch", "Squelch", "Noise red.", "Blanker", "Preamp",
         "Attenuator", "Theme", "Palette", "Style", "Volume", "Smoothing", "Bridge",
-        "Trace", "Language", "Brightness" };
+        "Trace", "Language", "Brightness", "Stereo" };
     static const char *const valores_en[] = {
         "No AGC", "Slow", "Medium", "Fast", "Gentle", "Normal", "Strong", "Maximum",
         "Off", "On", "Filled", "Line", "Outline", "Joined", "Loose", "White",
@@ -561,6 +561,9 @@ int main(void)
     cabecera("cab_wfm", "104.300,00", "WFM", "FM", "RADIO 7",
              "Ahora suena: The Beatles - Here Comes The Sun     ");
     cabecera("cab_hf", "9.600,00", "AM", "31 m", 0, 0);
+    /* En estereo el chip dice "WFM ST" (src/main.c, mode_chip()). */
+    cabecera("cab_st", "104.300,00", "WFM ST", "FM", "RADIO 7",
+             "Ahora suena: The Beatles - Here Comes The Sun     ");
     memorias();
     modos();
     bandas();

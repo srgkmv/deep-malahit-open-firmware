@@ -21,6 +21,7 @@
 #include "bip.h"           /* ../../User - upstream: the pips */
 #include "board.h"         /* src/ - board_millis(), for the long press */
 #include "backlight.h"     /* ../../User - upstream's API, src/backlight.c */
+#include "estereo.h"      /* src/ - FM stereo: Auto / Mono */
 
 /* What ui_cfg.c draws the range line in, defined once in fonts_menu.c. */
 extern const gfx2_font_t font_ui_10;
@@ -283,7 +284,7 @@ typedef enum {
     AJ_AGC, AJ_BW, AJ_NOTCH, AJ_SQL, AJ_NR, AJ_NB, AJ_PRE, AJ_ATT,
     AJ_TEMA, AJ_PALETA, AJ_ESTILO, AJ_VOL,
     AJ_SUAV, AJ_PUENTE, AJ_TRAZA,
-    AJ_IDIOMA, AJ_BRILLO
+    AJ_IDIOMA, AJ_BRILLO, AJ_ESTEREO
 } aj_id_t;
 
 /*
@@ -314,6 +315,7 @@ static const struct { texto_t nombre; uint8_t pag; uint8_t id; } k_aj[] = {
     { T("Blanker", "Blanker"),         AJ_PAG_RADIO,    AJ_NB     },
     { T("Preamplif.", "Preamp"),       AJ_PAG_RADIO,    AJ_PRE    },
     { T("Atenuador", "Attenuator"),    AJ_PAG_RADIO,    AJ_ATT    },
+    { T("Estéreo", "Stereo"),          AJ_PAG_RADIO,    AJ_ESTEREO },  /* this port's own */
     { T("Tema", "Theme"),              AJ_PAG_PANTALLA, AJ_TEMA   },
     { T("Paleta", "Palette"),          AJ_PAG_PANTALLA, AJ_PALETA },
     { T("Estilo", "Style"),            AJ_PAG_PANTALLA, AJ_ESTILO },
@@ -401,6 +403,7 @@ static const char *aj_valor(uint8_t id)
     case AJ_NR:     return num_txt(s_aj_buf + 8, (int32_t)s_nr_strength, 0);
     case AJ_NB:     return k_nb_nom[nb_get_nivel() & 3U][idioma()];
     case AJ_PRE:    return radio_preamp() ? tr("Activo", "On") : tr("Apagado", "Off");
+    case AJ_ESTEREO: return estereo_puesto() ? tr("Auto", "Auto") : tr("Mono", "Mono");
     case AJ_ATT:    return radio_att_text();
     case AJ_TEMA:   return menu_tema_nombre();
     case AJ_PALETA: return spectrum_palette_nombre((uint8_t)spectrum_get_palette());
@@ -576,6 +579,7 @@ static void aj_toca(uint8_t id)
     case AJ_NR:    det_open(DET_NR); return;
     case AJ_NB:    nb_set_nivel((uint8_t)((nb_get_nivel() + 1U) & 3U)); break;
     case AJ_PRE:   radio_preamp_toggle(); break;
+    case AJ_ESTEREO: estereo_pon((uint8_t)!estereo_puesto()); break;
     case AJ_ATT:   det_open(DET_ATT); return;
     case AJ_VOL:   det_open(DET_VOL); return;
     case AJ_SUAV:  det_open(DET_SUAV); return;
@@ -647,6 +651,7 @@ void menu_ajustes_get(settings_t *s)
     s->aj_wfm_bw = (uint8_t)(demod_am_get_audio_bw() + 1U);
     s->aj_idioma = (uint8_t)(idioma() + 1U);
     s->aj_brillo = backlight_get_percent();
+    s->aj_estereo = (uint8_t)(estereo_puesto() + 1U);
 }
 
 /* What the screen shows - before the first paint, so a stored theme is
@@ -666,6 +671,9 @@ void menu_ajustes_apply_pantalla(const settings_t *s)
     }
     if (s->aj_estilo < 3U) { spectrum_set_style((spectrum_style_t)s->aj_estilo); }
     if (s->has_suav) { (void)radio_suav_set((int)s->aj_suav); }   /* clamps */
+    if (s->aj_estereo == 1U || s->aj_estereo == 2U) {
+        estereo_pon((uint8_t)(s->aj_estereo - 1U));
+    }
     if (s->aj_brillo >= (uint8_t)BRILLO_MIN && s->aj_brillo <= 100U) {
         backlight_set_percent(s->aj_brillo);
     }

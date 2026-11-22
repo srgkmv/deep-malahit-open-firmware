@@ -6136,6 +6136,18 @@ out/wfmsql: sim/wfm_squelch.c sim/demod_stubs.c $(FIRMWARE)/User/demod_am.c $(DE
 out/wfmiqb: sim/wfm_iqbal.c $(FIRMWARE)/User/iqbal.c $(FIRMWARE)/User/fft.c
 	@mkdir -p out
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I $(FIRMWARE)/User -o $@ $(FUENTES) $(LDLIBS)
+# El estereo del Malahit (malahit/bringup/src/estereo.c, no es de upstream)
+# detras del WFM de upstream, enganchado como en la radio: --wrap de
+# rds_feed() para el multiplex crudo. 22/11/2026.
+out/wfmestereo: sim/wfm_estereo.c sim/demod_stubs.c $(FIRMWARE)/User/demod_am.c $(DEMOD_REALES) \
+                ../malahit/bringup/src/estereo.c ../malahit/bringup/src/estereo.h
+	@mkdir -p out
+	$(CC) $(CFLAGS) -D_GNU_SOURCE -I $(FIRMWARE)/User -I ../malahit/bringup/src \
+	      -Wl,--wrap=rds_feed -o $@ $(FUENTES) $(LDLIBS)
+
+.PHONY: wfmestereo
+wfmestereo: out/wfmestereo ; ./out/wfmestereo
+
 out/wfmagc: sim/wfm_agc.c sim/demod_stubs.c $(FIRMWARE)/User/demod_am.c $(DEMOD_REALES)
 	@mkdir -p out
 	$(CC) $(CFLAGS) -D_GNU_SOURCE -I $(FIRMWARE)/User -o $@ $(FUENTES) $(LDLIBS)

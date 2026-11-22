@@ -8,6 +8,8 @@
 #include "demod_am.h"     /* ../../User - upstream */
 #include "sdr_rx.h"       /* ../../User - SDR_RX_BLOCK_SAMPLES_WFM */
 #include "gd32_i2s.h"     /* ../../User - the sink's prototype */
+#include "rds.h"          /* ../../User - rds_feed(), wrapped below */
+#include "estereo.h"      /* src/ - FM stereo, this port's */
 
 /*
  * Upstream's call: 512 frames at 192 kHz in (with rf_doble), 512 stereo
@@ -65,7 +67,8 @@ void demod_init(void)
     demod_am_set_mix_hz((float)s_mix_hz);
 
     __asm__ volatile ("" :: "r"(demod_path), "r"(demod_mode),
-                            "r"(demod_mix), "r"(demod_report));
+                            "r"(demod_mix), "r"(demod_report),
+                            "r"(estereo_pon));
 }
 
 void demod_block(const int16_t *rx, int16_t *tx, uint32_t frames)
@@ -130,8 +133,27 @@ void gd32_i2s_stream_write_half(const int16_t *stereo_frames, uint32_t n_frames)
         if (n_frames > s_sink_n) { n_frames = s_sink_n; }
         memset(s_sink, 0, s_sink_n * 2U * sizeof(int16_t));
     }
-    memcpy(s_sink, stereo_frames, n_frames * 2U * sizeof(int16_t));
+    /* In WFM, upstream's frames are the mono sum: the stereo decoder
+     * makes L and R of them, with the difference it found in this
+     * block's multiplex (src/estereo.c), straight into the ring. */
+    if (!s_wfm || !estereo_aplica(stereo_frames, s_sink, n_frames)) {
+        memcpy(s_sink, stereo_frames, n_frames * 2U * sizeof(int16_t));
+    }
     s_sink = 0;
+}
+
+/*
+ * THE MULTIPLEX, WHERE UPSTREAM HANDS IT TO RDS - linked with
+ * --wrap=rds_feed (reglas.mk): demod_am.c's call lands here, the stereo
+ * decoder sees the block first, and rds.c gets it as before. Upstream
+ * calls rds_feed() only while rds_activo(), and this port keeps RDS on in
+ * every WFM session (main.c, rds_modo()) - so in WFM this always runs.
+ */
+void __real_rds_feed(const float *mpx, uint32_t n);
+void __wrap_rds_feed(const float *mpx, uint32_t n)
+{
+    if (s_wfm) { estereo_mpx(mpx, n); }
+    __real_rds_feed(mpx, n);
 }
 
 /*
@@ -206,6 +228,7 @@ SWD_ENTRY int demod_mode(int mode)
         demod_am_reset_diag();
     }
     demod_am_set_mix_hz(wfm ? 0.0f : (float)s_mix_hz);
+    if (wfm) { estereo_reset(); }       /* under s_cambiando: no block runs */
     s_wfm = wfm;
 
     __DSB();
@@ -242,4 +265,19 @@ SWD_ENTRY void demod_report(void)
                    "no audio %u, tail %u, muted by a mode change %u\n",
                    s_hooks, sai1_block_overruns, s_sink_bad, s_sink_none,
                    s_tail, s_mudos);
+    if (s_wfm) {
+        estereo_estado_t e;
+
+        estereo_estado(&e);
+        console_printf("            stereo %s: pilot %d Hz deviation, SNR %d dB, "
+                       "at %d.%02d Hz; blend %d %%, g %d.%02d, match %d dB\n",
+                       estereo_puesto() ? "on" : "OFF",
+                       (int32_t)e.piloto_dev_hz, (int32_t)e.snr_db,
+                       (int32_t)e.piloto_hz, (int32_t)(e.piloto_hz * 100.0f) % 100,
+                       (int32_t)(e.mezcla * 100.0f),
+                       (int32_t)e.ganancia, (int32_t)(e.ganancia * 100.0f) % 100,
+                       (int32_t)e.resto_db);
+        console_printf("            stereo cost: decode %u us, apply %u us a call "
+                       "(x16 a block)\n", us(e.ciclos_mpx), us(e.ciclos_aplica));
+    }
 }

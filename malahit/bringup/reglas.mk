@@ -551,6 +551,11 @@ ASFLAGS = $(MCUFLAGS) $(OPT) -Wall
 LDFLAGS  = $(MCUFLAGS) -T$(LDSCRIPT)
 LDFLAGS += -Wl,-Map=$(BUILD_DIR)/$(TARGET).map,--cref
 LDFLAGS += -Wl,--gc-sections
+# FM stereo (src/estereo.c, 22/11/2026): upstream hands the WFM multiplex
+# to rds_feed() and to nothing else, so the call is wrapped - demod.c's
+# __wrap_rds_feed() gives it to the stereo decoder too, then to rds.c.
+# Not one line of demod_am.c changes for it.
+LDFLAGS += -Wl,--wrap=rds_feed
 LDFLAGS += -nostdlib -nostartfiles
 LDFLAGS += -Wl,--print-memory-usage
 # A RAM image is by definition both writable and executable, so the linker's

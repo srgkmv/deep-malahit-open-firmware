@@ -15,6 +15,11 @@ byte, left with the 4-byte `:leave` upload. **Cold boot**: record v4
 within seconds, the memories from the FRAM, screen and audio 2108 ms
 after SysTick, SAI DMA err 0. **Pushed** through this commit.
 
+**Since, from RAM (not in flash): step 41, FM stereo** - `src/estereo.c`,
+this port's own; 65-75 dB separation on the bench, stereo on the air at
+104.3; "WFM ST" in the mode chip; Settings > Radio > Stereo Auto/Mono.
+Costs 3.5 ms a block in WFM (frame 79 ms against 72 without).
+
 **Next: the owner picks.** On the list: the other decoders one by one
 (each: delete its stubs in decoders_off.c, add its .c, let the linker
 speak - PORTING.md step 8), the memory screen's SCAN cell, the clock

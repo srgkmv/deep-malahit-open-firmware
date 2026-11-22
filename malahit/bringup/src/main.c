@@ -57,6 +57,7 @@
 #include "backlight.h"    /* ../../User - upstream's API, src/backlight.c */
 #include "rds.h"          /* ../../User - upstream: the RDS decoder */
 #include "rds_pi.h"       /* ../../User - upstream: networks by their PI */
+#include "estereo.h"      /* src/ - FM stereo, this port's own */
 #include "bandas_tabla.h" /* GENERATED from ../../User/main.c: the steps */
 #include "demod_am.h"     /* ../../User - upstream: DEMOD_MODE_*, for the menus */
 #include "nr_ss.h"        /* ../../User - upstream: the Ruido button */
@@ -5916,7 +5917,8 @@ static int settings_same(const settings_t *a, const settings_t *b)
         && a->aj_paleta == b->aj_paleta && a->aj_bw == b->aj_bw
         && a->aj_sql == b->aj_sql && a->aj_nr == b->aj_nr
         && a->aj_suav == b->aj_suav && a->aj_wfm_bw == b->aj_wfm_bw
-        && a->aj_idioma == b->aj_idioma && a->aj_brillo == b->aj_brillo;
+        && a->aj_idioma == b->aj_idioma && a->aj_brillo == b->aj_brillo
+        && a->aj_estereo == b->aj_estereo;
 }
 
 static void settings_now(settings_t *out)
@@ -6214,8 +6216,45 @@ static void rds_limpia(void)
     s_top.rds_off = 0;
 }
 
+/*
+ * "WFM ST" IN THE MODE CHIP while the stereo decoder is blending in
+ * (src/estereo.c) - the owner's choice of indicator, 22/11/2026. On at a
+ * blend of 50 %, off below 40, so a station on the edge does not make it
+ * blink. The chip widens by " ST" and the RDS strip gives the room back
+ * while it is lit.
+ */
+static uint8_t s_st_on;
+
+static const char *mode_chip(void)
+{
+    int m = radio_mode_get();
+
+    if (m == (int)DEMOD_MODE_WFM && s_st_on) { return "WFM ST"; }
+    return radio_mode_name(m);
+}
+
+static void estereo_ui_poll(void)
+{
+    estereo_estado_t e;
+    uint8_t          on = s_st_on;
+
+    if (demod_am_get_mode() != DEMOD_MODE_WFM) {
+        on = 0U;
+    } else {
+        estereo_estado(&e);
+        if (!on && e.mezcla >= 0.5f) { on = 1U; }
+        if (on && e.mezcla < 0.4f)   { on = 0U; }
+    }
+    if (on == s_st_on) { return; }
+    s_st_on = on;
+    s_top.mode = mode_chip();
+    ui_top_draw(&s_top);                /* the chip, and the strip after it */
+    console_printf("  stereo %s\n", on ? "ON" : "off");
+}
+
 static void rds_modo(void)
 {
+    s_st_on = 0U;                       /* the poll lights it when there is stereo */
     if (demod_am_get_mode() == DEMOD_MODE_WFM) {
         rds_start(192000.0f);           /* the WFM path's rate */
         s_rds_freq = s_tuned_hz;
@@ -6310,6 +6349,7 @@ static int dial_tune(int64_t dial_hz)
      * apply_lo_tune()), but not on a call that lands where it was. */
     if (rds_activo() && s_tuned_hz != s_rds_freq) {
         s_rds_freq = s_tuned_hz;
+        estereo_pide_reset();           /* another pilot: from zero, by the IRQ */
         rds_start(192000.0f);
         rds_limpia();
         ui_top_draw_rds(&s_top);
@@ -6876,7 +6916,7 @@ void radio_mode_set(int mode)
         }
     }
     rds_modo();                         /* on in WFM, off elsewhere */
-    s_top.mode = radio_mode_name(radio_mode_get());
+    s_top.mode = mode_chip();
     top_sync_chips();                   /* the filter family follows the mode */
     ui_top_draw(&s_top);
     radio_act_refresh();
@@ -7130,7 +7170,7 @@ void radio_idioma(uint8_t v)
     s_band_name = (const char *)1;      /* force band_pill_sync() to set it */
     band_pill_sync();
     top_sync_chips();
-    s_top.mode = radio_mode_name(radio_mode_get());
+    s_top.mode = mode_chip();
     act_values();       /* the bar's names: ui_paint_all() draws s_act as it is */
 }
 
@@ -8690,7 +8730,7 @@ int main(void)
     s_set_seen = s_set_saved;
     s_band_name = (const char *)1;      /* force the first sync to draw */
     band_pill_sync();
-    s_top.mode = radio_mode_name(radio_mode_get());
+    s_top.mode = mode_chip();
     top_sync_chips();
     ui_top_draw(&s_top);
     radio_act_refresh();
@@ -8838,6 +8878,7 @@ int main(void)
 
         retune_test_step();
         rds_marq_poll();                /* the header's RDS strip, in WFM */
+        estereo_ui_poll();              /* and "WFM ST" in the mode chip */
 
         /*
          * THE PRESS, which is upstream's gesture and upstream's

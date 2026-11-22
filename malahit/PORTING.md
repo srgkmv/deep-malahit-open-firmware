@@ -1305,6 +1305,41 @@ Each step should end with something visible on the radio.
    the strip scrolls on the glass; to AM it empties, back to WFM it
    starts again; a step away and back, from zero. The WFM hook with RDS:
    13.4 ms of 42.7 (6.7 without), no overrun.
+41. **FM stereo - this port's own; upstream's WFM is mono by design.**
+   *22/11/2026, from RAM, on the air* - `src/estereo.c`, built round
+   upstream's mono path rather than beside it: upstream's output is M =
+   (L+R)/2 with everything upstream does to it (squelch, de-emphasis,
+   the 15/8/4 kHz low-pass, AGC, mutes, pips); this decodes S = (L-R)/2
+   from the same multiplex through the SAME DC blocker, de-emphasis and
+   low-pass (upstream's constants, copied), and writes L = M + gS, R =
+   M - gS, g being the gain upstream's AGC put on M in that block -
+   regressed from upstream's output on this file's own copy of M (the
+   residual on air -45 dB). A squelch or a mute zeroes M and so g. The
+   multiplex comes from where upstream hands it to RDS: rds_feed() is
+   linked with `--wrap` and demod.c's wrapper feeds both - not a line of
+   demod_am.c changed. The 38 kHz reference is the pilot's phase
+   doubled, the pilot found through a 200 Hz low-pass after a 19 kHz
+   oscillator; stereo needs a pilot of 2.5 kHz deviation or more and
+   blends from mono to stereo between 12 and 24 dB of pilot SNR.
+   **The bench first** (deepsdr-ui `make wfmestereo`: synthetic BS.450
+   stereo through upstream's real demod_wfm_process_raw()): L 1 kHz, R
+   3 kHz - separation 65-75 dB, channels not swapped; a mono station
+   stays mono; a weak one blends. It found two things: upstream's DC
+   blocker (15 Hz) acts on the multiplex before the tap, so M had it and
+   S did not - 0.9 degrees at 1 kHz held the separation at 40 dB until S
+   got the same blocker; and a block-averaged pilot let the programme
+   in (a noiseless pilot read 29 dB), so it is low-passed instead (92
+   dB), and a 1 kHz tone's 19th harmonic read as a "pilot" until the
+   deviation threshold. **On the air at 104.3 MHz**: pilot 6.1 kHz
+   deviation, SNR 30-33 dB, at 19000.0-19000.3 Hz, blend 100 %.
+   **Cost**: 139 + 78 us a call, 3.5 ms of the 42.7 ms block, after
+   moving the hot buffers to the DTCM (the D-cache is off) and writing
+   the SAI ring once a frame; the frame A/B in one run, 79.4 ms with
+   stereo and 71.7 without, at a station whose spectrum keeps the trace
+   busy. Mono costs nothing. **"WFM ST"** in the mode chip while the
+   blend is at 50 % (off below 40), the owner's choice; Settings > Radio
+   > Stereo, Auto / Mono, in the FRAM (record v4 byte 30). And by ear,
+   the owner: "the sound is quite satisfactory".
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

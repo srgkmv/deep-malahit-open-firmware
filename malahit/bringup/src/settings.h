@@ -71,6 +71,7 @@ typedef struct {
                                0 = not stored - keep the default */
     uint8_t  aj_idioma;     /* v4: IDIOMA_ES/EN + 1; 0 = not stored (ES) */
     uint8_t  aj_brillo;     /* v4: backlight %, 20-100; 0 = not stored (100) */
+    uint8_t  aj_estereo;    /* v4: FM stereo 1 Mono / 2 Auto; 0 = not stored (Auto) */
 } settings_t;
 
 #define SET_AJ_NB_MASK      0x03U   /* blanker level 0-3 */

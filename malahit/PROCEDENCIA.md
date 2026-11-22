@@ -36,6 +36,15 @@ directly — no copy, no fork, objects prefixed `up_` and `dsp_`:
 | `User/ui_cfg.c`, `User/ui_grid.c`, `User/ui_det.c`, `User/ui_kbd.c` | step 9, 21/11/2026 |
 | `User/spec_snap.c`, `User/banco.c` | steps 37-38, 22/11/2026, unmodified; banco.c's disk is `src/memfram.c` (MEM.CSV in the FRAM) |
 | `User/rds.c`, `User/rds_pi.c` | step 40, 22/11/2026, unmodified, in place of their stubs |
+
+**FM stereo (step 41) is this port's own** - `bringup/src/estereo.c`.
+It touches no upstream file: the multiplex is taken by linking with
+`--wrap=rds_feed`, and the numbers it must share with upstream's WFM
+path to keep the channels apart - the 15/8/4 kHz low-pass coefficients,
+the 50 us de-emphasis, the DC blocker's 0.9995, the discriminator's 7300
+- are copied from `User/demod_am.c` and say so where they are.
+`deepsdr-ui/sim/wfm_estereo.c` checks them against upstream's real path:
+if upstream changes one, the separation figure there falls.
 | `User/semibanda.c`, `nco.c`, `nco_tabla.c`, `nb.c`, `anotch.c`, `nr_ss.c`, `sam.c`, `rapido.c`, `bip.c` | step 8, 21/11/2026 |
 | `CMSIS/DSP/Source/**` | 9 files |
 
