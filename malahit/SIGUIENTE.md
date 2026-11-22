@@ -4,9 +4,15 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 22/11/2026, late night: steps 48-49 (SSTV, HELL) committed, flashing
+## START HERE — 22/11/2026, late night: steps 48-49 (SSTV, HELL) IN FLASH (3274486), pushed
 
-**In flash: `5813452`** (below). **Committed, checked from RAM**: steps 48-49
+**In flash: `3274486`** - `build_flash/bringup.bin`, 267 936 bytes, sha256
+`8177ae11…`, SELFTEST 0, clean build; written over DFU without `:leave`,
+read back identical byte for byte, left with the 4-byte `:leave` upload;
+the first image to reach sector 2 of bank 1. **Cold boot**: record v4
+(slot 0, seq 265), HELL at 14.063 MHz from the FRAM, the memories, screen
+and audio 2365 ms after SysTick, SAI DMA err 0; and from flash, Hell's
+text read on the air. Steps 48-49
 (`PORTING.md` 48-49) - SSTV and SSTV-FM, and Feld-Hell, as upstream has
 them, the owner's word; their screens upstream's way (the panel's memory,
 nothing kept), SSTV's picture scaled to 263 x 211. On the air against the
