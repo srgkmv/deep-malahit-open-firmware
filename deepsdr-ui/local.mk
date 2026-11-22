@@ -4107,13 +4107,24 @@ comprueba: rttysolo
 # ---------------------------------------------------------------------
 # EL RTTY CONTRA UNA GRABACION (06/10/2026). Ver sim/rtty_aire.c. No entra
 # en "comprueba": hace falta un fichero.
-out/rttyaire: sim/rtty_aire.c $(FIRMWARE)/User/rtty.c
+# rtty.c llama a rtty_auto_bit() desde el 06/10, y esta regla no lo
+# enlazaba: no compilaba (22/11/2026). Va con rtty_auto.c y lo que este pide.
+out/rttyaire: sim/rtty_aire.c $(FIRMWARE)/User/rtty.c $(FIRMWARE)/User/rtty_auto.c \
+              $(FIRMWARE)/User/rtty_scope.c $(FIRMWARE)/User/fft.c
 	@mkdir -p out
 	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -I$(FIRMWARE)/Ft8Lib -Ihostinc -Isim \
 	      -o $@ $(filter %.c,$^) $(LDLIBS)
 
 .PHONY: rttyaire
 rttyaire: out/rttyaire
+
+# EL AJUSTE AUTOMATICO CONTRA CUALQUIER FICHERO (22/11/2026). Ver
+# sim/rtty_auto_aire.c. Tampoco entra en "comprueba": hace falta un fichero.
+out/rttyautoaire: sim/rtty_auto_aire.c $(FIRMWARE)/User/rtty.c $(FIRMWARE)/User/rtty_auto.c \
+                  $(FIRMWARE)/User/rtty_scope.c $(FIRMWARE)/User/fft.c
+	@mkdir -p out
+	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -I$(FIRMWARE)/Ft8Lib -Ihostinc -Isim \
+	      -o $@ $(filter %.c,$^) $(LDLIBS)
 
 # ---------------------------------------------------------------------
 # DOS SEÑALES TURNANDOSE (06/10/2026). Ver la cabecera de

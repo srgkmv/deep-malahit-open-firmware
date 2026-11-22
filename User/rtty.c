@@ -278,6 +278,20 @@ static float s_baud;
  * of s_mark_hz/s_space_hz's absolute values (which the USB/LSB mode
  * mirror and the live encoder nudge both still own). --- */
 static uint8_t s_station_inverted;
+/*
+ * LA VUELTA DE LA DETECCION, APARTE DE LA DEL USUARIO - 22/11/2026.
+ *
+ * La deteccion de inversion de abajo llamaba a rtty_set_station_inverted(),
+ * o sea que cambiaba el AJUSTE: la vuelta que necesito UNA emisora se
+ * quedaba puesta para la siguiente -que casi siempre va al derecho- y la
+ * siguiente salia basura otros veinte segundos hasta que la deteccion la
+ * deshacia. Visto en la radio Malahit con un HackRF.
+ *
+ * Asi que la deteccion lleva su propia vuelta, que dura lo que dura la
+ * emisora: se tira al entrar en el modo (rtty_reapply_station_inversion(),
+ * que es lo que llama quien entra) y el ajuste del usuario no se toca.
+ */
+static uint8_t s_inv_auto;
 
 /*
  * Block Goertzel magnitude at one frequency, given its precomputed
@@ -508,6 +522,7 @@ void rtty_init(void)
     s_marcos = 0U;
     s_bien = 0U;
     s_station_inverted = 0U; /* NORMAL by default - matches CONFIG_RTTY_MARK_HZ/SPACE_HZ's own polarity */
+    s_inv_auto = 0U;
 
     debug_print_dec("rtty: init, bit period (samples @ 12kHz)", s_bit_period_samples);
 }
@@ -623,10 +638,11 @@ void rtty_process(const float *audio, uint32_t n)
          * La activa va mal Y la sombra la triplica: es que el
          * desplazamiento esta del reves. Se da la vuelta sola.
          *
-         * rtty_set_station_inverted() intercambia marca y espacio y
-         * recalcula los coeficientes, que es exactamente lo que hace el
-         * boton de Ajustes - asi el ajuste guardado y lo que se ve en
-         * pantalla siguen diciendo la verdad despues de darse la vuelta.
+         * Se intercambian marca y espacio y se recalculan los
+         * coeficientes, como hace el boton de Ajustes - pero SIN tocar el
+         * ajuste: esta vuelta es de esta emisora y se tira al volver a
+         * entrar en el modo. Ver s_inv_auto. (Hasta el 22/11/2026 llamaba
+         * a rtty_set_station_inverted() y la vuelta se quedaba guardada.)
          */
         uint32_t act = (uint32_t)s_bien * 100UL;              /* por s_marcos */
         uint32_t som = (uint32_t)s_sombra.bien * 100UL;       /* por s_sombra.marcos */
@@ -643,7 +659,13 @@ void rtty_process(const float *audio, uint32_t n)
                      * (uint32_t)s_sombra.marcos);
         }
         if (vale) {
-            rtty_set_station_inverted((uint8_t)(s_station_inverted ? 0U : 1U));
+            {
+                float tmp = s_mark_hz;      /* la vuelta de la deteccion, ver s_inv_auto */
+                s_mark_hz  = s_space_hz;
+                s_space_hz = tmp;
+                rtty_recompute_coeffs();
+                s_inv_auto = (uint8_t)(s_inv_auto ^ 1U);
+            }
             s_auto_inv_n++;
             debug_print("rtty: desplazamiento del reves, me doy la vuelta\n");
             /* Y a empezar de cero: la maquina llevaba medio caracter con
@@ -808,6 +830,7 @@ uint8_t rtty_get_station_inverted(void) { return s_station_inverted; }
 
 void rtty_reapply_station_inversion(void)
 {
+    s_inv_auto = 0U;    /* la pareja es nueva: la vuelta de la deteccion se tira */
     if (s_station_inverted) {
         float tmp = s_mark_hz;
         s_mark_hz = s_space_hz;
@@ -815,6 +838,22 @@ void rtty_reapply_station_inversion(void)
         rtty_recompute_coeffs();
     }
 }
+
+/* La vuelta de la deteccion, deshecha: la emisora que la necesito se ha
+ * ido (rtty_auto.c lo decide: ventanas sin pareja de tonos). Ver s_inv_auto. */
+void rtty_olvida_vuelta(void)
+{
+    if (!s_inv_auto) { return; }
+    {
+        float tmp = s_mark_hz;
+        s_mark_hz  = s_space_hz;
+        s_space_hz = tmp;
+        rtty_recompute_coeffs();
+    }
+    s_inv_auto = 0U;
+}
+
+uint8_t rtty_get_vuelta_auto(void) { return s_inv_auto; }
 
 /* Cuantas veces se ha dado la vuelta sola. Ver rtty_sombra_t. */
 uint16_t rtty_auto_inv_veces(void) { return s_auto_inv_n; }

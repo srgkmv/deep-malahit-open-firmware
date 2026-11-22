@@ -161,8 +161,21 @@
  * RTTY conocida y mira rtty_get_last_mark_mag() y
  * rtty_get_last_space_mag().
  */
-#define CONFIG_RTTY_MARK_HZ    2525.0f
-#define CONFIG_RTTY_SPACE_HZ   2075.0f  /* marca + 450 Hz, el convenio comun */
+/*
+ * MARCA ABAJO Y ESPACIO ARRIBA, COMO DICEN LOS DOS COMENTARIOS - 22/11/2026.
+ *
+ * Ponia 2525 la marca y 2075 el espacio: justo al reves de lo que dice el
+ * parrafo de arriba ("marca por debajo de espacio") y de lo que dice el
+ * espacio de si mismo ("marca + 450"). Y al reves del convenio: la marca es
+ * la frecuencia de RADIO MAS ALTA, y en LSB -que es donde estos dos valores
+ * se usan tal cual, RTTY-L- la radio mas alta suena mas grave. Probado en
+ * la radio Malahit con un HackRF: una emision normal salia basura hasta
+ * que la deteccion de inversion de rtty.c le daba la vuelta, unos veinte
+ * segundos; una emision al reves salia a la primera. Ahora al contrario, y
+ * la de al reves la sigue arreglando la deteccion.
+ */
+#define CONFIG_RTTY_MARK_HZ    2075.0f
+#define CONFIG_RTTY_SPACE_HZ   2525.0f  /* marca + 450 Hz, el convenio comun */
 #define CONFIG_RTTY_BAUD       50.0f   /* la velocidad casi universal en HF */
 
 /* Lo que mueve el mando al ajustar marca y espacio en vivo contra el

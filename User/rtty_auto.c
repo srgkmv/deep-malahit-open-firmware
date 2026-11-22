@@ -137,6 +137,71 @@ static float    s_baud_arranque;     /* con la que se entro en el modo */
 static uint8_t  s_baud_contado;
 static uint16_t s_vent_vista;
 static uint16_t s_punt[AUTO_NBAUD];
+static uint8_t  s_desac;             /* ventanas sanas seguidas con los tonos en otro sitio */
+static uint8_t  s_desac_v;           /* ...y con la velocidad medida en otra de la lista */
+static uint8_t  s_desac_cual;        /* cual */
+static uint8_t  s_hay_edad = 0xFFU;  /* ventanas desde la ultima con pareja de tonos */
+static uint8_t  s_probadas;          /* velocidades probadas en esta busqueda, un bit cada una */
+
+/*
+ * TRES ARREGLOS DEL 22/11/2026, los tres medidos en la radio Malahit con
+ * un HackRF y reproducidos aqui con sim/rtty_auto_aire.c:
+ *
+ * 1. SIN SEÑAL NO SE TOCA NADA. Con solo ruido la salud es mala siempre, y
+ *    el ajuste iba probando velocidades una tras otra: en un minuto de
+ *    ruido pasaba de 50 a 45,45, y la velocidad que el usuario habia
+ *    puesto a mano no aguantaba. Ahora, antes de mover nada, tiene que
+ *    haber una pareja de tonos en el espectro (dos_picos()) en alguna de
+ *    las AUTO_HAY_VENTANAS ultimas ventanas - en una sola no, porque con
+ *    una emision de verdad dos_picos() falla una ventana de cada dos o
+ *    tres. Si no la hay, lo que se oye no es RTTY y no hay nada que
+ *    ajustar.
+ *
+ * 2. LOS TONOS SE MIRAN AUNQUE LA SALUD SEA BUENA. Una emision de 170 Hz
+ *    con 450 puestos cerraba los marcos -la maquina se resincroniza en
+ *    cada arranque y la parada dura bit y medio- y sacaba basura ESTABLE,
+ *    "SSS SHRVSHRV", con la salud por encima del 85 %: el ajuste no se
+ *    movia en cincuenta segundos. Si la pareja medida esta a mas de 25 Hz
+ *    de la puesta AUTO_DESAC_N ventanas seguidas, se ponen los tonos
+ *    medidos aunque la salud diga que va bien. Con los tonos bien puestos
+ *    la pareja medida cae encima y esto no hace nada.
+ *
+ *    Y LO MISMO CON LA VELOCIDAD: una emision de 45,45 con 50 puestos
+ *    tambien cierra los marcos -el 10 % de error mueve la parada tres
+ *    cuartos de bit y la parada dura bit y medio-, sale basura estable
+ *    ("YYYQQ7T7TT") con la salud alta, y la velocidad no se miraba nunca.
+ *    Si con la salud buena la moda cae a menos de un 8 % de OTRA velocidad
+ *    de la lista AUTO_DESAC_N ventanas seguidas, se pone esa. Una moda que
+ *    no cae cerca de ninguna -el parpadeo del filtro da cosas como 112- no
+ *    cuenta.
+ *
+ * 3. LA VELOCIDAD QUE DICE LA MEDIDA, ANTES QUE LA SIGUIENTE DE LA LISTA.
+ *    Con 50 puestos y una emision de 45,45 la moda dice 45,5: un 9 % de
+ *    error, fuera del 8 % de coherencia, y se pasaba a la SIGUIENTE de la
+ *    lista - 75, luego 100 -, donde el filtro de medio bit ya no deja medir
+ *    nada limpio. Y la coherencia era "a menos de un 8 %", que con 45,45 y
+ *    50 a un 10 % uno del otro daba por buena 50 con una moda de 46,3: ahora
+ *    es coherente solo si la puesta es TAMBIEN la de la lista mas cercana a
+ *    la moda. Ahora se prueba primero la de la lista mas cercana a lo
+ *    medido, y solo si esa ya se probo en esta busqueda, la siguiente sin
+ *    probar. Y la busqueda arranca desde la velocidad PUESTA: s_cual nacia
+ *    en 0 aunque estuviera puesta 50, y el primer "cambio" era a la misma.
+ */
+#define AUTO_DESAC_N        2U
+#define AUTO_HAY_VENTANAS   3U
+
+static uint8_t baud_indice(float b)
+{
+    uint8_t i, mejor = 0U;
+    float dmin = 1e9f;
+
+    for (i = 0U; i < AUTO_NBAUD; i++) {
+        float d = b - k_baud[i];
+        if (d < 0.0f) { d = -d; }
+        if (d < dmin) { dmin = d; mejor = i; }
+    }
+    return mejor;
+}
 
 /*
  * LA VELOCIDAD SE MIDE EN LA RACHA MAS CORTA - 06/10/2026, tercer intento.
@@ -258,8 +323,12 @@ uint8_t rtty_auto_get(void)    { return s_on; }
 void rtty_auto_reset(void)
 {
     s_malas = 0U;
-    s_cual = 0U;
+    s_cual = baud_indice(rtty_get_baud());   /* la puesta, no la primera */
     s_incoh = 0U;
+    s_desac = 0U;
+    s_desac_v = 0U;
+    s_probadas = 0U;
+    s_hay_edad = 0xFFU;
     s_baud_arranque = 0.0f;
     s_baud_contado = 0U;
     s_vent_vista = rtty_salud_n();
@@ -391,6 +460,13 @@ static float redondea_salto(float medido)
 static void pon_tonos(float centro, float salto)
 {
     float h = salto * 0.5f;
+
+    /* Las rachas medidas con los tonos en otro sitio no son bits de nada
+     * -la decision parpadeaba, y la moda salia en 112 Bd tres ventanas
+     * despues de poner los buenos-: se tiran, como al cambiar de
+     * velocidad. 22/11/2026. */
+    memset(s_racha, 0, sizeof s_racha);
+    s_racha_tot = 0U; s_racha_cur = 0U;
     /* Se respeta la polaridad de ahora; si esta del reves, la sombra de
      * rtty.c se encarga - ver rtty_sombra_t. */
     if (rtty_get_mark_hz() > rtty_get_space_hz()) {
@@ -424,22 +500,82 @@ void rtty_auto_poll(void)
      * llegaba nunca a las dos malas seguidas. Lo que importa no es que
      * sean seguidas, es que sean mayoria.
      */
-    if (rtty_salud_pc() >= RTTY_AUTO_SANO) {
-        if (s_malas > 0U) { s_malas--; }
-        return;
-    }
-    if (s_malas < 0xFFU) { s_malas++; }
-    if (s_malas < AUTO_MALAS_MIN) { return; }
+    {
+        uint8_t hay = dos_picos(&bajo, &alto);
+        uint8_t otro = 0U;
 
-    /* Primero los tonos: es lo barato y lo que mas suele fallar. */
-    if (dos_picos(&bajo, &alto)) {
-        float c_nuevo = (bajo + alto) * 0.5f;
-        float c_ahora = (rtty_get_mark_hz() + rtty_get_space_hz()) * 0.5f;
-        float sep = redondea_salto(alto - bajo);
-        float dc = c_nuevo - c_ahora; if (dc < 0.0f) { dc = -dc; }
-        float ds = sep - rtty_get_shift_hz(); if (ds < 0.0f) { ds = -ds; }
+        if (hay) { s_hay_edad = 0U; }
+        else if (s_hay_edad < 0xFFU) {
+            s_hay_edad++;
+            /* La emisora se ha ido: la vuelta que necesitaba se va con
+             * ella, y la siguiente empieza en el convenio. Ver s_inv_auto
+             * en rtty.c. */
+            if (s_hay_edad == AUTO_HAY_VENTANAS) { rtty_olvida_vuelta(); }
+        }
+        float   c_nuevo = 0.0f, sep = 0.0f;
 
-        if (dc > 25.0f || ds > 25.0f) {
+        if (hay) {
+            float c_ahora = (rtty_get_mark_hz() + rtty_get_space_hz()) * 0.5f;
+            float dc, ds;
+
+            c_nuevo = (bajo + alto) * 0.5f;
+            sep = redondea_salto(alto - bajo);
+            dc = c_nuevo - c_ahora; if (dc < 0.0f) { dc = -dc; }
+            ds = sep - rtty_get_shift_hz(); if (ds < 0.0f) { ds = -ds; }
+            otro = (uint8_t)(dc > 25.0f || ds > 25.0f);
+        }
+
+        if (rtty_salud_pc() >= RTTY_AUTO_SANO) {
+            if (s_malas > 0U) { s_malas--; }
+            /* Sana, pero con los tonos en otro sitio: arreglo 2. */
+            if (otro) {
+                if (++s_desac >= AUTO_DESAC_N) {
+                    s_desac = 0U;
+                    pon_tonos(c_nuevo, sep);
+                    s_tonos_n++;
+                    debug_print_dec("rtty auto: tonos puestos (sana), centro Hz",
+                                    (uint32_t)c_nuevo);
+                }
+            } else {
+                s_desac = 0U;
+                /* Los tonos cuadran: la velocidad, con el mismo criterio. */
+                {
+                    float   vm = velocidad_medida();
+                    uint8_t c  = baud_indice(vm);
+                    float   e  = vm - k_baud[c];
+
+                    if (e < 0.0f) { e = -e; }
+                    if (vm > 0.0f && c != baud_indice(rtty_get_baud())
+                        && e <= 0.08f * k_baud[c]) {
+                        if (s_desac_v > 0U && s_desac_cual != c) { s_desac_v = 0U; }
+                        s_desac_cual = c;
+                        if (++s_desac_v >= AUTO_DESAC_N) {
+                            s_desac_v = 0U;
+                            s_cual = c;
+                            rtty_set_baud(k_baud[c]);
+                            memset(s_racha, 0, sizeof s_racha);
+                            s_racha_tot = 0U; s_racha_cur = 0U;
+                            if (!s_baud_contado) { s_baud_n++; s_baud_contado = 1U; }
+                            debug_print_dec("rtty auto: velocidad puesta (sana) x100",
+                                            (uint32_t)(k_baud[c] * 100.0f));
+                        }
+                    } else {
+                        s_desac_v = 0U;
+                    }
+                }
+            }
+            return;
+        }
+        s_desac = 0U;
+        s_desac_v = 0U;
+        if (s_malas < 0xFFU) { s_malas++; }
+        if (s_malas < AUTO_MALAS_MIN) { return; }
+
+        /* Sin pareja de tonos no es RTTY: no se toca nada. Arreglo 1. */
+        if (s_hay_edad >= AUTO_HAY_VENTANAS) { return; }
+
+        /* Primero los tonos: es lo barato y lo que mas suele fallar. */
+        if (otro) {
             pon_tonos(c_nuevo, sep);
             s_tonos_n++;
             s_malas = 0U;       /* y se le dan dos ventanas para demostrarlo */
@@ -461,7 +597,7 @@ void rtty_auto_poll(void)
             err /= puesta;
             s_punt[s_cual] = (uint16_t)(v * 10.0f);
 
-            if (err <= 0.08f) {
+            if (err <= 0.08f && baud_indice(v) == baud_indice(puesta)) {
                 s_incoh = 0U;
                 /* Se cuenta el cambio SOLO al dar una por buena, y solo si
                  * no es con la que se arranco: asi "velocidad 0" quiere
@@ -474,6 +610,7 @@ void rtty_auto_poll(void)
                 /* Esta se cree a si misma: es la buena. Si ademas es la que
                  * ya estaba puesta, no hay nada que hacer. */
                 s_malas = 0U;
+                s_probadas = 0U;
                 debug_print_dec("rtty auto: velocidad coherente x10",
                                 (uint32_t)(v * 10.0f));
                 return;
@@ -486,10 +623,33 @@ void rtty_auto_poll(void)
              */
             if (s_incoh < 1U) { s_incoh++; return; }
             s_incoh = 0U;
-            s_cual = (uint8_t)((s_cual + 1U) % AUTO_NBAUD);
+            /* La que dice la medida, si no se ha probado ya; si no, la
+             * siguiente sin probar. Arreglo 3. */
+            {
+                uint8_t ahora = baud_indice(puesta);
+                uint8_t cerca = baud_indice(v);
+                uint8_t k;
+
+                s_probadas = (uint8_t)(s_probadas | (1U << ahora));
+                if (!(s_probadas & (1U << cerca))) {
+                    s_cual = cerca;
+                } else {
+                    if ((s_probadas & ((1U << AUTO_NBAUD) - 1U)) == ((1U << AUTO_NBAUD) - 1U)) {
+                        s_probadas = (uint8_t)(1U << ahora);    /* todas: otra vuelta */
+                    }
+                    k = ahora;
+                    do { k = (uint8_t)((k + 1U) % AUTO_NBAUD); } while (s_probadas & (1U << k));
+                    s_cual = k;
+                }
+            }
             rtty_set_baud(k_baud[s_cual]);
             memset(s_racha, 0, sizeof s_racha);
             s_racha_tot = 0U; s_racha_cur = 0U;
+            /* "velocidad N" cuenta que se la ha tocado: con la buena puesta
+             * la salud sube y la rama coherente ya no se pisa. */
+            if (!s_baud_contado && baud_indice(k_baud[s_cual]) != baud_indice(s_baud_arranque)) {
+                s_baud_n++; s_baud_contado = 1U;
+            }
             debug_print_dec("rtty auto: pruebo x100",
                             (uint32_t)(k_baud[s_cual] * 100.0f));
         }

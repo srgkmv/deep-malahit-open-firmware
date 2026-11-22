@@ -184,6 +184,15 @@ void rtty_reapply_station_inversion(void);
 uint16_t rtty_auto_inv_veces(void);
 
 /*
+ * Y ESA VUELTA DURA LO QUE DURA LA EMISORA - 22/11/2026. La deteccion ya no
+ * toca el ajuste del usuario (rtty_set_station_inverted()): lleva su propia
+ * vuelta, que se tira al entrar en el modo y cuando rtty_auto.c ve que la
+ * emisora se ha ido. Esto la deshace, y lo otro dice si esta puesta.
+ */
+void    rtty_olvida_vuelta(void);
+uint8_t rtty_get_vuelta_auto(void);
+
+/*
  * Salud del decodificador: que % de los caracteres de la ultima ventana
  * cerraron con su bit de parada donde tocaba. 100 es texto limpio; por
  * debajo de 85 algo esta mal puesto. Es lo que mira rtty_auto.c antes de
