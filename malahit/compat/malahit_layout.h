@@ -499,4 +499,52 @@
 #define UIK_UNI_DY           18     /* font_ui_11's baseline on the digits' */
 #define UIK_UNI_GAP           6
 
+/*
+ * THE DECODERS' PANEL - ui_digi.c, step 42 (22/11/2026). Upstream's
+ * arrangement, the owner's choice: in a text mode the spectrum and the
+ * waterfall give their place to the tone scope on top and the text
+ * below, the panel's bottom where the waterfall's was (upstream's
+ * RTTY_TEXT_PANEL_Y). Upstream's eight rows, each in the menus' faces
+ * (font_ui_14b -> font_ui_10b, line 13) with a pixel of air; the header
+ * in proportion, 22 for its 30.
+ *
+ *   scope 53..149 (97 rows)   gap 150..151   header 152..173
+ *   rows 174..285 (8 x 14)    - to the waterfall's last row, 285
+ *
+ * Across the header, upstream's partition of 800 px scaled to 480 and
+ * kept EXACT, because ui_digi.c asserts it: the fourth button's ceiling
+ * plus the fifth plus the chip, with their gaps, end at the right margin
+ * (4 + 64 + 6 + 174 + 6 + 68 + 6 + 56 + 6 + 86 + 4 = 480).
+ */
+#define UDG_ROWS              8
+#define UDG_HDR_H            22
+#define UDG_LINE_H           14
+#define UDG_PAD_X             4
+#define UDG_BTN_X             4
+#define UDG_BTN_W            64
+#define UDG_BTN_H            18
+#define UDG_BTN_DY            2     /* (22 - 18) / 2 */
+#define UDG_TXT_DY            2     /* font_ui_10b's 13 in 18 */
+#define UDG_BTN2_GAP          6
+#define UDG_BTN2_W           86
+#define UDG_CHIP_RES         86
+#define UDG_BTN5_W           56
+#define UDG_CHIP_SIN5_MAX   (UDG_CHIP_RES + UDG_BTN2_GAP + UDG_BTN5_W)
+#define UDG_BAR_W           174
+#define UDG_BAR_AIRE          6
+#define UDG_BTN3_MIN_W       42
+#define UDG_BTN4_MIN_W       54
+#define UDG_BTN4_MAX_W       68
+#define UDG_D2_BTN3_W        64
+#define UDG_D2_BTN4_W        68
+#define UDG_D2_BTN5_W        56
+#define UDG_D2_BAR_MIN      120     /* 196 here; upstream's floor is 200 of its 800 */
+#define UDG_COL_RESERVA      36
+
+#define DIGI_SCOPE_Y        SPC_Y                                   /* 53 */
+#define DIGI_PANEL_H        (UDG_HDR_H + UDG_ROWS * UDG_LINE_H)     /* 134 */
+#define DIGI_PANEL_Y        (SPC_WF_Y + SPC_WF_ROWS - DIGI_PANEL_H) /* 152 */
+#define DIGI_SCOPE_GAP        2
+#define DIGI_SCOPE_H        (DIGI_PANEL_Y - DIGI_SCOPE_Y - DIGI_SCOPE_GAP)  /* 97 */
+
 #endif /* MALAHIT_LAYOUT_H */

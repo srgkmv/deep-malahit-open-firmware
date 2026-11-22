@@ -58,6 +58,9 @@
 #include "rds.h"          /* ../../User - upstream: the RDS decoder */
 #include "rds_pi.h"       /* ../../User - upstream: networks by their PI */
 #include "estereo.h"      /* src/ - FM stereo, this port's own */
+#include "cw.h"           /* ../../User - upstream: the Morse decoder */
+#include "nb.h"           /* ../../User - upstream: the blanker, cw_report() */
+#include "digi.h"         /* src/ - the decoders' screen: scope and text */
 #include "bandas_tabla.h" /* GENERATED from ../../User/main.c: the steps */
 #include "demod_am.h"     /* ../../User - upstream: DEMOD_MODE_*, for the menus */
 #include "nr_ss.h"        /* ../../User - upstream: the Ruido button */
@@ -5918,7 +5921,7 @@ static int settings_same(const settings_t *a, const settings_t *b)
         && a->aj_sql == b->aj_sql && a->aj_nr == b->aj_nr
         && a->aj_suav == b->aj_suav && a->aj_wfm_bw == b->aj_wfm_bw
         && a->aj_idioma == b->aj_idioma && a->aj_brillo == b->aj_brillo
-        && a->aj_estereo == b->aj_estereo;
+        && a->aj_estereo == b->aj_estereo && a->cw_bw == b->cw_bw;
 }
 
 static void settings_now(settings_t *out)
@@ -5929,7 +5932,8 @@ static void settings_now(settings_t *out)
     out->rf_gr    = s_rf_gr;
     out->preamp   = (uint8_t)(s_rf_preamp ? 1U : 0U);
     out->has_rf   = 1U;
-    out->mode     = (uint8_t)demod_am_get_mode();
+    out->mode     = (uint8_t)radio_mode_get();     /* CW is 6: menus.h */
+    out->cw_bw    = (uint8_t)((demod_am_get_cw_bw_hz() + 5.0f) / 10.0f);
     out->has_mode = 1U;
     menu_ajustes_get(out);              /* the settings screen's values */
 }
@@ -6203,6 +6207,98 @@ static void rds_marq_poll(void)
     }
 }
 
+/*
+ * CW - step 42, 22/11/2026. Upstream's Morse decoder, cw.c, fed by
+ * upstream's demod_am.c from its USB branch (the 12 kHz audio before the
+ * NR, cw_process_chunks()) once cw_get_enabled() says so; demod_am_init()
+ * already set its tone and its band-pass to CONFIG_CW_PITCH_HZ, 700 Hz.
+ *
+ * THE TEXT GOES TO THE CONSOLE for now, the way upstream's cw_poll()
+ * also logs it ("cw: ..."): the screen's text panel is the next step.
+ * Upstream logs a line when it fills or at a line break, and Morse has
+ * no line breaks - so a pause of CW_LINEA_MS flushes it too, or a slow
+ * station would sit unseen in the buffer.
+ */
+#define CW_LINEA_MS   2000U
+
+static char     s_cw_lin[64];
+static uint8_t  s_cw_n;
+static uint32_t s_cw_t;                 /* when the last character came */
+
+static void cw_linea_suelta(void)
+{
+    if (s_cw_n == 0U) { return; }
+    s_cw_lin[s_cw_n] = '\0';
+    console_printf("  cw: %s\n", s_cw_lin);
+    s_cw_n = 0U;
+}
+
+static void cw_modo(uint8_t on)
+{
+    uint8_t era = cw_get_enabled();
+
+    demod_cw(on);
+    if (on == era) { return; }
+    cw_linea_suelta();
+    s_cw_n = 0U;
+    /* The screen: upstream's, the spectrum gives its place to the scope
+     * and the text (src/digi.c). Under a menu, its close repaints. */
+    digi_pon(on);
+    if (menu_open_id() == MENU_NONE) { radio_screen_restore(); }
+    console_printf("  CW %s - tone %u Hz, band-pass %u Hz\n", on ? "on" : "off",
+                   (uint32_t)(cw_get_pitch_hz() + 0.5f),
+                   (uint32_t)(demod_am_get_cw_bw_hz() + 0.5f));
+}
+
+/*
+ * What the decoder sees, for the bench: swd-call ... cw_report. Its own
+ * envelope statistics (x 10000, the console has no %f) and what in the
+ * chain ahead of it could be shaping the audio - the blanker works on
+ * the I/Q before the channel filter, and nothing else here is behind
+ * the CW tap except the AGC (demod_am.c, s_ssb_dec).
+ */
+__attribute__((noinline, used)) void cw_report(void)
+{
+    console_printf("  cw report: %s, gate %s, tone %u Hz (set %u), %u wpm, "
+                   "fit error %u/100\n",
+                   cw_get_enabled() ? "on" : "OFF",
+                   cw_get_decode_ok() ? "OPEN" : "closed",
+                   (uint32_t)(cw_get_detect_hz() + 0.5f),
+                   (uint32_t)(cw_get_pitch_hz() + 0.5f),
+                   (uint32_t)(cw_get_wpm() + 0.5f),
+                   (uint32_t)(100.0f * cw_get_quality() + 0.5f));
+    console_printf("             level %u floor %u peak %u (x10000), key %u\n",
+                   (uint32_t)(10000.0f * cw_get_level()),
+                   (uint32_t)(10000.0f * cw_get_floor()),
+                   (uint32_t)(10000.0f * cw_get_peak()),
+                   (uint32_t)cw_get_key());
+    console_printf("             blanker %u, squelch %d dB (%s), AGC profile %u\n",
+                   (uint32_t)nb_get_nivel(), (int32_t)demod_am_get_squelch_db(),
+                   demod_am_get_squelch_open() ? "open" : "SHUT",
+                   (uint32_t)demod_am_get_agc_profile());
+}
+
+static void cw_poll(void)
+{
+    char c;
+
+    if (!cw_get_enabled()) { return; }
+    while (cw_get_char(&c)) {
+        s_cw_t = board_millis();
+        digi_texto(c);
+        if (c == '\r' || c == '\n') { cw_linea_suelta(); continue; }
+        s_cw_lin[s_cw_n++] = c;
+        if (s_cw_n >= (uint8_t)(sizeof s_cw_lin - 1U)) { cw_linea_suelta(); }
+    }
+    if (s_cw_n > 0U && (board_millis() - s_cw_t) >= CW_LINEA_MS) {
+        cw_linea_suelta();
+        console_printf("  cw: -- %u wpm, tone at %u Hz, fit error %u/100\n",
+                       (uint32_t)(cw_get_wpm() + 0.5f),
+                       (uint32_t)(cw_get_detect_hz() + 0.5f),
+                       (uint32_t)(100.0f * cw_get_quality() + 0.5f));
+    }
+}
+
 /* A new station, or none: the decoder from zero and the strip empty. */
 static void rds_limpia(void)
 {
@@ -6308,7 +6404,9 @@ static int dial_tune(int64_t dial_hz)
     /* The ruler is centred on the dial, and so is the window of bins
      * the loop draws (PAN_LO). */
     s_chrome.center_hz = s_tuned_hz;
-    if (menu_open_id() == MENU_NONE) { spec_chrome_draw(&s_chrome); }
+    if (menu_open_id() == MENU_NONE && !digi_en_pantalla()) {
+        spec_chrome_draw(&s_chrome);
+    }
 
     /*
      * The band filter follows the frequency, or the signal goes away at
@@ -6704,9 +6802,12 @@ static void retune_test_step(void)
 static void ui_paint_all(void)
 {
     gfx2_render_screen(ui_fondo, 0);
-    spec_chrome_draw(&s_chrome);
+    /* In a text mode the gutter and the ruler are not there: the scope
+     * and the panel are (src/digi.c). */
+    if (!digi_en_pantalla()) { spec_chrome_draw(&s_chrome); }
     ui_top_draw(&s_top);
     ui_act_draw(&s_act);
+    digi_repinta();                     /* nothing unless a decoder is on */
 }
 
 /*
@@ -6740,7 +6841,10 @@ static void ui_wf_push(const float *db, uint32_t bins)
  * action bar all live in this file. See src/menus.h.
  */
 static const char *const k_mode_names[] = { "AM", "USB", "LSB", "NFM",
-                                            "WFM", "SAM" };
+                                            "WFM", "SAM", "CW" };
+_Static_assert(sizeof k_mode_names / sizeof k_mode_names[0]
+               == (size_t)RADIO_MODE_LAST + 1U,
+               "a name for every mode, upstream's and the decoders' (menus.h)");
 static const char *s_band_name;          /* the band the dial is in, or 0 */
 static char        s_act_step[12];
 static char        s_act_vol[12];
@@ -6794,6 +6898,21 @@ static void top_sync_chips(void)
         return;
     }
 
+    /* IN CW, THE CW BAND-PASS - upstream's top_sync(): its real width,
+     * asked of the demodulator, written by bw_format() as "0,5 k". */
+    if (cw_get_enabled()) {
+        uint32_t hz = (uint32_t)(demod_am_get_cw_bw_hz() + 0.5f);
+
+        s_top_bw[i++] = (char)('0' + (hz / 1000U) % 10U);
+        s_top_bw[i++] = ',';
+        s_top_bw[i++] = (char)('0' + (hz % 1000U) / 100U);
+        s_top_bw[i++] = ' ';
+        s_top_bw[i++] = 'k';
+        s_top_bw[i]   = '\0';
+        s_top.bw = s_top_bw;
+        return;
+    }
+
     demod_am_get_filtro(demod_am_filtro_familia(), &lo, &hi);
     /* upstream's fil_format(): "0-4,0k", "0,3-2,7k" */
     if (lo == 0U) { s_top_bw[i++] = '0'; }
@@ -6834,6 +6953,22 @@ static void bw_cycle(void)
         top_sync_chips();
         ui_top_draw_status(&s_top);
         console_printf("  BW (WFM audio) -> %s\n", s_top.bw);
+        return;
+    }
+
+    /* CW: upstream's three for its band-pass (k_cw_rapidos[]), widest
+     * to narrowest and round, as the filters below. */
+    if (cw_get_enabled()) {
+        static const uint16_t k_cw_bw[3] = { 1000U, 500U, 250U };
+        uint32_t hz = (uint32_t)(demod_am_get_cw_bw_hz() + 0.5f);
+        uint32_t j  = 0U;
+
+        while (j < 3U && k_cw_bw[j] != hz) { j++; }
+        j = (j >= 2U) ? 0U : j + 1U;           /* not one of them: 1,0 k */
+        demod_am_set_cw_bw_hz((float)k_cw_bw[j]);
+        top_sync_chips();
+        ui_top_draw_status(&s_top);
+        console_printf("  BW (CW band-pass) -> %u Hz\n", (uint32_t)k_cw_bw[j]);
         return;
     }
 
@@ -6886,20 +7021,37 @@ void radio_bw_unpack(uint8_t packed)
 
 const char *radio_mode_name(int mode)
 {
-    return (mode >= 0 && mode <= 5) ? k_mode_names[mode] : "?";
+    return (mode >= 0 && mode <= RADIO_MODE_LAST) ? k_mode_names[mode] : "?";
 }
 
-int radio_mode_get(void) { return (int)demod_am_get_mode(); }
+/* Upstream's demod_mode_entry_active(), for the one entry above the
+ * demodulators so far: USB with the decoder on is CW. */
+int radio_mode_get(void)
+{
+    int m = (int)demod_am_get_mode();
+
+    if (m == (int)DEMOD_MODE_USB && cw_get_enabled()) { return RADIO_MODE_CW; }
+    return m;
+}
 
 void radio_mode_set(int mode)
 {
+    int dm = (mode == RADIO_MODE_CW) ? (int)DEMOD_MODE_USB : mode;
+
+    if (mode < 0 || mode > RADIO_MODE_LAST) {
+        console_printf("  mode %d refused\n", mode);
+        return;
+    }
     /*
      * A mode is upstream's demodulator by definition: am.c only knows AM.
      * So choosing one - AM included - puts upstream's on the hook, which
      * is also where the boot leaves it now (main(), after demod_init()).
      */
     if (!demod_path_get()) { demod_path(1); }
-    (void)demod_mode(mode);
+    (void)demod_mode(dm);
+    /* Upstream's rule: choosing any other entry switches the decoder
+     * off without asking (menu_mode_preset_callback()). */
+    cw_modo((uint8_t)(mode == RADIO_MODE_CW));
 
     /* Into or out of WFM: the same dial, the tuner moved under it. */
     {
@@ -7398,6 +7550,8 @@ static void spec_tap_tune(uint16_t x)
     bin = ((float)px + 0.5f) * (float)PAN_SHOWN / (float)SPC_TRACE_W;
 
     if (s_db_traza_lista) {
+        /* In CW the tone is a peak, sought as one although the mode
+         * underneath is a sideband - upstream's, word for word. */
         snap_modo_t sm = (m == (int)DEMOD_MODE_USB) ? SNAP_USB
                        : (m == (int)DEMOD_MODE_LSB) ? SNAP_LSB : SNAP_PICO;
 
@@ -7407,6 +7561,13 @@ static void spec_tap_tune(uint16_t x)
     }
     f = (int64_t)s_tuned_hz
       + (int64_t)(((double)b - (double)(PAN_SHOWN / 2U)) * (double)PAN_BIN_HZ);
+
+    /* And landing on a carrier in CW puts the DIAL a tone below it, so it
+     * sounds at the pitch instead of at zero beat, which is silence -
+     * upstream's cw_signo_vfo(): USB, so below. */
+    if (eng && m == RADIO_MODE_CW) {
+        f -= (int64_t)(cw_get_pitch_hz() + 0.5f);
+    }
 
     /* Off the grid only when it landed on a signal: there the exact
      * frequency is the point, and rounding would undo it. */
@@ -7589,6 +7750,9 @@ static void ui_touch(void)
 
         /* An open menu owns its area. */
         if (menu_touch_down(x, y, nuevo)) { return; }
+
+        /* In a text mode the scope and the panel are there instead. */
+        if (digi_toque(x, y, nuevo)) { return; }
 
         /* With none open, the spectrum and the waterfall tune. */
         if (spec_gesto(x, y, nuevo)) { return; }
@@ -8685,6 +8849,7 @@ int main(void)
     demod_init();
     grab_init();
     __asm__ volatile ("" :: "r"(ui_tap), "r"(ui_swipe), "r"(ui_hold));   /* swd-call's, see ui_tap() */
+    __asm__ volatile ("" :: "r"(cw_report));                             /* and the CW bench's */
 
     /*
      * UPSTREAM'S DEMODULATOR IS WHAT PLAYS, from step 9 on: the mode
@@ -8698,8 +8863,18 @@ int main(void)
      * since 21/11/2026: the tuner already went on the dial for it, above
      * (s_lo_off, set from the record before the boot tune). */
     if (s_boot_have && s_boot_set.has_mode
-        && s_boot_set.mode <= (uint8_t)DEMOD_MODE_SAM) {
-        (void)demod_mode((int)s_boot_set.mode);
+        && s_boot_set.mode <= (uint8_t)RADIO_MODE_LAST) {
+        (void)demod_mode(s_boot_set.mode == (uint8_t)RADIO_MODE_CW
+                         ? (int)DEMOD_MODE_USB : (int)s_boot_set.mode);
+    }
+    /* CW's band-pass, from byte 31 of the record (tens of hertz, 0 = not
+     * stored), and the decoder itself if the session was in CW. */
+    if (s_boot_have && s_boot_set.cw_bw >= 10U && s_boot_set.cw_bw <= 100U) {
+        demod_am_set_cw_bw_hz(10.0f * (float)s_boot_set.cw_bw);
+    }
+    if (s_boot_have && s_boot_set.has_mode
+        && s_boot_set.mode == (uint8_t)RADIO_MODE_CW) {
+        cw_modo(1U);
     }
     rds_modo();                         /* a WFM session comes back with RDS on */
     console_printf("Mode      : %s%s\n", radio_mode_name(radio_mode_get()),
@@ -8879,6 +9054,7 @@ int main(void)
         retune_test_step();
         rds_marq_poll();                /* the header's RDS strip, in WFM */
         estereo_ui_poll();              /* and "WFM ST" in the mode chip */
+        cw_poll();                      /* the Morse decoder's text, in CW */
 
         /*
          * THE PRESS, which is upstream's gesture and upstream's
@@ -9069,10 +9245,12 @@ int main(void)
          * the menu's (src/menus.h) - but the waterfall keeps its rows,
          * so it is current the moment the menu closes. */
         traza_suaviza(&s_db[s_pan_lo]);
-        if (menu_open_id() == MENU_NONE) {
+        if (menu_open_id() == MENU_NONE && !digi_en_pantalla()) {
             spectrum_draw(s_db_traza, PAN_SHOWN,
                           SPC_TRACE_X, SPC_TRACE_Y, SPC_TRACE_W, SPC_TRACE_H,
                           UI_DB_MIN, UI_DB_MAX, 0, 0U, 0, 0);
+        } else if (menu_open_id() == MENU_NONE) {
+            digi_dibuja();              /* the scope and the text, step 42 */
         }
         uint32_t draw_us = (uint32_t)(((board_cycles() - d0) * 1000000U)
                                       / clock_sysclk_hz);
@@ -9099,7 +9277,7 @@ int main(void)
          */
         uint64_t w0 = board_cycles();
         ui_wf_push(&s_db[s_pan_lo], PAN_SHOWN);
-        if (menu_open_id() == MENU_NONE) {
+        if (menu_open_id() == MENU_NONE && !digi_en_pantalla()) {
             gfx2_wf_blit(SPC_TRACE_X, SPC_WF_Y, SPC_TRACE_W, SPC_WF_ROWS,
                          s_wf, SPC_TRACE_W, s_wf_head,
                          spectrum_colormap_lut());

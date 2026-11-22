@@ -36,45 +36,77 @@ static int8_t          s_pressed = -1;   /* the hit index under the finger */
 /* ------------------------------------------------------------------ */
 
 /*
- * The analogue family of upstream's mode screen. WFM since 21/11/2026:
- * upstream's WFM path demodulates the station at 0 Hz, so in WFM the
- * tuner goes ON the dial instead of 12 kHz under it (main.c,
- * radio_mode_set()) - the owner's choice, as upstream does it. The
- * digital families need their decoders, which are switched off
- * (decoders_off.c). The descriptions are upstream's, except AM's:
- * "Amplitud modulada" is 91 px in a 92 px cell, measured by the host
- * render (deepsdr-ui `make malahit-menus`).
+ * Upstream's mode screen, its families in the column (k_modo_familias[]
+ * in its main.c). Analogue: WFM since 21/11/2026 - upstream's WFM path
+ * demodulates the station at 0 Hz, so in WFM the tuner goes ON the dial
+ * instead of 12 kHz under it (main.c, radio_mode_set()) - the owner's
+ * choice, as upstream does it. The descriptions are upstream's, except
+ * AM's: "Amplitud modulada" is 91 px in a 92 px cell, measured by the
+ * host render (deepsdr-ui `make malahit-menus`).
+ *
+ * DIGITAL since 22/11/2026, one decoder at a time as each is grafted
+ * (PORTING.md step 42 on): an entry is a demodulator plus a decoder,
+ * numbered after upstream's demodulators (menus.h, RADIO_MODE_CW). The
+ * families upstream has and this port does not yet - Images,
+ * Aeronautical - are left out, not shown empty.
  */
-static const struct { int mode; const char *n; texto_t d; } k_modos[] = {
-    { DEMOD_MODE_AM,  "AM",  T("Envolvente", "Envelope") },
-    { DEMOD_MODE_SAM, "SAM", T("AM síncrona", "Synchronous AM") },
-    { DEMOD_MODE_USB, "USB", T("Banda lateral alta", "Upper sideband") },
-    { DEMOD_MODE_LSB, "LSB", T("Banda lateral baja", "Lower sideband") },
-    { DEMOD_MODE_NFM, "NFM", T("FM estrecha", "Narrow FM") },
-    { DEMOD_MODE_WFM, "WFM", T("FM ancha", "Wide FM") },
+#define FAM_ANA 0U
+#define FAM_DIG 1U
+#define N_FAM   2U
+
+static const texto_t k_modo_fam[N_FAM] = {
+    T("Analógico", "Analogue"), T("Digital", "Digital")
+};
+
+static const struct { int mode; uint8_t fam; const char *n; texto_t d; } k_modos[] = {
+    { DEMOD_MODE_AM,  FAM_ANA, "AM",  T("Envolvente", "Envelope") },
+    { DEMOD_MODE_SAM, FAM_ANA, "SAM", T("AM síncrona", "Synchronous AM") },
+    { DEMOD_MODE_USB, FAM_ANA, "USB", T("Banda lateral alta", "Upper sideband") },
+    { DEMOD_MODE_LSB, FAM_ANA, "LSB", T("Banda lateral baja", "Lower sideband") },
+    { DEMOD_MODE_NFM, FAM_ANA, "NFM", T("FM estrecha", "Narrow FM") },
+    { DEMOD_MODE_WFM, FAM_ANA, "WFM", T("FM ancha", "Wide FM") },
+    { RADIO_MODE_CW,  FAM_DIG, "CW",  T("Telegrafía Morse", "Morse telegraphy") },
 };
 #define N_MODOS ((uint8_t)(sizeof k_modos / sizeof k_modos[0]))
 
-static void modos_rellena(void)
+static uint8_t s_modo_fam;                  /* the family shown */
+static uint8_t s_modo_of_cel[UIC_CELLS];    /* cell -> index in k_modos[] */
+
+/* The family the mode in force belongs to: where the screen opens. */
+static uint8_t modo_fam_actual(void)
 {
     uint8_t i;
     int     m = radio_mode_get();
 
+    for (i = 0U; i < N_MODOS; i++) {
+        if (k_modos[i].mode == m) { return k_modos[i].fam; }
+    }
+    return FAM_ANA;
+}
+
+static void modos_rellena(void)
+{
+    uint8_t i, n = 0U, f;
+    int     m = radio_mode_get();
+
     memset(&s_cfg, 0, sizeof s_cfg);
-    s_cfg.cat[0]  = tr("Analógico", "Analogue");
-    s_cfg.cats    = 1U;
-    s_cfg.cat_sel = 0U;
+    for (f = 0U; f < N_FAM; f++) { s_cfg.cat[f] = k_modo_fam[f][idioma()]; }
+    s_cfg.cats    = N_FAM;
+    s_cfg.cat_sel = s_modo_fam;
     s_cfg.denso   = 1U;
-    s_cfg.n       = N_MODOS;
     s_cfg.marcada = 0xFFU;
     s_cfg.cursor  = -1;
     s_cfg.pressed = -1;
-    for (i = 0U; i < N_MODOS; i++) {
-        s_cfg.cel[i].nombre = k_modos[i].n;
-        s_cfg.cel[i].valor  = k_modos[i].d[idioma()];
-        s_cfg.cel[i].extra  = "";
-        if (k_modos[i].mode == m) { s_cfg.marcada = i; }
+    for (i = 0U; i < N_MODOS && n < (uint8_t)UIC_CELLS; i++) {
+        if (k_modos[i].fam != s_modo_fam) { continue; }
+        s_modo_of_cel[n] = i;
+        s_cfg.cel[n].nombre = k_modos[i].n;
+        s_cfg.cel[n].valor  = k_modos[i].d[idioma()];
+        s_cfg.cel[n].extra  = "";
+        if (k_modos[i].mode == m) { s_cfg.marcada = n; }
+        n++;
     }
+    s_cfg.n = n;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1092,7 +1124,7 @@ void menu_toggle(menu_t m)
     s_pressed = -1;
     switch (m) {
     case MENU_TECLADO: menu_teclado_open(); return;
-    case MENU_MODO:   modos_rellena(); break;
+    case MENU_MODO:   s_modo_fam = modo_fam_actual(); modos_rellena(); break;
     case MENU_BANDAS: bandas_familia_inicial(); bandas_rellena(); break;
     case MENU_PASO:   pasos_rellena(); break;
     case MENU_AJUSTES: ajustes_rellena(); break;
@@ -1249,6 +1281,9 @@ static void elige(int8_t h)
         } else if (s_open == MENU_MEM) {
             s_mem_bk = (uint8_t)(h - UIC_HIT_CAT0);
             mem_rellena();
+        } else if (s_open == MENU_MODO) {
+            s_modo_fam = (uint8_t)(h - UIC_HIT_CAT0);
+            modos_rellena();
         }
         ui_cfg_draw(&s_cfg);
         return;
@@ -1280,8 +1315,8 @@ static void elige(int8_t h)
     }
 
     if (s_open == MENU_MODO) {
-        radio_mode_set(k_modos[h].mode);
-        console_printf("  menu: modo %s\n", k_modos[h].n);
+        radio_mode_set(k_modos[s_modo_of_cel[h]].mode);
+        console_printf("  menu: modo %s\n", k_modos[s_modo_of_cel[h]].n);
         menu_close();
         return;
     }
@@ -1345,7 +1380,7 @@ void menu_knob(int32_t d)
     {
         int32_t t = (was < 0) ? cursor_ini() : (int32_t)was + d;
 
-        if ((s_open == MENU_BANDAS || s_open == MENU_MEM)
+        if ((s_open == MENU_BANDAS || s_open == MENU_MEM || s_open == MENU_MODO)
             && (t >= (int32_t)s_cfg.n || t < 0)
             && s_cfg.cats > 1U) {
             uint8_t c = s_cfg.cat_sel;
@@ -1354,6 +1389,7 @@ void menu_knob(int32_t d)
             else if (t < 0 && c > 0U)                          { c--; t = 999; }
             if (c != s_cfg.cat_sel) {
                 if (s_open == MENU_MEM) { s_mem_bk = c; mem_rellena(); }
+                else if (s_open == MENU_MODO) { s_modo_fam = c; modos_rellena(); }
                 else { s_fam_sel = s_fam_of_cat[c]; bandas_rellena(); }
                 if (t > (int32_t)s_cfg.n - 1) { t = (int32_t)s_cfg.n - 1; }
                 s_cfg.cursor = (int8_t)t;

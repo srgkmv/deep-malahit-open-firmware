@@ -4,7 +4,40 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 22/11/2026: step 41 (FM stereo) IN FLASH, pushed
+## START HERE — 22/11/2026, day: step 42 (CW) from RAM, committed, NOT in flash
+
+**In git, not in flash**: step 42 (`PORTING.md` 42) - upstream's CW
+decoder, the Digital family on the mode screen, and upstream's text-mode
+screen (tone scope over ui_digi.c's panel, `src/digi.c`), checked on
+the glass and on the air against a HackRF. **Flash is still `484b36e`**
+(below). Writing it is the owner's DFU, as before. **Not pushed.**
+
+**User/ changed this time, and it is a fix for the DEEPSDR too**:
+`User/cw.c` (`CW_KM_MESETA` - a weaker station after a strong one no
+longer deadlocks the decoder) and `User/ui_digi.c/.h` (`#ifndef` on its
+geometry, the DEEPSDR's renders identical). Upstream's `make cw` has two
+new cases for the fix; the copies in deepsdr-ui/gfx2 are in step.
+
+**The radio's state**: 14.059,30 kHz, CW, ATT 59, BW 0,5 k, from RAM -
+a power cycle brings back flash's image, which reads the FRAM's mode 6
+as unknown and boots AM (the owner allows that, 21/11/2026).
+
+**The HackRF bench**, to repeat any of it: HackRF -> 10 dB -> 40 dB ->
+the antenna input; `hackrf_transfer -t f.iq -f <carrier - 200 kHz> -s
+2000000 -a 0 -x 47` (amp OFF always). The I/Q files came from a script
+in the session's scratchpad (keyed tone at +200 kHz, own Morse table,
+noise band-limited to +/-4 kHz, SNR in 500 Hz) - rewrite it in tools/
+when the next decoder needs one. The HackRF and the radio differ by
+~9 ppm at 14 MHz.
+
+**Next, the owner's order (simple to hard)**: RTTY - its stubs are the
+next block in decoders_off.c, and it uses the SAME scope and panel
+(`src/digi.c` grows a branch: its chip, its mark/space lines, upstream's
+Shift/Baud buttons). Then PSK31, NAVTEX (HF NAVTEX at 4209.5 kHz is
+inside the HackRF's range; 518/490 kHz are not). Also still open: the
+SCAN cell, the clock from RDS.
+
+## 22/11/2026: step 41 (FM stereo) IN FLASH, pushed
 
 **In flash: `484b36e`** (step 41 - FM stereo, this port's own - on top
 of `88aafb2` below) - `build_flash/bringup.bin`, 198 776 bytes, sha256

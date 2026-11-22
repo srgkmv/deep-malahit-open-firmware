@@ -9,10 +9,18 @@
 /* 18 px de renglon con una fuente de 14 deja 4 de aire: ocho renglones en
  * 144 px exactos, mas los 30 de la cabecera. UDG_LINE_H vive en la cabecera
  * porque main.c necesita cuadrar el alto del panel con el. */
+#ifndef UDG_PAD_X
 #define UDG_PAD_X   6
+#endif
 
 /* La cabecera: el boton a la izquierda, la chapa a la derecha. */
-static int16_t btn_y(const ui_digi_state_t *st) { return (int16_t)(st->y + 3); }
+#ifndef UDG_BTN_DY
+#define UDG_BTN_DY  3       /* (UDG_HDR_H - UDG_BTN_H) / 2 */
+#endif
+#ifndef UDG_TXT_DY
+#define UDG_TXT_DY  4       /* the text's line box inside a button */
+#endif
+static int16_t btn_y(const ui_digi_state_t *st) { return (int16_t)(st->y + UDG_BTN_DY); }
 
 /* Cuantos renglones pinta este panel. Un 0 en la estructura quiere decir
  * "los de siempre": asi los paneles que ya existian no tuvieron que tocar
@@ -48,13 +56,17 @@ static uint8_t nfilas(const ui_digi_state_t *st)
  * sitio fijo en vez de empujar. Con la caja pegada al texto -los modos sin
  * quinto boton, SSTV y wefax- sale en x+10, que es donde estaba.
  */
+#ifndef UDG_CHIP_RES
 #define UDG_CHIP_RES  140
+#endif
 /* Lo maximo que puede medir la chapa cuando NO hay quinto boton: su sitio
  * mas el del quinto (UDG_BTN5_W, 92, que se define mas abajo junto al resto
  * de su geometria; el _Static_assert de alli ata los dos numeros para que no
  * se separen). Asi el cuarto conserva sus UDG_BTN4_MAX_W pase lo que pase
  * con el texto. Ver chip_w(). */
+#ifndef UDG_CHIP_SIN5_MAX
 #define UDG_CHIP_SIN5_MAX  (UDG_CHIP_RES + UDG_BTN2_GAP + 92)
+#endif
 
 /*
  * LA CHAPA SOLA EN SU MITAD DE LA CABECERA.
@@ -186,7 +198,7 @@ static void pinta_uno(gfx2_surf_t *s, const ui_digi_state_t *st,
     if (!rotulo) { return; }
     gfx2_rrect(s, x, btn_y(st), w, UDG_BTN_H, 6, fondo);
     gfx2_rrect_outline(s, x, btn_y(st), w, UDG_BTN_H, 6, 1, borde);
-    gfx2_text_in(s, x, (int16_t)(btn_y(st) + 4), w, rotulo,
+    gfx2_text_in(s, x, (int16_t)(btn_y(st) + UDG_TXT_DY), w, rotulo,
                  &font_ui_14b, tinta, GFX2_ALIGN_C);
 }
 
@@ -242,7 +254,7 @@ static void pinta_chip(gfx2_surf_t *s, const ui_digi_state_t *st)
     {
         const char *txt = chip_txt(st);
         gfx2_text(s, (int16_t)(x + w - 24 - gfx2_text_w(txt, &font_ui_14b)),
-                  (int16_t)(btn_y(st) + 4),
+                  (int16_t)(btn_y(st) + UDG_TXT_DY),
                   txt, &font_ui_14b, gfx2_rgb(PAL_INK));
     }
     /* El punto: verde cuando lo que llega tiene forma de Morse, apagado
@@ -278,7 +290,9 @@ static void pinta_chip(gfx2_surf_t *s, const ui_digi_state_t *st)
  * pantalla de zona tactil para un dedo.
  */
 #define UDG_BAR_X  UDG_BTN2_X
+#ifndef UDG_BAR_W
 #define UDG_BAR_W  300
+#endif
 
 /*
  * El aire entre los dos textos de la barra: el centrado y el que va pegado
@@ -286,7 +300,9 @@ static void pinta_chip(gfx2_surf_t *s, const ui_digi_state_t *st)
  * botones (UDG_BTN2_GAP), que es la distancia a la que el ojo ya lee "dos
  * cosas" en esta cabecera.
  */
+#ifndef UDG_BAR_AIRE
 #define UDG_BAR_AIRE  10
+#endif
 
 /* Donde empieza la franja de la derecha. Esta repetido mas abajo como
  * UDG_CHIP_X0 -donde vive su comentario- porque el cuarto boton, que se
@@ -305,17 +321,26 @@ static void pinta_chip(gfx2_surf_t *s, const ui_digi_state_t *st)
  * la barra en silencio.
  */
 #define UDG_D2_BTN3_X  (UDG_BTN_X + UDG_BTN_W + UDG_BTN2_GAP)
+#ifndef UDG_D2_BTN3_W
 #define UDG_D2_BTN3_W  104
+#endif
 #define UDG_D2_BTN4_X  (UDG_D2_BTN3_X + UDG_D2_BTN3_W + UDG_BTN2_GAP)
+#ifndef UDG_D2_BTN4_W
 #define UDG_D2_BTN4_W  112
+#endif
 #define UDG_D2_BTN5_X  (UDG_D2_BTN4_X + UDG_D2_BTN4_W + UDG_BTN2_GAP)
+#ifndef UDG_D2_BTN5_W
 #define UDG_D2_BTN5_W  92
+#endif
 #define UDG_D2_BAR_X   (UDG_D2_BTN5_X + UDG_D2_BTN5_W + UDG_BTN2_GAP)
 #define UDG_D2_BAR_W   (GFX2_W - UDG_PAD_X - UDG_D2_BAR_X)
 /* 200 es el texto mas largo que la barra de FT8 puede llegar a tener mas
  * el aire de los lados; por debajo de eso esta disposicion no vale y hay
  * que estrechar un boton, no recortar un numero. */
-_Static_assert(UDG_D2_BAR_W >= 200, "la barra de la derecha se ha quedado sin sitio");
+#ifndef UDG_D2_BAR_MIN
+#define UDG_D2_BAR_MIN 200
+#endif
+_Static_assert(UDG_D2_BAR_W >= UDG_D2_BAR_MIN, "la barra de la derecha se ha quedado sin sitio");
 
 /* El ancho que pide quien llama, o el de siempre. */
 static int16_t bar_w(const ui_digi_state_t *st)
@@ -339,7 +364,9 @@ static int16_t bar_x(const ui_digi_state_t *st)
  * llega a 70 px -o sea, si la barra no se ha acortado- devuelve 0 y el boton
  * no se dibuja. Ver btn3 en ui_digi.h.
  */
+#ifndef UDG_BTN3_MIN_W
 #define UDG_BTN3_MIN_W 70
+#endif
 static int16_t btn3_x(const ui_digi_state_t *st)
 {
     if (st->barra_dcha) { return (int16_t)UDG_D2_BTN3_X; }
@@ -398,14 +425,14 @@ static void pinta_barra(gfx2_surf_t *s, const ui_digi_state_t *st)
             int16_t w2 = gfx2_text_w(st->barra_txt_dcha, &font_ui_14b);
 
             gfx2_text_in(s, (int16_t)(bar_x(st) + hueco - w2),
-                         (int16_t)(btn_y(st) + 4), w2,
+                         (int16_t)(btn_y(st) + UDG_TXT_DY), w2,
                          st->barra_txt_dcha, &font_ui_14b,
                          gfx2_rgb(PAL_INK), GFX2_ALIGN_L);
             hueco = ui_digi_barra_hueco_dbg(st);
         }
 
         if (st->barra_txt && hueco > 0) {
-            gfx2_text_in(s, bar_x(st), (int16_t)(btn_y(st) + 4), hueco,
+            gfx2_text_in(s, bar_x(st), (int16_t)(btn_y(st) + UDG_TXT_DY), hueco,
                          st->barra_txt, &font_ui_14b, gfx2_rgb(PAL_INK),
                          GFX2_ALIGN_C);
         }
@@ -461,11 +488,17 @@ static void pinta_barra(gfx2_surf_t *s, const ui_digi_state_t *st)
  * 112 sigue pareciendo un boton al lado de "Frec.", que mide 104, y le
  * sobra para "11.184" -que mide 55-.
  */
+#ifndef UDG_BTN4_MIN_W
 #define UDG_BTN4_MIN_W 90
+#endif
+#ifndef UDG_BTN4_MAX_W
 #define UDG_BTN4_MAX_W 112
+#endif
 
 /* El quinto boton: dos constantes. Ver pinta_boton5(). */
+#ifndef UDG_BTN5_W
 #define UDG_BTN5_W  92
+#endif
 /* Y que el tope de la chapa sin quinto boton siga siendo el sitio del quinto
  * mas el suyo. Son dos sitios porque uno va antes que el otro en el fichero;
  * esto impide que se separen. Ver chip_w(). */
@@ -894,7 +927,9 @@ const int16_t ui_digi_cols_ale[UI_DIGI_COLS_ALE_N] = { 8, 280, 400, 520, -792 };
  * mas ancho que puede ser. 60 px con la tipografia de este panel son cinco
  * digitos y sobra - los kilometros mas largos, 99999, miden 45.
  */
+#ifndef UDG_COL_RESERVA
 #define UDG_COL_RESERVA 60
+#endif
 
 static int16_t limite(const ui_digi_state_t *st, uint8_t k)
 {

@@ -72,17 +72,12 @@ OFF_U16(wspr_modo_activo,   wspr_modo_mete)
 
 /* The ones that do not follow the pattern. */
 
-uint8_t cw_get_enabled(void) { return 0U; }
-void    cw_init(void) { }
-void    cw_process(const float *a, uint32_t n) { (void)a; (void)n; }
-void    cw_set_pitch_hz(float hz) { (void)hz; }
-void    cw_set_wpm_hint(float wpm) { (void)wpm; }
+/* cw_*: the real ones since 22/11/2026 (cw.c, step 42) */
 
 uint8_t rtty_get_enabled(void) { return 0U; }
 void    rtty_init(void) { }
 void    rtty_process(const float *a, uint32_t n) { (void)a; (void)n; }
-void    rtty_scope_init(void) { }
-void    rtty_scope_feed(const float *a, uint32_t n) { (void)a; (void)n; }
+/* rtty_scope_*: the real ones since 22/11/2026 (rtty_scope.c, step 42) */
 
 uint8_t hfdl_modo_activo(void) { return 0U; }
 void    hfdl_modo_mete(const float *i_in, const float *q_in, uint32_t n)

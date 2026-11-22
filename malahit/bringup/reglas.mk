@@ -414,6 +414,16 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/banco.c
 #                  its table of networks by PI code (22/11/2026)
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/rds.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/rds_pi.c
+# cw.c  the Morse decoder: a Goertzel on the USB audio demod_am.c already
+#       hands it at 12 kHz, and a dot-length estimator (22/11/2026, the
+#       first of the text decoders - PORTING.md step 42)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/cw.c
+# rtty_scope.c  the tone scope's audio spectrum, fed from demod_am.c's USB
+#               branch while a text decoder is on (step 42)
+# ui_digi.c     upstream's text panel, its geometry in malahit_layout.h
+#               (UDG_*), drawn in the menus' faces (step 42)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/rtty_scope.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_digi.c
 #
 # THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]
 # out of User/main.c by the script the host render uses for the same
@@ -622,6 +632,7 @@ $(BUILD_DIR)/up_ui_cfg.o:     CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
 $(BUILD_DIR)/up_ui_grid.o:    CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
 $(BUILD_DIR)/up_ui_det.o:     CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
 $(BUILD_DIR)/up_ui_kbd.o:     CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
+$(BUILD_DIR)/up_ui_digi.o:    CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
 
 $(BUILD_DIR)/up_%.o: $(UPSTREAM_DIR)/%.c $(BUILD_RULES) | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $(CFLAGS_EXTRA_UPSTREAM) $(CFLAGS_FONTS) $< -o $@

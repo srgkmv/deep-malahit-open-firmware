@@ -262,10 +262,15 @@ out/malahit_ui_kbd.o: ../User/ui_kbd.c ../User/ui_kbd.h $(MALAHIT_HDRS)
 	@mkdir -p out
 	$(CC) $(CFLAGS) $(GFX2) $(MALAHIT_LAYOUT) $(MALAHIT_FONTS_TOP) -c -o $@ $<
 
+out/malahit_ui_digi.o: ../User/ui_digi.c ../User/ui_digi.h $(MALAHIT_HDRS)
+	@mkdir -p out
+	$(CC) $(CFLAGS) $(GFX2) $(MALAHIT_LAYOUT) $(MALAHIT_FONTS_TOP) -c -o $@ $<
+
 out/malahit_menus: out/malahit_menus.o sim/lcd_sim.c ../User/gfx.c ../User/spectrum.c \
                    gfx2/gfx2.c gfx2/spec_chrome.c gfx2/ui_act.c \
                    out/malahit_top.o out/malahit_fonts.o out/malahit_ui_cfg.o \
                    out/malahit_ui_grid.o out/malahit_ui_det.o out/malahit_ui_kbd.o \
+                   out/malahit_ui_digi.o \
                    $(MALAHIT_HDRS)
 	@mkdir -p out
 	$(CC) $(CFLAGS) $(GFX2) $(MALAHIT_LAYOUT) $(MALAHIT_FONTS_COMMON) \
@@ -274,7 +279,7 @@ out/malahit_menus: out/malahit_menus.o sim/lcd_sim.c ../User/gfx.c ../User/spect
 .PHONY: malahit-menus
 malahit-menus: out/malahit_menus
 	./out/malahit_menus
-	@for f in modos bandas pasos ajustes detalle teclado teclado_vacio pasos_en ajustes_en memorias cab_wfm cab_hf cab_st; do \
+	@for f in modos modos_dig bandas pasos ajustes detalle teclado teclado_vacio pasos_en ajustes_en memorias cab_wfm cab_hf cab_st cw cw_en; do \
 	    python3 -c "from PIL import Image; Image.open('out/malahit_'+'$$f'+'.ppm').save('out/malahit_'+'$$f'+'.png')"; \
 	done
 

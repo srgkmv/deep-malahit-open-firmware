@@ -99,7 +99,18 @@ uint32_t    menu_nr_strength(void);
 #define RADIO_TUNE_MAX_HZ   180000000UL
 
 /* Upstream's demod_mode_t as an int. Sets the demodulator, the header's
- * mode chip and the action bar's value. */
+ * mode chip and the action bar's value.
+ *
+ * AND ABOVE IT, THE DECODERS - 22/11/2026, step 42. Upstream's mode
+ * screen is a table of ENTRIES, not of demodulators: "CW" is USB with
+ * the Morse decoder switched on (k_demod_modes[] in its main.c). This
+ * port numbers those entries on from upstream's last demod_mode_t, so
+ * one int still says everything about the mode - the FRAM byte and the
+ * memory channel's `modo` carry it as they are. A firmware that does not
+ * know a number refuses it and boots on AM (main.c), which the owner's
+ * rule for the FRAM allows. */
+#define RADIO_MODE_CW       6           /* DEMOD_MODE_USB + cw.c */
+#define RADIO_MODE_LAST     RADIO_MODE_CW
 void        radio_mode_set(int mode);
 int         radio_mode_get(void);
 const char *radio_mode_name(int mode);

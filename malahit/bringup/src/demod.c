@@ -10,6 +10,7 @@
 #include "gd32_i2s.h"     /* ../../User - the sink's prototype */
 #include "rds.h"          /* ../../User - rds_feed(), wrapped below */
 #include "estereo.h"      /* src/ - FM stereo, this port's */
+#include "cw.h"           /* ../../User - the Morse decoder, demod_cw() */
 
 /*
  * Upstream's call: 512 frames at 192 kHz in (with rf_doble), 512 stereo
@@ -68,7 +69,7 @@ void demod_init(void)
 
     __asm__ volatile ("" :: "r"(demod_path), "r"(demod_mode),
                             "r"(demod_mix), "r"(demod_report),
-                            "r"(estereo_pon));
+                            "r"(estereo_pon), "r"(demod_cw));
 }
 
 void demod_block(const int16_t *rx, int16_t *tx, uint32_t frames)
@@ -234,6 +235,25 @@ SWD_ENTRY int demod_mode(int mode)
     __DSB();
     s_cambiando = 0U;
     return (int)demod_am_get_mode();
+}
+
+/*
+ * THE MORSE DECODER'S SWITCH, under the same flag as a mode change.
+ * Upstream throws it from its display loop with the hook still running
+ * (menu_mode_preset_callback(): cw_set_enabled()), and turning it ON
+ * clears every timer cw_process() is in the middle of using - a block
+ * landing half-way through that would run on a half-cleared state. Two
+ * stores and a memset are microseconds; a block that lands then plays
+ * silence and is counted, as for a mode.
+ */
+SWD_ENTRY void demod_cw(int on)
+{
+    if ((uint8_t)(on != 0) == cw_get_enabled()) { return; }
+    s_cambiando = 1U;
+    __DSB();
+    cw_set_enabled((uint8_t)(on != 0));
+    __DSB();
+    s_cambiando = 0U;
 }
 
 SWD_ENTRY void demod_mix(int hz)

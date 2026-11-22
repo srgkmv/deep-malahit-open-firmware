@@ -30,7 +30,9 @@
  * corregido a mano el dia que la fuente cambiara.
  */
 
+#ifndef UDG_ROWS
 #define UDG_ROWS 8
+#endif
 
 /*
  * Y EL TOPE, que no es lo mismo - 25/09/2026.
@@ -63,11 +65,21 @@
  * La geometria de los dos la decide ESTE fichero, que es quien los dibuja:
  * antes se la pasaba main.c y era otra copia de lo mismo en dos sitios.
  */
+#ifndef UDG_HDR_H
 #define UDG_HDR_H   30
+#endif
+#ifndef UDG_LINE_H
 #define UDG_LINE_H  18
+#endif
+#ifndef UDG_BTN_X
 #define UDG_BTN_X   6
+#endif
+#ifndef UDG_BTN_W
 #define UDG_BTN_W  104
+#endif
+#ifndef UDG_BTN_H
 #define UDG_BTN_H   24
+#endif
 
 /*
  * SEGUNDO BOTON, a la derecha del primero - 24/09/2026.
@@ -83,9 +95,14 @@
  * primero" con la razon correcta. Dos frases opuestas a diez lineas de
  * distancia; se queda la que cuadra con el numero.
  */
+#ifndef UDG_BTN2_GAP
 #define UDG_BTN2_GAP  10
+#endif
 #define UDG_BTN2_X   (UDG_BTN_X + UDG_BTN_W + UDG_BTN2_GAP)
-#define UDG_BTN2_W   140   /* mas ancho que el primero: sus rotulos son mas largos
+#ifndef UDG_BTN2_W
+#define UDG_BTN2_W   140
+#endif
+                    /* mas ancho que el primero: sus rotulos son mas largos
                             * ("Fallo al guardar" son 123 px) y hay 500 px libres
                             * hasta la chapa. Lo mide sim/digi.c contra la tabla
                             * que saca tools/gen_rotulos.py de main.c. */

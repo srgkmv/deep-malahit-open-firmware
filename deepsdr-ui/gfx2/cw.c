@@ -385,6 +385,51 @@ _Static_assert(CW_BLOCK_SAMPLES == 32U, "cw.c da por supuesto bloques de 32 mues
  */
 #define CW_SPAN_MIN        1.15f
 /*
+ * OLVIDO DE LA MEDIA ALTA - 22/11/2026, en la radio Malahit con un
+ * HackRF de generador.
+ *
+ * La media alta solo tiene dos formas de moverse: el ataque, que la
+ * SUBE, y las muestras del tercio de arriba, que tiran de ella. Ninguna
+ * de las dos la baja si la senal que llega ahora es mas DEBIL que la de
+ * antes. Y eso no es un caso raro: es pasar de una estacion fuerte a
+ * otra mas floja, o un QSB de unos decibelios.
+ *
+ * Lo que pasaba, medido en la radio y reproducido en el banco con este
+ * mismo fichero (sim/cwtest.c, "una estacion fuerte y despues otra mas
+ * debil"): tras una estacion a 20 dB, otra a 12 dB y 5 dB mas baja de
+ * nivel pone su tecla bajada DENTRO de la zona muerta. Ahi no toca
+ * ninguna media -es un flanco, segun la regla de arriba-, asi que la
+ * alta no baja NUNCA, el umbral se queda por encima de la senal, la
+ * tecla solo baja con los picos del ruido y sale "E T E E E". Con 8 dB
+ * menos la tecla cae en el tercio de abajo y no sale nada en absoluto.
+ * Para siempre: solo lo arreglaba volver a elegir el modo.
+ *
+ * LA SALIDA ES OLVIDAR, PERO SOLO CON PRUEBAS, no por tiempo. Una
+ * MESETA es un tramo de al menos CW_KM_MESETA puntos con la envolvente
+ * claramente por encima del ruido (CW_KM_JUMP sobre la media baja) y
+ * sin llegar al tercio de arriba: eso no es un flanco -dura un punto- ni
+ * es ruido -esta 4 dB por encima de el-, es una tecla mas floja que la
+ * que la media alta recuerda. Tras CW_KM_MESETAS seguidas sin una sola
+ * muestra arriba, la media alta baja hacia la baja con una constante de
+ * un segundo, hasta que esas teclas vuelven a caer arriba y la cuenta se
+ * pone a cero sola.
+ *
+ * POR QUE NO POR TIEMPO, que fue la primera version y se tiro el mismo
+ * dia: olvidar tras veinte puntos sin muestra arriba tambien olvida en
+ * las PAUSAS, y en un QSO la pausa es lo normal. Medido en la radio: una
+ * estacion, tres segundos de silencio y otra contestando - el olvido ya
+ * habia bajado la media alta al ruido de la pausa, el ruido de la
+ * segunda entraba como una tecla larguisima, la velocidad se iba a 12 PPM
+ * y la segunda estacion no salia. Con ocho segundos si salia, porque a
+ * los tres sin elementos se resiembra la velocidad. En silencio no hay
+ * mesetas, asi que ahora la pausa deja la media alta donde estaba, como
+ * siempre lo hizo este fichero, y la estacion que contesta entra igual
+ * que entraba.
+ */
+#define CW_KM_MESETA       0.75f   /* puntos: mas que un flanco, menos que un punto entero */
+#define CW_KM_MESETAS      3U      /* seguidas sin una muestra arriba */
+#define CW_KM_OLVIDO       0.00267f  /* ~1 s, la misma que CW_PROBE_ALPHA */
+/*
  * Calentamiento. Durante los primeros CW_WARM_HOPS saltos (170 ms) no
  * se decide nada: solo se acumula el nivel medio de lo que entra, y con
  * el se siembran las dos medias, una a cada lado.
@@ -787,6 +832,8 @@ static float    s_prev[CW_BLOCK_SAMPLES];  /* bloque anterior, mitad vieja de la
 static float    s_env;                     /* envolvente suavizada */
 static float    s_km_hi, s_km_lo;          /* las dos medias que se persiguen */
 static uint8_t  s_km_seeded;
+static uint16_t s_km_meseta;   /* saltos seguidos entre el ruido y el tercio de arriba */
+static uint8_t  s_km_sin_conf; /* mesetas sin una sola muestra arriba; ver CW_KM_MESETAS */
 static uint16_t s_warm_n;                  /* saltos de calentamiento consumidos */
 static float    s_warm_sum;
 
@@ -1004,6 +1051,8 @@ static void cw_reset_state(void)
     s_km_hi     = 0.0f;
     s_km_lo     = 0.0f;
     s_km_seeded = 0U;
+    s_km_meseta = 0U;
+    s_km_sin_conf = 0U;
     s_warm_n    = 0U;
     s_warm_sum  = 0.0f;
 
@@ -1588,16 +1637,59 @@ void cw_process(const float *audio, uint32_t n)
         float hi_z = s_km_lo + sp * (1.0f - CW_KM_DEAD);
         float lo_z = s_km_lo + sp * CW_KM_DEAD;
 
+        float meseta = CW_KM_MESETA * s_dot_hops;
+
         if (s_env > s_km_hi * CW_KM_JUMP) {
             s_km_hi += (s_env - s_km_hi) * CW_KM_ATTACK;   /* algo ha empezado */
+            s_km_meseta = 0U;
+            s_km_sin_conf = 0U;
         } else if (s_env * CW_KM_JUMP < s_km_lo) {
             s_km_lo += (s_env - s_km_lo) * CW_KM_ATTACK;   /* algo ha terminado */
         } else if (s_env >= hi_z) {
             s_km_hi += (s_env - s_km_hi) * ka;
+            s_km_meseta = 0U;
+            s_km_sin_conf = 0U;
         } else if (s_env <= lo_z) {
             s_km_lo += (s_env - s_km_lo) * ka;
         }
         /* y si cae en medio, no toca nada: es un flanco */
+
+        /*
+         * Las mesetas que no llegan arriba: ver CW_KM_MESETAS. Una muestra
+         * en el tercio de arriba ya las ha puesto a cero justo encima; aqui
+         * solo se cuentan las que se quedan por debajo y claramente por
+         * encima del ruido.
+         */
+        if (s_env < hi_z && s_env > s_km_lo * CW_KM_JUMP) {
+            if (meseta < 3.0f) { meseta = 3.0f; }
+            if (s_km_meseta < 0xFFFFU) { s_km_meseta++; }
+            if (s_km_meseta == (uint16_t)(meseta + 0.5f) && s_km_sin_conf < 0xFFU) {
+                s_km_sin_conf++;
+            }
+        } else {
+            s_km_meseta = 0U;
+        }
+        if (s_km_sin_conf >= CW_KM_MESETAS) {
+            /*
+             * Y CON ELLA LA CONFIANZA, al empezar a olvidar: la puerta
+             * seguia abierta de la estacion fuerte, y mientras la media
+             * alta baja hacia la debil sus elementos se miden mal y salian
+             * escritos ("E T E E E"). Es la misma regla que el cambio de
+             * sonda: lo que ya no se puede confirmar no cuenta como
+             * prueba. El historial tambien, que es de la otra estacion; lo
+             * de esta se relee del nuevo cuando la puerta vuelva a abrir.
+             */
+            if (s_km_sin_conf == CW_KM_MESETAS) {
+                s_km_sin_conf++;            /* una vez por olvido */
+                s_q        = 1.0f;
+                s_good_run = 0U;
+                s_bad_run  = 0U;
+                s_gate     = 0U;
+                s_hist_n   = 0U;
+                s_hist_w   = 0U;
+            }
+            s_km_hi += (s_km_lo - s_km_hi) * CW_KM_OLVIDO;
+        }
     }
 
     /* --- 4: umbral con histeresis --- */

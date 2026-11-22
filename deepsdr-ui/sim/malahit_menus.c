@@ -59,41 +59,53 @@ static void fondo_principal(void)
     principal_main(1, argv);
 }
 
-static void modos(void)
+static void modos_fam(uint8_t fam, const char *ppm)
 {
-    static const struct { const char *n, *d; } k[] = {
+    static const struct { uint8_t fam; const char *n, *d, *d_en; } k[] = {
         /* La lista de malahit/bringup/src/menus.c, k_modos[]; AM es
          * "Envolvente" porque "Amplitud modulada" no cabe. WFM desde el
-         * 21/11/2026. */
-        { "AM",  "Envolvente" },
-        { "SAM", "AM síncrona" },
-        { "USB", "Banda lateral alta" },
-        { "LSB", "Banda lateral baja" },
-        { "NFM", "FM estrecha" },
-        { "WFM", "FM ancha" },
+         * 21/11/2026; Digital, con el CW, desde el 22/11/2026. */
+        { 0, "AM",  "Envolvente",         "Envelope" },
+        { 0, "SAM", "AM síncrona",        "Synchronous AM" },
+        { 0, "USB", "Banda lateral alta", "Upper sideband" },
+        { 0, "LSB", "Banda lateral baja", "Lower sideband" },
+        { 0, "NFM", "FM estrecha",        "Narrow FM" },
+        { 0, "WFM", "FM ancha",           "Wide FM" },
+        { 1, "CW",  "Telegrafía Morse",   "Morse telegraphy" },
     };
     ui_cfg_state_t st;
     uint8_t i;
 
     memset(&st, 0, sizeof st);
     st.cat[0] = "Analógico";
-    st.cats = 1; st.cat_sel = 0; st.denso = 1;
-    st.n = (uint8_t)(sizeof k / sizeof k[0]);
+    st.cat[1] = "Digital";
+    st.cats = 2; st.cat_sel = fam; st.denso = 1;
     st.marcada = 0; st.cursor = 1; st.pressed = -1;
-    for (i = 0; i < st.n; i++) {
-        st.cel[i].nombre = k[i].n;
-        st.cel[i].valor  = k[i].d;
-        st.cel[i].extra  = "";
+    for (i = 0; i < (uint8_t)(sizeof k / sizeof k[0]); i++) {
+        if (k[i].fam != fam) { continue; }
+        st.cel[st.n].nombre = k[i].n;
+        st.cel[st.n].valor  = k[i].d;
+        st.cel[st.n].extra  = "";
+        st.n++;
         cabe("modo", k[i].n, &font_ui_11, UIC_DCELL_W - 2);
         cabe("desc", k[i].d, &font_ui_10, UIC_DCELL_W - 2);
+        cabe("desc", k[i].d_en, &font_ui_10, UIC_DCELL_W - 2);
     }
+    if (st.cursor >= st.n) { st.cursor = -1; }
     for (i = 0; i < st.cats; i++) {
         cabe("categ", st.cat[i], &font_ui_11,
              UIC_SIDE_W - UIC_CAT_TXT_X - UIC_CAT_TXT_R);
     }
+    cabe("categ", "Analogue", &font_ui_11, UIC_SIDE_W - UIC_CAT_TXT_X - UIC_CAT_TXT_R);
     fondo_principal();
     ui_cfg_draw(&st);
-    escribe("modos");
+    escribe(ppm);
+}
+
+static void modos(void)
+{
+    modos_fam(0, "modos");
+    modos_fam(1, "modos_dig");
 }
 
 /*
@@ -555,9 +567,91 @@ static void cabecera(const char *nombre, const char *freq, const char *modo,
     escribe(nombre);
 }
 
+/*
+ * EL PANEL DE LOS DECODIFICADORES - paso 42 del port, 22/11/2026.
+ *
+ * La disposicion de upstream que eligio el dueño: el osciloscopio de tono
+ * arriba -spectrum_draw() del audio de 0 a 6 kHz, con la raya del tono
+ * enganchado- y ui_digi.c abajo, con la geometria de malahit_layout.h y
+ * las caras de los menus. Un QSO de 20 m como el de sim/digi.c, y se
+ * mide que cada renglon quepa en el ancho util, que es lo que hace
+ * main.c al partir las lineas (src/digi.c en la radio).
+ */
+#include "ui_digi.h"
+#include "palette.h"
+extern const gfx2_font_t font_ui_10b;
+
+/* upstream's color_tema(): a theme colour as gfx.c's RGB565 */
+static uint16_t color_tema(uint32_t hex)
+{
+    return gfx2_to565((uint8_t)((hex >> 16) & 0xFFU),
+                      (uint8_t)((hex >> 8) & 0xFFU), (uint8_t)(hex & 0xFFU));
+}
+
+static void digi_cw(const char *nombre, const char *chip, const char *btn)
+{
+    static const char *const k_qso[UDG_ROWS] = {
+        "CQ CQ DE EA4XYZ EA4XYZ K",
+        "EA4XYZ DE DL1ABC DL1ABC KN",
+        "DL1ABC DE EA4XYZ GM OM TNX FER CALL = UR RST 579 579",
+        "NAME PEDRO PEDRO QTH MADRID MADRID = HW? AR DL1ABC DE",
+        "EA4XYZ KN EA4XYZ DE DL1ABC R FB PEDRO = UR RST 589 589",
+        "NAME HANS QTH BERLIN = RIG IS FT991A PWR 100W ANT DIPOLE",
+        "= HW? AR EA4XYZ DE DL1ABC KN DL1ABC DE EA4XYZ R TNX FB",
+        "QSO HANS = 73 ES CUL AR DL1ABC DE EA4XYZ SK E E",
+    };
+    static float db[256];
+    ui_digi_state_t st;
+    uint32_t i;
+    int16_t x_tono;
+
+    fondo_principal();
+
+    /* El audio: suelo de ruido con algo de textura y el tono a 638 Hz,
+     * donde lo engancho la radio el 22/11 con el HackRF. */
+    for (i = 0; i < 256U; i++) {
+        float f = (float)i * 6000.0f / 256.0f;
+        float d = -52.0f + 3.0f * (float)((i * 7919U) % 11U) / 10.0f;
+        if (f > 300.0f && f < 4000.0f) { d += 8.0f; }     /* el filtro de BLU */
+        if (i >= 26U && i <= 28U) { d = (i == 27U) ? -8.0f : -26.0f; }
+        db[i] = d;
+    }
+    spectrum_draw(db, 256U, 0, DIGI_SCOPE_Y, GFX2_W, DIGI_SCOPE_H,
+                  -60.0f, 0.0f, 0, 0U, 0, 0);
+    x_tono = (int16_t)(638.0f / 6000.0f * (float)GFX2_W);
+    gfx_vline((uint16_t)(700.0f / 6000.0f * (float)GFX2_W), DIGI_SCOPE_Y,
+              DIGI_SCOPE_H, color_tema(PAL_INK_MUTE));
+    gfx_vline((uint16_t)x_tono, DIGI_SCOPE_Y, DIGI_SCOPE_H, color_tema(PAL_ACCENT));
+    gfx_fill_rect(0, DIGI_SCOPE_Y + DIGI_SCOPE_H, GFX2_W, DIGI_SCOPE_GAP,
+                  color_tema(PAL_SURF_0));
+
+    memset(&st, 0, sizeof st);
+    st.y = DIGI_PANEL_Y;
+    st.h = DIGI_PANEL_H;
+    for (i = 0; i < UDG_ROWS; i++) {
+        st.fila[i] = k_qso[i];
+        cabe("renglon", k_qso[i], &font_ui_10b, GFX2_W - 2 * UDG_PAD_X);
+    }
+    st.chip = chip;
+    st.enganchado = 1U;
+    st.btn = btn;
+    ui_digi_draw_texto(&st);
+    printf("  digi: osciloscopio y=%d..%d, panel y=%d..%d, chapa \"%s\"\n",
+           DIGI_SCOPE_Y, DIGI_SCOPE_Y + DIGI_SCOPE_H - 1,
+           DIGI_PANEL_Y, DIGI_PANEL_Y + DIGI_PANEL_H - 1,
+           ui_digi_chip_visible(&st));
+    if (strcmp(ui_digi_chip_visible(&st), chip) != 0) {
+        printf("  SE CORTA la chapa \"%s\"\n", chip);
+        s_fallos++;
+    }
+    escribe(nombre);
+}
+
 int main(void)
 {
     printf("menus del Malahit, 480 x 320\n");
+    digi_cw("cw", "20 ppm 14 dB", "Borrar");
+    digi_cw("cw_en", "20 wpm 14 dB", "Clear");
     cabecera("cab_wfm", "104.300,00", "WFM", "FM", "RADIO 7",
              "Ahora suena: The Beatles - Here Comes The Sun     ");
     cabecera("cab_hf", "9.600,00", "AM", "31 m", 0, 0);

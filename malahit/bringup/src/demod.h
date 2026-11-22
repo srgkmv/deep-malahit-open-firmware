@@ -58,6 +58,11 @@ int  demod_path_get(void);
  * the mode now in force. */
 int  demod_mode(int mode);
 
+/* The Morse decoder on (1) or off (0), with no block running through the
+ * switch - cw_set_enabled() clears the state cw_process() works on, and
+ * the block interrupt preempts the caller. */
+void demod_cw(int on);
+
 /* The digital mix in hertz: tuned frequency minus the LO, upstream's
  * definition (demod_am.h). The dial sits AM_IF_HZ above the LO, so
  * +12000 - the sign is a prediction from the I/Q order, and this is the

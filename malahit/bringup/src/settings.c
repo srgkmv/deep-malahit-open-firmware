@@ -128,7 +128,9 @@ _Static_assert(sizeof(slot_t) == SLOT_BYTES, "the extension fills the slot");
  *  28  language: IDIOMA_ES / IDIOMA_EN + 1, 0 = not stored (Spanish)
  *  29  backlight, % (20-100), 0 = not stored (100 %)
  *  30  FM stereo: 1 mono, 2 auto; 0 = not stored (auto)
- *  31..59  zero - room. A field added there reads 0 from a record
+ *  31  CW band-pass in tens of hertz (25/50/100); 0 = not stored (500 Hz)
+ *  15  (mode) is 6 for CW since 22/11/2026: menus.h, RADIO_MODE_CW
+ *  32..59  zero - room. A field added there reads 0 from a record
  *          written before it, so it must mean "not stored" at 0, or
  *          the version goes to 5 (the owner's word allows it).
  *  60  CRC-32 of bytes 0-59
@@ -165,7 +167,8 @@ typedef struct {
     uint8_t  idioma;        /* IDIOMA_* + 1; 0 = written before it */
     uint8_t  brillo;        /* %; 0 = written before it */
     uint8_t  estereo;       /* 1 mono, 2 auto; 0 = written before it */
-    uint8_t  rsv[29];
+    uint8_t  cw_bw;         /* CW band-pass / 10 Hz; 0 = written before it */
+    uint8_t  rsv[28];
     uint32_t crc;
 } rec4_t;
 
@@ -347,6 +350,7 @@ int settings_load(settings_t *out)
     out->aj_idioma = p->idioma;
     out->aj_brillo = p->brillo;
     out->aj_estereo = p->estereo;
+    out->cw_bw      = p->cw_bw;
     out->has_rf = out->has_mode = out->has_aj = 1U;
     out->has_sqlnr = out->has_suav = 1U;
     return 1;
@@ -380,6 +384,7 @@ int settings_save(const settings_t *s)
     w.idioma   = s->aj_idioma;
     w.brillo   = s->aj_brillo;
     w.estereo  = s->aj_estereo;
+    w.cw_bw    = s->cw_bw;
     w.crc      = crc32_of((const uint8_t *)&w, V4_BYTES - 4U);
 
     fram_write(v4_addr(slot), (const uint8_t *)&w, sizeof w);

@@ -424,6 +424,131 @@ int main(void)
      * entera-. El tope deja el problema MEDIDO y a la vista en vez de
      * taparlo, que es lo que hacia la prueba de veinte segundos.
      */
+    /*
+     * UNA ESTACION FUERTE Y DESPUES OTRA MAS DEBIL - 22/11/2026.
+     *
+     * Encontrado en la radio Malahit con un HackRF de generador: tras una
+     * estacion a 20 dB, la siguiente -a 12 dB y unos decibelios mas baja
+     * de nivel, que es lo que deja el AGC- salia "E T E E E", y 8 dB mas
+     * baja no salia nada. Para siempre: la media alta no tenia forma de
+     * bajar (ver CW_KM_HAMBRE en cw.c). Ningun caso de este banco lo veia
+     * porque todos empiezan con el decodificador recien arrancado.
+     *
+     * Aqui las dos van seguidas por el MISMO decodificador, sin reiniciar,
+     * la segunda escalada entera -senal y ruido- como la escala el AGC.
+     */
+    printf("\n=== CW: una estacion fuerte y despues otra mas debil ===\n");
+    printf("      20 dB, y detras 12 dB con el nivel bajado:");
+    {
+        static const float k_baja[] = { 0.0f, 5.0f, 8.0f, 12.0f };
+        static const char k_a[] = "CQ CQ DE EA4ABC EA4ABC K";
+        static const char k_b[] = "R1TEST DE EA4ABC 599 599 K";
+        char esperado[128];
+        int j;
+
+        snprintf(esperado, sizeof esperado, "%s %s", k_a, k_b);
+        printf("\n      nivel bajado:");
+        for (j = 0; j < 4; j++) { printf("%7.0f", (double)k_baja[j]); }
+        printf("   dB\n      error:       ");
+        for (j = 0; j < 4; j++) {
+            size_t na, nb, i, off, g = 0;
+            float *a, *b, *x, esc;
+            char got[512], c;
+            float e;
+
+            g_rng = 1000u;
+            a = synth(k_a, 20.0f, 20.0f, &k_perfecto, -99.0f, PITCH, &na);
+            b = synth(k_b, 20.0f, 12.0f, &k_perfecto, -99.0f, PITCH, &nb);
+            esc = powf(10.0f, -k_baja[j] / 20.0f);
+            x = (float *)malloc((na + nb) * sizeof(float));
+            for (i = 0; i < na; i++) { x[i] = a[i]; }
+            for (i = 0; i < nb; i++) { x[na + i] = b[i] * esc; }
+
+            cw_init();
+            cw_set_pitch_hz(PITCH);
+            cw_set_enabled(1u);
+            for (off = 0; off + CW_BLOCK_SAMPLES <= na + nb; off += CW_BLOCK_SAMPLES) {
+                cw_process(x + off, CW_BLOCK_SAMPLES);
+                while (cw_get_char(&c)) { if (g + 1 < sizeof got) { got[g++] = c; } }
+            }
+            got[g] = '\0';
+            tidy(got);
+            e = (float)leven(esperado, got) / (float)strlen(esperado);
+            printf("%6.0f%%", (double)(e * 100.0f));
+            /* CW_VERBOSO=1 ./out/cwtest: lo que salio, para ver QUE letra falla */
+            if (getenv("CW_VERBOSO")) { printf(" [%s]", got); }
+            if (e > 0.10f) {
+                fallos++;
+                printf("\n      *** FALLA a -%.0f dB: \"%s\"\n      error:       ",
+                       (double)k_baja[j], got);
+            }
+            free(a); free(b); free(x);
+        }
+        printf("\n");
+    }
+
+    /*
+     * UNA ESTACION Y DESPUES SOLO RUIDO - 22/11/2026, la otra cara de la
+     * prueba de arriba. Cuando la estacion se calla, el AGC sube el ruido;
+     * el olvido de la media alta (CW_KM_HAMBRE) la lleva hacia el, y si la
+     * puerta seguia abierta de la buena senal el ruido salia escrito: "K E
+     * IE E E" detras del mensaje, medido en la radio. Se exige el mensaje y
+     * NADA detras, con el ruido subido 0, 10 y 20 dB durante 20 s.
+     */
+    printf("\n=== CW: una estacion y despues solo ruido ===\n");
+    printf("      ruido subido:    0     10     20   dB\n");
+    printf("      sobran:      ");
+    {
+        static const float k_sube[] = { 0.0f, 10.0f, 20.0f };
+        static const char k_a[] = "CQ CQ DE EA4ABC EA4ABC K";
+        int j;
+
+        for (j = 0; j < 3; j++) {
+            size_t na, nr, i, off, g = 0, tot;
+            float *a, *x, esc;
+            float *r[5];
+            char got[512], c;
+            int k, sobran;
+
+            g_rng = 2000u;
+            a = synth(k_a, 20.0f, 20.0f, &k_perfecto, -99.0f, PITCH, &na);
+            esc = powf(10.0f, k_sube[j] / 20.0f);
+            tot = na;
+            for (k = 0; k < 5; k++) {
+                r[k] = synth("", 20.0f, 20.0f, &k_perfecto, -99.0f, PITCH, &nr);
+                tot += nr;
+            }
+            x = (float *)malloc(tot * sizeof(float));
+            for (i = 0; i < na; i++) { x[i] = a[i]; }
+            off = na;
+            for (k = 0; k < 5; k++) {
+                for (i = 0; i < nr; i++) { x[off + i] = r[k][i] * esc; }
+                off += nr;
+                free(r[k]);
+            }
+
+            cw_init();
+            cw_set_pitch_hz(PITCH);
+            cw_set_enabled(1u);
+            for (off = 0; off + CW_BLOCK_SAMPLES <= tot; off += CW_BLOCK_SAMPLES) {
+                cw_process(x + off, CW_BLOCK_SAMPLES);
+                while (cw_get_char(&c)) { if (g + 1 < sizeof got) { got[g++] = c; } }
+            }
+            got[g] = '\0';
+            tidy(got);
+            sobran = (int)strlen(got) - (int)strlen(k_a);
+            if (sobran < 0) { sobran = 0; }
+            printf("%7d", sobran);
+            if ((float)leven(k_a, got) / (float)strlen(k_a) > 0.10f || sobran > 2) {
+                fallos++;
+                printf("\n      *** FALLA a +%.0f dB: \"%s\"\n      sobran:      ",
+                       (double)k_sube[j], got);
+            }
+            free(a); free(x);
+        }
+        printf("   caracteres detras del mensaje\n");
+    }
+
     printf("\n=== CW: solo ruido durante un minuto ===\n");
     {
         char got[2048]; float est;

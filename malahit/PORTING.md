@@ -1262,8 +1262,8 @@ Each step should end with something visible on the radio.
    through it, and **the power-off in boot.c puts PB8 back to an output
    before driving it low** - BSRR does nothing to a pin in alternate
    function, so the backlight would no longer have gone dark at once
-   under a held power button (to be confirmed by a hand: the bench
-   cannot press it). On the radio: TIM16 CR1 0x81, ARR 11999, CCR1 12000
+   under a held power button (confirmed by the owner's hand, 22/11/2026,
+   with the brightness by eye). On the radio: TIM16 CR1 0x81, ARR 11999, CCR1 12000
    at 100 % and 6000 at 50 %, BDTR MOE, PB8 AF1; 70 % saved, reloaded,
    came back 8400. **And no PWM spur**: 16 spectra at 50 % against 16 at
    100 % and 16 at 50 % again, A/B in one run over swd-call, at a quiet
@@ -1340,6 +1340,61 @@ Each step should end with something visible on the radio.
    blend is at 50 % (off below 40), the owner's choice; Settings > Radio
    > Stereo, Auto / Mono, in the FRAM (record v4 byte 30). And by ear,
    the owner: "the sound is quite satisfactory".
+42. **CW - the first text decoder, and the screen every text decoder
+   will use.** *22/11/2026, from RAM, against a HackRF on the bench* -
+   the owner's order is simple to hard, one decoder at a time.
+   **The decoder** is upstream's cw.c, its stubs gone from
+   decoders_off.c; demod_am.c already feeds it from the USB branch. CW is
+   a mode ENTRY, as upstream's table has it (USB + the decoder), numbered
+   after upstream's demodulators: `RADIO_MODE_CW` = 6 (menus.h), so the
+   FRAM byte and the memory's `modo` carry it unchanged; a firmware that
+   does not know 6 boots on AM. The decoder's switch runs under demod.c's
+   mode-change flag (`demod_cw()`), since turning it on clears state the
+   block interrupt is using. The mode screen has upstream's second family,
+   **Digital**, with CW ("Telegrafía Morse" fits: `make malahit-menus`).
+   In CW the BW chip is upstream's CW band-pass (1,0 / 0,5 / 0,25 k,
+   record v4 byte 31 in tens of hertz), and a tap on a signal puts the
+   dial a pitch below it, upstream's cw_signo_vfo().
+   **The bench was a HackRF**, through the 10 + 40 dB pads, amp off, I/Q
+   files written by a script with its own Morse table and band-limited
+   noise (SNR in 500 Hz, upstream's definition). The two references
+   differ by ~9 ppm at 14 MHz (a 575 Hz tone for a 700 Hz pitch), which
+   the decoder's probes follow. **On the air**: 12-35 wpm; SNR 5 dB
+   clean and 0 dB readable from a fresh start - as good as the host bench.
+   **And a real bug in upstream's cw.c, found there**: after a strong
+   station, one 5 dB weaker (after the AGC) put its key-down inside the
+   two-means tracker's dead zone, which moves neither mean - the high
+   mean could never come down, and the decoder printed "E T E E E", or at
+   8 dB nothing, for good. Reproduced on the host with cw.c itself; fixed
+   in User/cw.c (`CW_KM_MESETA`): a run of a dot or more clearly above
+   the noise that never reaches the upper third is a weaker key, and
+   three of them in a row let the high mean decay towards the low one and
+   close the gate (its history too). Not by time: that first version
+   forgot in every PAUSE as well, and on the air the station answering
+   three seconds later came in as one long noise "key" and was lost. Two
+   new cases in upstream's `make cw` (a strong station then a weaker one;
+   a station then only noise, raised 0/10/20 dB) - the unfixed file fails
+   the first; the speed x SNR sweep within a point of before, "only noise
+   for a minute" still 0 characters, and the +400 Hz interference case
+   now decodes at 8-11 % error where it went silent (that silence was the
+   same deadlock). On the air, a station, 3 or 8 s of silence and a
+   weaker one answering: both decoded, the second losing its first one
+   or two letters.
+   **The screen is upstream's**, the owner's choice: in a text mode the
+   spectrum and the waterfall give their place to the **tone scope**
+   (rtty_scope.c's audio spectrum, 0-6 kHz across the width, the pitch
+   and the locked tone as lines) over **ui_digi.c's text panel**, eight
+   rows in the menus' faces, its bottom where the waterfall's was
+   (`src/digi.c`: upstream's rtty_text_push(), digi_sync() and
+   rtty_scope_draw(), cut to CW). ui_digi.c's geometry is `#ifndef` now,
+   Malahit values in malahit_layout.h (the header's 800 px partition
+   scaled and still exact, as its asserts demand); the DEEPSDR's panel
+   renders (`out/digi`, `digi_ft8`) identical byte for byte. The chip
+   reads "20 wpm 14 dB" - the speed and the margin between the two means
+   - with the lock dot; Clear clears. Checked on the glass over SWD
+   (grab.py): text wrapping across rows, Clear, USB back to the spectrum
+   and the waterfall, Digital > CW from the mode screen by taps. Cost:
+   the frame 40.6 ms (24 fps), AXI 427 of 512 kB.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress
