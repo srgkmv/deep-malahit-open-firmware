@@ -19,6 +19,8 @@
  *   CW     Borrar | Aprende                     | "20 ppm 14 dB" + dot
  *   RTTY   Borrar |      | 450 Hz | 50 Bd | Auto
  *   PSK31  Borrar                               | "+1,2 Hz" + dot
+ *   NAVTEX Borrar                               | "FA01" / "SITOR" /
+ *                                                 "bits" / "buscando" + dot
  *
  * and upstream's tap on each (rtty_shift_siguiente(), rtty_baud_
  * siguiente(), the Auto toggle, cw_set_aprende()) - on the press here,
@@ -38,6 +40,7 @@
 #include "rtty.h"
 #include "rtty_auto.h"
 #include "psk31.h"
+#include "navtex.h"
 #include "demod.h"         /* demod_quieto(): a decoder reconfigured, no block through it */
 #include "idioma.h"        /* ../../User - tr() */
 
@@ -235,6 +238,31 @@ static void sincroniza(void)
         return;
     }
 
+    if (navtex_activo()) {
+        /* upstream's digi_sync(), its NAVTEX branch: the chip says which
+         * phase the decoder is in - it takes seconds to lock, and then a
+         * station can be silent for minutes - and once a header has come,
+         * its four letters (who sends, what about, the number). Copied:
+         * navtex_info() fills a local. The dot is the character sync. */
+        navtex_info_t in;
+        const char   *t;
+
+        navtex_info(&in);
+        if (in.tiene_cab) {
+            for (i = 0U; i < 4U; i++) { s_chip[i] = in.cab[i]; }
+            s_chip[4] = '\0';
+        } else {
+            t = in.car_sync ? "SITOR" : in.bit_sync ? "bits" : tr("buscando", "searching");
+            for (i = 0U; t[i] != '\0' && i < (uint8_t)(sizeof s_chip - 1U); i++) {
+                s_chip[i] = t[i];
+            }
+            s_chip[i] = '\0';
+        }
+        s_st.chip = s_chip;
+        s_st.enganchado = in.car_sync;
+        return;
+    }
+
     s_st.btn2       = tr("Aprende", "Learn");
     s_st.btn2_press = cw_get_aprende();
 
@@ -280,7 +308,24 @@ static void osciloscopio(void)
     }
     spectrum_draw(s_db, RTTY_SCOPE_BINS, 0, DIGI_SCOPE_Y, GFX2_W, DIGI_SCOPE_H,
                   DIGI_SCOPE_FLOOR, 0.0f, 0, 0U, 0, 0);
-    if (nyq > 0.0f && psk31_activo()) {
+    if (nyq > 0.0f && navtex_activo()) {
+        /* NAVTEX: B (the higher tone, unless reversed) in the accent, Y in
+         * the warning colour, 85 Hz either side of where the decoder
+         * listens NOW - its setting plus what it measured by itself.
+         * Upstream's scope_rayas() has no NAVTEX branch and drew RTTY's. */
+        navtex_info_t in;
+        float c, m, e;
+        uint16_t a, b;
+
+        navtex_info(&in);
+        c = navtex_get_centro_hz() + (float)in.desvio_hz;
+        m = navtex_get_invertido() ? c - 0.5f * NAVTEX_SHIFT_HZ : c + 0.5f * NAVTEX_SHIFT_HZ;
+        e = navtex_get_invertido() ? c + 0.5f * NAVTEX_SHIFT_HZ : c - 0.5f * NAVTEX_SHIFT_HZ;
+        a = (uint16_t)(m / nyq * (float)GFX2_W);
+        b = (uint16_t)(e / nyq * (float)GFX2_W);
+        if (a < GFX2_W) { gfx_vline(a, DIGI_SCOPE_Y, DIGI_SCOPE_H, color_tema(PAL_ACCENT)); }
+        if (b < GFX2_W) { gfx_vline(b, DIGI_SCOPE_Y, DIGI_SCOPE_H, color_tema(PAL_WARN)); }
+    } else if (nyq > 0.0f && psk31_activo()) {
         /* PSK31: where it listens. Upstream's scope_rayas() has no branch
          * for it and drew RTTY's two lines; one line at the centre is
          * what there is to tune to. */
@@ -392,6 +437,26 @@ uint8_t digi_toque(uint16_t x, uint16_t y, uint8_t nuevo)
                        (uint32_t)(psk31_get_centro_hz() + 0.5f), (uint32_t)x);
         return 1U;
     }
+    /*
+     * NAVTEX: A TAP ON THE SCOPE SETS THE CENTRE, and it holds until the
+     * mode is entered again (navtex_set_centro_hz() pins it, 22/11/2026).
+     * Where: the pair of tones navtex.c's own spectral search finds within
+     * +-150 Hz of the finger (navtex_centro_cerca()), or the finger itself
+     * if it finds none - the same search that moves the centre by itself,
+     * so a tap only matters where that one cannot decide.
+     */
+    if (navtex_activo() && y < DIGI_SCOPE_Y + DIGI_SCOPE_H) {
+        float tap = (float)x / (float)GFX2_W * rtty_scope_hz_per_bin() * (float)RTTY_SCOPE_BINS;
+        float c = navtex_centro_cerca(tap);
+
+        demod_quieto(1);
+        navtex_set_centro_hz(c);
+        demod_quieto(0);
+        console_printf("  digi: NAVTEX centre %u Hz, held (tap at x %u, %u Hz)\n",
+                       (uint32_t)(navtex_get_centro_hz() + 0.5f), (uint32_t)x,
+                       (uint32_t)(tap + 0.5f));
+        return 1U;
+    }
     if (ui_digi_boton_hit(&s_st, x, y)) {
         borra_texto();
         s_st.btn_press = 1U;
@@ -461,6 +526,30 @@ __attribute__((noinline, used)) void digi_report(void)
                        (uint32_t)(psk31_get_centro_hz() + 0.5f), e < 0 ? '-' : '+',
                        (uint32_t)(e < 0 ? -e : e) / 100U, (uint32_t)(e < 0 ? -e : e) % 100U,
                        (uint32_t)cal);
+    }
+    if (navtex_activo()) {
+        navtex_info_t in;
+        float ppm = 0.0f, niv = 0.0f;
+        uint8_t desp = 0U;
+
+        float par = 0.0f, nota = 0.0f;
+
+        navtex_info(&in);
+        navtex_lazos_dbg(&ppm, &niv, &desp);
+        navtex_espectro_dbg(&par, &nota);
+        console_printf("               navtex: centre set %u Hz, measured %+d, %s; bit sync %u, "
+                       "char sync %u (shift %u), quality %u %%, clock %d ppm\n",
+                       (uint32_t)(navtex_get_centro_hz() + 0.5f), (int)in.desvio_hz,
+                       navtex_get_invertido() ? "reversed" : "normal",
+                       (uint32_t)in.bit_sync, (uint32_t)in.car_sync, (uint32_t)desp,
+                       (uint32_t)(100.0f * in.calidad + 0.5f), (int)ppm);
+        console_printf("               navtex: good %u bad %u saved %u, messages %u, header %s\n",
+                       (uint32_t)in.car_ok, (uint32_t)in.car_mal, (uint32_t)in.rescatados,
+                       (uint32_t)in.mensajes, in.tiene_cab ? in.cab : "-");
+        console_printf("               navtex: spectrum's pair %u Hz, score %u.%02u (2.00 to move); "
+                       "moved to another bit offset %u times\n",
+                       (uint32_t)(par + 0.5f), (uint32_t)nota,
+                       (uint32_t)(nota * 100.0f + 0.5f) % 100U, (uint32_t)navtex_recolocados());
     }
     if (f == 0) { return; }
     for (k = 4U; k < RTTY_SCOPE_BINS; k++) { if (f[k] > f[p1]) { p1 = k; } }

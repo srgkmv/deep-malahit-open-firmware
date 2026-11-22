@@ -15,6 +15,7 @@
 #include "rtty_auto.h"    /* ../../User */
 #include "config.h"       /* ../../User - CONFIG_RTTY_MARK_HZ/SPACE_HZ */
 #include "psk31.h"        /* ../../User - demod_psk31() */
+#include "navtex.h"       /* ../../User - demod_navtex() */
 
 /*
  * Upstream's call: 512 frames at 192 kHz in (with rf_doble), 512 stereo
@@ -74,7 +75,7 @@ void demod_init(void)
     __asm__ volatile ("" :: "r"(demod_path), "r"(demod_mode),
                             "r"(demod_mix), "r"(demod_report),
                             "r"(estereo_pon), "r"(demod_cw),
-                            "r"(demod_rtty), "r"(demod_psk31),
+                            "r"(demod_rtty), "r"(demod_psk31), "r"(demod_navtex),
                             "r"(demod_graba));
 }
 
@@ -322,6 +323,18 @@ SWD_ENTRY void demod_psk31(int on)
     if ((uint8_t)(on != 0) == psk31_activo()) { return; }
     demod_quieto(1);
     if (on) { psk31_start(12000.0f); } else { psk31_stop(); }
+    demod_quieto(0);
+}
+
+/* NAVTEX on or off, upstream's navtex_start(DEMOD_DEC_FS_HZ) / navtex_stop()
+ * from menu_mode_preset_callback() - from zero on every start: the
+ * character sync and the repeats' parity belong to the station that was
+ * being heard (upstream's words there) - under the same flag. */
+SWD_ENTRY void demod_navtex(int on)
+{
+    if ((uint8_t)(on != 0) == navtex_activo()) { return; }
+    demod_quieto(1);
+    if (on) { navtex_start(12000.0f); } else { navtex_stop(); }
     demod_quieto(0);
 }
 

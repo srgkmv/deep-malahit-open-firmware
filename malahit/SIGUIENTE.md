@@ -4,7 +4,41 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 22/11/2026, night: steps 42-44 IN FLASH (e51e82d), pushed
+## START HERE — 22/11/2026, evening: step 45 (NAVTEX) committed, flash pending
+
+**In flash: still `e51e82d`** (below). **Committed, checked from RAM**: step 45
+(`PORTING.md` 45) - NAVTEX on the decoders' screen, and three fixes to
+upstream's navtex.c the owner chose (the tone centre found in the scope's
+spectrum instead of by zero crossings, a tap on the scope that holds, and
+a lock that moves to the right bit offset after a slip), plus upstream's
+three NAVTEX band rows with the dial 1.7 kHz under the published
+frequency. On the air against the HackRF at 4209.5 kHz: clean from SNR 8
+up wherever the station sits, readable at 3. The owner asked for commit,
+push and flash.
+
+**The radio's state**: 4207.80 kHz, NAVTEX, from RAM; the FRAM holds
+mode 10, which the flash image (e51e82d) does not know - it boots AM over
+it, as the owner allows.
+
+**To do next**: the test the
+HackRF cannot do: a real NAVTEX station at 518 kHz (or 490) on an
+antenna, band NAVTEX (dial 516.3) - the CCIR 476 letters were checked
+against upstream's table only, and upstream's table is the one proven
+on the air. Stations transmit in fixed 10-minute slots every 4 hours
+(ITU-R M.540 B1 letters; the schedule is public). Open upstream
+weaknesses left as they are, for the owner to pick: garbage for a few
+seconds after each emission, the header chip outliving the lock.
+
+**The bench for NAVTEX**: `tools/hackrf_gen.py navtex --snr N --out
+n.iq` (`--repeat`, `--pause`, `--phasing`, `--lead`, `--reverse`;
+`--audio --tone 1700` for the host), `hackrf_transfer -t n.iq -f 4009500
+-s 2000000 -a 0 -x 47` with the radio on 4207.8 USB NAVTEX; host:
+`deepsdr-ui/out/navtexaire f.f32 [centre [reversed [spectrum]]]`
+(`NAVTEX_TRAZA=1` prints every centre the spectrum finds), and `make
+navtex2` for upstream's bench. `digi_report` over swd-call prints the
+decoder's state, the spectrum's pair and score.
+
+## 22/11/2026, night: steps 42-44 IN FLASH (e51e82d), pushed
 
 **In flash: `e51e82d`** (steps 42-44 - CW, RTTY with the three upstream
 fixes, PSK31, on the decoders' screen) - `build_flash/bringup.bin`,
@@ -18,7 +52,7 @@ signal at 954 Hz, 30 Hz from where it was with the radio warm (the cold
 crystal); the tap is the way to tune it. Pushed through this commit.
 
 The PSK31 centre a tap sets is not kept: every boot and every entry starts
-at upstream's 1000 Hz. Not asked for; a byte of the FRAM if it is.
+at upstream's 1000 Hz. The owner decided so (22/11/2026): not in the FRAM.
 
 **Next, the owner's order**: NAVTEX (HF NAVTEX at 4209.5 kHz is in the
 HackRF's range; 518/490 kHz are not) - SITOR-B, 100 Bd FSK 170 Hz, which

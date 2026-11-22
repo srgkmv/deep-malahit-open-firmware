@@ -113,7 +113,8 @@ uint32_t    menu_nr_strength(void);
 #define RADIO_MODE_RTTY_L   7           /* DEMOD_MODE_LSB + rtty.c, config.h's tones */
 #define RADIO_MODE_RTTY_U   8           /* DEMOD_MODE_USB + rtty.c, the tones swapped */
 #define RADIO_MODE_PSK31    9           /* DEMOD_MODE_USB + psk31.c */
-#define RADIO_MODE_LAST     RADIO_MODE_PSK31
+#define RADIO_MODE_NAVTEX   10          /* DEMOD_MODE_USB + navtex.c */
+#define RADIO_MODE_LAST     RADIO_MODE_NAVTEX
 void        radio_mode_set(int mode);
 int         radio_mode_get(void);
 const char *radio_mode_name(int mode);

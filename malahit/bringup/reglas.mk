@@ -430,6 +430,10 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/rtty_auto.c
 # psk31.c  PSK31: a phasor at the tone, differential detection, Varicode
 #          (step 44)
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/psk31.c
+# navtex.c  NAVTEX, SITOR-B: two tone filters a bit long, a Gardner bit
+#           clock, CCIR 476's four-of-seven and the repeat 350 ms later
+#           (step 45)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/navtex.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_digi.c
 #
 # THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]

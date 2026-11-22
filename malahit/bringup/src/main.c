@@ -62,6 +62,8 @@
 #include "rtty.h"         /* ../../User - upstream: the RTTY decoder */
 #include "rtty_auto.h"    /* ../../User */
 #include "psk31.h"        /* ../../User - upstream: the PSK31 decoder */
+#include "navtex.h"       /* ../../User - upstream: the NAVTEX decoder */
+#include "rtty_scope.h"   /* ../../User - its spectrum, for navtex_espectro() */
 #include "config.h"       /* ../../User - CONFIG_RTTY_SHIFT_MIN/MAX_HZ */
 #include "nb.h"           /* ../../User - upstream: the blanker, cw_report() */
 #include "digi.h"         /* src/ - the decoders' screen: scope and text */
@@ -6244,7 +6246,8 @@ static void cw_linea_suelta(void)
     if (s_cw_n == 0U) { return; }
     s_cw_lin[s_cw_n] = '\0';
     console_printf("  %s: %s\n", rtty_get_enabled() ? "rtty"
-                                 : psk31_activo() ? "psk31" : "cw", s_cw_lin);
+                                 : psk31_activo() ? "psk31"
+                                 : navtex_activo() ? "navtex" : "cw", s_cw_lin);
     s_cw_n = 0U;
 }
 
@@ -6265,7 +6268,7 @@ static uint8_t s_rtty_var;              /* 0 off, 1 RTTY-L, 2 RTTY-U */
 static int modo_demod(int mode)
 {
     if (mode == RADIO_MODE_CW || mode == RADIO_MODE_RTTY_U
-        || mode == RADIO_MODE_PSK31)                        { return (int)DEMOD_MODE_USB; }
+        || mode == RADIO_MODE_PSK31 || mode == RADIO_MODE_NAVTEX) { return (int)DEMOD_MODE_USB; }
     if (mode == RADIO_MODE_RTTY_L)                          { return (int)DEMOD_MODE_LSB; }
     return mode;
 }
@@ -6284,18 +6287,26 @@ static void texto_modo(int mode)
     uint8_t rv = (uint8_t)((mode == RADIO_MODE_RTTY_L) ? 1U
                          : (mode == RADIO_MODE_RTTY_U) ? 2U : 0U);
     uint8_t pk = (uint8_t)(mode == RADIO_MODE_PSK31);
+    uint8_t nx = (uint8_t)(mode == RADIO_MODE_NAVTEX);
     uint8_t era_cw = cw_get_enabled(), era_rv = s_rtty_var, era_pk = psk31_activo();
+    uint8_t era_nx = navtex_activo();
 
-    if (cw == era_cw && rv == era_rv && pk == era_pk) { return; }
+    if (cw == era_cw && rv == era_rv && pk == era_pk && nx == era_nx) { return; }
     cw_linea_suelta();
     demod_cw(cw);
     demod_rtty(rv);
     demod_psk31(pk);
+    demod_navtex(nx);
     s_rtty_var = rv;
-    digi_pon((uint8_t)(cw || rv || pk));
+    digi_pon((uint8_t)(cw || rv || pk || nx));
     if (pk != era_pk) {
         console_printf("  PSK31 %s - centre %u Hz\n", pk ? "on" : "off",
                        (uint32_t)(psk31_get_centro_hz() + 0.5f));
+    }
+    if (nx != era_nx) {
+        console_printf("  NAVTEX %s - centre %u Hz, %s\n", nx ? "on" : "off",
+                       (uint32_t)(navtex_get_centro_hz() + 0.5f),
+                       navtex_get_invertido() ? "reversed" : "B the higher tone");
     }
     if (menu_open_id() == MENU_NONE) { radio_screen_restore(); }
     if (cw != era_cw) {
@@ -6365,6 +6376,49 @@ static void rtty_auto_log(void)
     m0 = m; s0 = sp; b0 = b; v0 = v;
 }
 
+/*
+ * NAVTEX's phase on the console, as it changes - upstream's chip says it
+ * on the panel (searching / bits / SITOR / the header) and its own
+ * navtex_poll() logs only the text. Where the decoder listens matters as
+ * much: navtex.c measures its centre by itself after a search window
+ * without a lock (zero crossings, cruces_mete()), and this says where it
+ * went.
+ */
+static void navtex_linea_estado(const char *que)
+{
+    navtex_info_t in;
+    int32_t  c;
+
+    navtex_info(&in);
+    c = (int32_t)(navtex_get_centro_hz() + 0.5f) + (int32_t)in.desvio_hz;
+    console_printf("  navtex: %s %s (header %s), centre %d Hz (%+d measured), quality %u %%, "
+                   "chars %u good %u bad %u saved by the repeat, %u messages\n",
+                   que, in.car_sync ? "SITOR" : in.bit_sync ? "bits" : "searching",
+                   in.tiene_cab ? in.cab : "-",
+                   (int)c, (int)in.desvio_hz, (uint32_t)(100.0f * in.calidad + 0.5f),
+                   (uint32_t)in.car_ok, (uint32_t)in.car_mal, (uint32_t)in.rescatados,
+                   (uint32_t)in.mensajes);
+}
+
+static void navtex_log(void)
+{
+    static uint8_t  f0 = 0xFFU;
+    static int16_t  d0;
+    static char     cab0[5];
+    navtex_info_t in;
+    uint8_t f;
+
+    navtex_info(&in);
+    f = (uint8_t)((in.tiene_cab << 2) | (in.car_sync << 1) | in.bit_sync);
+    if (f == f0 && in.desvio_hz == d0 && (!in.tiene_cab || memcmp(cab0, in.cab, 4U) == 0)) {
+        return;
+    }
+    f0 = f;
+    d0 = in.desvio_hz;
+    memcpy(cab0, in.cab, 4U);
+    navtex_linea_estado("now");
+}
+
 static void cw_poll(void)
 {
     char c;
@@ -6381,6 +6435,16 @@ static void cw_poll(void)
     if (psk31_activo()) {
         while (psk31_get_char(&c)) { hay = 1U; texto_char(c); }
     }
+    if (navtex_activo()) {
+        /* navtex.c's centre, from the scope's spectrum (navtex_espectro(),
+         * 22/11/2026): the frame src/digi.c draws, made here too so a menu
+         * over the screen does not stop the search. Each frame once. */
+        rtty_scope_poll();
+        navtex_espectro(rtty_scope_frame_peek(), (uint16_t)RTTY_SCOPE_BINS,
+                        rtty_scope_hz_per_bin(), rtty_scope_frame_n());
+        while (navtex_get_char(&c)) { hay = 1U; texto_char(c); }
+        navtex_log();
+    }
     (void)hay;
     if (s_cw_n > 0U && (board_millis() - s_cw_t) >= CW_LINEA_MS) {
         cw_linea_suelta();
@@ -6389,6 +6453,8 @@ static void cw_poll(void)
                            (uint32_t)(cw_get_wpm() + 0.5f),
                            (uint32_t)(cw_get_detect_hz() + 0.5f),
                            (uint32_t)(100.0f * cw_get_quality() + 0.5f));
+        } else if (navtex_activo()) {
+            navtex_linea_estado("--");
         } else if (psk31_activo()) {
             uint8_t cal = 0U;
             int16_t e = 0;
@@ -6950,7 +7016,7 @@ static void ui_wf_push(const float *db, uint32_t bins)
  */
 static const char *const k_mode_names[] = { "AM", "USB", "LSB", "NFM",
                                             "WFM", "SAM", "CW", "RTTY-L",
-                                            "RTTY-U", "PSK31" };
+                                            "RTTY-U", "PSK31", "NAVTEX" };
 _Static_assert(sizeof k_mode_names / sizeof k_mode_names[0]
                == (size_t)RADIO_MODE_LAST + 1U,
                "a name for every mode, upstream's and the decoders' (menus.h)");
@@ -7143,6 +7209,7 @@ int radio_mode_get(void)
     if (m == (int)DEMOD_MODE_LSB && s_rtty_var == 1U) { return RADIO_MODE_RTTY_L; }
     if (m == (int)DEMOD_MODE_USB && s_rtty_var == 2U) { return RADIO_MODE_RTTY_U; }
     if (m == (int)DEMOD_MODE_USB && psk31_activo())   { return RADIO_MODE_PSK31; }
+    if (m == (int)DEMOD_MODE_USB && navtex_activo())  { return RADIO_MODE_NAVTEX; }
     return m;
 }
 

@@ -5,6 +5,7 @@ Test signals for the decoders, sent by a HackRF into the radio - 22/11/2026.
     tools/hackrf_gen.py cw --text "CQ DE R1TEST K" --wpm 20 --snr 12 --out f.iq
     tools/hackrf_gen.py rtty --text "CQ DE R1TEST K" --baud 50 --shift 450 --out r.iq
     tools/hackrf_gen.py psk31 --text "CQ CQ de R1TEST k" --out p.iq
+    tools/hackrf_gen.py navtex --snr 10 --out n.iq
     tools/hackrf_gen.py carrier --seconds 10 --out c.iq
     hackrf_transfer -t f.iq -f <carrier Hz - 200000> -s 2000000 -a 0 -x 47
 
@@ -103,6 +104,35 @@ VARICODE = {
     '.': '1010111', ',': '1110101', '?': '1010101111', '/': '110101111',
     '-': '110101', ':': '11110101', '=': '1010101',
 }
+
+# CCIR 476 (ITU-R M.476/M.625), SITOR's 7-unit code: every character four B
+# and three Y, written here in the order SENT, B1 first, B the HIGHER radio
+# frequency. The three control signals are the recommendation's (alpha
+# BBBBYYY, beta BBYYBBY, signal repetition YBBYYBB) and fix the bit order;
+# the letters and figures could not be written from the recommendation
+# independently in this session - they were checked against upstream's
+# navtex.c table, which upstream proved on the air (an Oostende recording,
+# 02/10/2026). The independent test of them is a real station on 518/490
+# kHz. Only what NAVTEX traffic uses: letters, digits, - ? : ( ) . , / '
+CCIR_LTRS = {
+    'A': 'BBBYYYB', 'B': 'YBYYBBB', 'C': 'BYBBBYY', 'D': 'BBYYBYB',
+    'E': 'YBBYBYB', 'F': 'BBYBBYY', 'G': 'BYBYBBY', 'H': 'BYYBYBB',
+    'I': 'BYBBYYB', 'J': 'BBBYBYY', 'K': 'YBBBBYY', 'L': 'BYBYYBB',
+    'M': 'BYYBBBY', 'N': 'BYYBBYB', 'O': 'BYYYBBB', 'P': 'BYBBYBY',
+    'Q': 'YBBBYBY', 'R': 'BYBYBYB', 'S': 'BBYBYYB', 'T': 'YYBYBBB',
+    'U': 'YBBBYYB', 'V': 'YYBBBBY', 'W': 'BBBYYBY', 'X': 'YBYBBBY',
+    'Y': 'BBYBYBY', 'Z': 'BBYYYBB',
+}
+CCIR_FIGS = {   # the same codes as the letters above them, in figures
+    '-': 'BBBYYYB', '?': 'YBYYBBB', ':': 'BYBBBYY', '8': 'BYBBYYB',
+    "'": 'BBBYBYY', '(': 'YBBBBYY', ')': 'BYBYYBB', '.': 'BYYBBBY',
+    ',': 'BYYBBYB', '9': 'BYYYBBB', '0': 'BYBBYBY', '1': 'YBBBYBY',
+    '4': 'BYBYBYB', '3': 'YBBYBYB', '5': 'YYBYBBB', '7': 'YBBBYYB',
+    '2': 'BBBYYBY', '/': 'YBYBBBY', '6': 'BBYBYBY',
+}
+CCIR_SPACE, CCIR_CR, CCIR_LF = 'YYBBBYB', 'YYYBBBB', 'YYBBYBB'
+CCIR_LTRS_SHIFT, CCIR_FIGS_SHIFT = 'YBYBBYB', 'YBBYBBY'
+CCIR_ALPHA, CCIR_BETA, CCIR_RQ = 'BBBBYYY', 'BBYYBBY', 'YBBYYBB'
 
 
 def raised_edges(key, rise_ms):
@@ -227,6 +257,72 @@ def psk31_baseband(a):
     return x.astype(np.complex128), f'{a.text!r}, BPSK31'
 
 
+def ccir_codes(text):
+    """The text as CCIR 476 codes: LETTERS first, a shift where the case
+    changes, \\n as CR LF - and after a line end the shift again whatever
+    it is, since NAVTEX receivers (upstream's too) go back to letters
+    there."""
+    out, figs = [CCIR_LTRS_SHIFT], False
+    for ch in text.upper():
+        if ch == '\n':
+            out += [CCIR_CR, CCIR_LF]
+            figs = None
+        elif ch == ' ':
+            out.append(CCIR_SPACE)
+        elif ch in CCIR_LTRS:
+            if figs is not False:
+                out.append(CCIR_LTRS_SHIFT)
+                figs = False
+            out.append(CCIR_LTRS[ch])
+        elif ch in CCIR_FIGS:
+            if figs is not True:
+                out.append(CCIR_FIGS_SHIFT)
+                figs = True
+            out.append(CCIR_FIGS[ch])
+        else:
+            raise SystemExit(f'navtex: {ch!r} is not in this file\'s CCIR 476 table')
+    return out
+
+
+def navtex_baseband(a):
+    """SITOR-B (ITU-R M.476 FEC, M.625 mode B), as NAVTEX sends it (ITU-R
+    M.540): 100 Bd, continuous-phase FSK +-85 Hz round 0 Hz, B the higher
+    frequency (--reverse swaps them). Character positions of 70 ms; each
+    character twice - the first copy (DX) at an even position, the
+    repeat (RX) five positions (350 ms) later, at an odd one. Before the
+    text, `phasing` seconds of alpha in DX and signal repetition in RX;
+    after it, alpha in DX (end of emission) while the RX copies run out.
+    No silence inside: the station never stops keying."""
+    codes = ccir_codes(a.text)
+    nph = int(round(a.phasing / 0.07)) & ~1        # even: DX on the evens
+    total = nph + 2 * len(codes) + 5 + 6
+    pos = [CCIR_ALPHA if (i & 1) == 0 else CCIR_RQ for i in range(total)]
+    for i, c in enumerate(codes):
+        pos[nph + 2 * i] = c
+        pos[nph + 2 * i + 5] = c
+    for i in range(nph + 2 * len(codes), total, 2):
+        pos[i] = CCIR_ALPHA                         # end of emission, DX
+    for c in pos:
+        assert len(c) == 7 and c.count('B') == 4, c
+    one = np.array([1.0 if b == 'B' else 0.0 for c in pos for b in c])
+    if a.reverse:
+        one = 1.0 - one
+    t_bit = FS_LO / 100.0                           # 480 samples
+    lvl = np.repeat(one, int(t_bit))
+    lvl = np.concatenate([np.concatenate([lvl, np.full(int(a.pause * FS_LO), -1.0)])
+                          for _ in range(a.repeat)])
+    key = (lvl >= 0.0).astype(np.float64)
+    f = (np.clip(lvl, 0.0, 1.0) - 0.5) * 170.0     # +85 B, -85 Y
+    ph = 2 * np.pi * np.cumsum(f) / FS_LO
+    x = np.exp(1j * ph)
+    lead = np.zeros(int(a.lead * FS_LO))
+    x = np.concatenate([lead, x])
+    key = np.concatenate([np.zeros(len(lead)), key])
+    return x * raised_edges(key, 5.0), (f'{a.text!r}, SITOR-B, {len(codes)} codes, '
+                                        f'{nph * 0.07:.1f} s phasing, '
+                                        f'{"reversed" if a.reverse else "normal"}')
+
+
 def carrier_baseband(a):
     return np.ones(int(a.seconds * FS_LO), dtype=np.complex128), 'carrier'
 
@@ -333,6 +429,21 @@ def main():
     p.add_argument('--pause', type=float, default=1.0, help='s of silence around it')
     p.add_argument('--repeat', type=int, default=1)
     p.set_defaults(build=psk31_baseband)
+
+    p = sub.add_parser('navtex', help='NAVTEX, SITOR-B FEC')
+    common(p)
+    p.add_argument('--text', default='ZCZC FA01\nSECURITE\nNAVAREA I 123/26\n'
+                   'TEST MESSAGE DE R1TEST. GALE 8 SW, 55-12N 012-30E AT 0942 UTC.\n'
+                   'NNNN\n')
+    p.add_argument('--phasing', type=float, default=10.0,
+                   help='s of phasing before the text (M.540: at least 10)')
+    p.add_argument('--reverse', action='store_true', help='B the LOWER frequency')
+    p.add_argument('--lead', type=float, default=0.5,
+                   help='s of silence (only the noise, with --snr) before it')
+    p.add_argument('--pause', type=float, default=3.0,
+                   help='s of silence after each emission')
+    p.add_argument('--repeat', type=int, default=1)
+    p.set_defaults(build=navtex_baseband)
 
     a = ap.parse_args()
     x, what = a.build(a)

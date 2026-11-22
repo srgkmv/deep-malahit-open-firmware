@@ -1490,6 +1490,93 @@ Each step should end with something visible on the radio.
    1000 Hz and correctly at 987. With a tap: SNR 3 and 0 dB clean, -3 dB
    but for the last two letters; three repeats in a row; error held at
    +1 Hz by its tracking. AXI 444.7 of 512 kB.
+45. **NAVTEX, and three fixes to upstream's in User/.** *22/11/2026,
+   from RAM, against the HackRF at 4209.5 kHz* - upstream's navtex.c
+   (SITOR-B: two tone filters a bit long, a Gardner bit clock, CCIR 476's
+   four-of-seven, the repeat 350 ms later), stub gone; entry 10 (USB),
+   "Avisos marítimos" in Digital; `demod_navtex()` under the flag. The
+   panel is upstream's: Borrar and the chip, which says the phase -
+   "buscando", "bits", "SITOR", then the last header ("FA01") - with the
+   character sync as the dot. The scope draws B and Y 85 Hz either side of
+   where the decoder listens NOW (its setting plus what it measured);
+   upstream's scope_rayas() has no NAVTEX branch and drew RTTY's lines.
+   `tools/hackrf_gen.py navtex` (CCIR 476 in transmission order, B the
+   higher frequency; the FEC frame of M.476/M.625 - DX on the evens, RX
+   five positions later, alpha/RQ phasing, alpha at the end) and
+   `deepsdr-ui/sim/navtex_aire.c` (`make out/navtexaire`: upstream's
+   navtex.c, with the scope, on any `--audio` file). The letters were
+   checked against upstream's table, not written from the recommendation -
+   only the control signals were; upstream's table is the one proven on
+   the air (an Oostende recording). A real station on 518/490 kHz, below
+   the HackRF, is the independent test still to do.
+   **The owner chose to have three things fixed in User/**, each shown
+   first on the radio and reproduced on the host:
+   1. **The centre of the tones**, the decisive one. Upstream measures it
+      by counting zero crossings after a search window without a lock -
+      which measures the centre of the NOISE as soon as the signal does
+      not swamp it (a 4 kHz sideband holds 9 dB more noise than 500 Hz).
+      On the radio: with no signal the centre wandered to 2295-2357 Hz;
+      SNR 15 dB (in 500 Hz) pulled it back to 1741 and decoded; SNR 8
+      left it at 2020-2100 and nothing came out. On the host, tones at
+      1100 Hz with SNR 10 were "measured" at 2245. Now navtex_espectro(),
+      fed from the main loop with the tuning scope's frames (rtty_scope.c,
+      23.4 Hz a bin), averages ~1.4 s and looks for the PAIR: each lobe
+      (+-45 Hz at c-85 and c+85) against the floor on its own outer side
+      (so the SSB filter's edge cannot fake one), the worse of the two
+      ratios, 2.0 to pass; the position from the energy of both lobes,
+      continuous across bins, refined by a parabola; three searches
+      within 15 Hz before a move, none while locked, none in noise -
+      without a pair the centre stays where it was. The zero crossings
+      stay for whoever gives no spectrum (the recordings bench). Host:
+      the centre within 5 Hz from 1100 to 2300 Hz down to SNR 3, the
+      text whole down to SNR 3 at every centre (the crossings: nothing
+      below SNR 8 except where the noise's centre happened to be);
+      shaped noise (300-1800/2300/4000 Hz) scores 1.3-1.55 at most over
+      5 minutes. Three things the bench taught on the way: the first frame
+      seen is stale (a tone from before stayed in the average ten seconds);
+      the exponential average must start as a true mean; and "worse lobe
+      against its floor" says WHETHER, not WHERE - its maximum is flat
+      over +-35 Hz, and on the radio the centre jumped 1674/1707 and each
+      jump reset the bit clock (now a small correction, under 60 Hz,
+      keeps the loops).
+   2. **A tap on the scope sets the centre and it holds** until the mode
+      is entered again: navtex_set_centro_hz() said "the operator rules"
+      and gave the operator one search window, 2.2 s. The tap goes to
+      the pair the same search finds within +-150 Hz of the finger
+      (navtex_centro_cerca(), score 1.6 or the finger itself).
+   3. **A bit slip no longer ruins the rest of the message.** The lock
+      watchdog lets go below 37 % valid codes; shifted one bit, text
+      still gives 45-70 %, and the decoder sat on the wrong offset to
+      the end printing garbage - on the radio, 2 emissions of 10 locked
+      at quality 57-65 %. Comparing the two copies does not see it
+      either: two 7-bit words one bit apart cannot both have four ones,
+      so shifted copies that are both valid always agree. What sees it
+      is the search's own count, kept going while locked: if another
+      offset gets PAR_MIN pairs and 4 more pairs AND 4 more valid codes
+      than the one set, in a 224-bit window, the decoder moves there and
+      measures the parity again (the rewind keeps what came between).
+      Host: a bit lost at character 60 of 151 - the end of the message
+      back after ~25 characters; no move at all in clean runs, SNR 15
+      to 1, or two minutes of noise. On the radio, after: 10 messages of
+      10 clean at SNR 15 and 8, gaps and no gaps.
+   And upstream's three NAVTEX band rows put the dial ON the published
+   frequency - the centre of the emission - which in USB leaves the tones
+   at +-85 Hz of audio: nothing came in through them (the same mistake
+   upstream fixed for its fax rows on 21/10). Now 516.3, 488.3 and
+   4207.8 kHz, labelled with the dial, as the fax rows are.
+   **On the air after the fixes** (dial 4207.8 USB, the HackRF and the
+   radio 26-29 Hz apart here): noise - the centre stays at 1700, score
+   1.1-1.2; SNR 8 - found at 1672, both repeats clean; SNR 3 - header
+   and text but for a lost figures shift; SNR 0 - nothing (upstream's
+   decoder needs ~2 dB); the station 400 Hz up - 2072, 500 Hz down -
+   1182, clean. Upstream's bench (`make navtex2`) has two new sections,
+   8 (the centre in the spectrum, noise alone, the operator's centre)
+   and 9 (a bit lost), all green; the DEEPSDR's firmware builds and its
+   29 firmware checks are green. Left as upstream has them: a few seconds
+   of garbage after each emission ends (the lock is let go by the
+   validity watchdog), the chip keeping the last header after the lock
+   is lost (upstream's "old but true"), and a band button setting USB,
+   which switches the decoder off. AXI 454.4 of 512 kB.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress
