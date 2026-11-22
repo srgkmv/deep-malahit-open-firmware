@@ -434,6 +434,11 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/psk31.c
 #           clock, CCIR 476's four-of-seven and the repeat 350 ms later
 #           (step 45)
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/navtex.c
+# dsc.c  HF DSC, ITU-R M.493: the same tone filters and bit clock as NAVTEX,
+#        ten-bit characters, DX/RX two pairs apart, the ECC; its state in
+#        the borrowed RAM (src/prestamo.c, not upstream's hfdl_ram.c)
+#        (step 46)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/dsc.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_digi.c
 #
 # THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]

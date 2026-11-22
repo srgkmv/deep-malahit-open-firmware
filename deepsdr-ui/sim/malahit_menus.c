@@ -76,6 +76,7 @@ static void modos_fam(uint8_t fam, const char *ppm)
         { 1, "RTTY-U", "Teletipo en USB", "Teletype on USB" },
         { 1, "PSK31", "Charla en fase", "Phase-shift chat" },
         { 1, "NAVTEX", "Avisos marítimos", "Marine warnings" },
+        { 1, "DSC", "Llamada marítima", "Maritime DSC" },
     };
     ui_cfg_state_t st;
     uint8_t i;

@@ -73,6 +73,9 @@ void demod_psk31(int on);
 /* NAVTEX on (1) or off (0), started from zero each time. */
 void demod_navtex(int on);
 
+/* DSC on (1) or off (0), started from zero each time. */
+void demod_dsc(int on);
+
 /* The bench's recorder of what PSK31 is fed: 1 arms it (2.5 s, g_graba). */
 void demod_graba(int on);
 

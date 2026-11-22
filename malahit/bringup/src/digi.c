@@ -21,6 +21,8 @@
  *   PSK31  Borrar                               | "+1,2 Hz" + dot
  *   NAVTEX Borrar                               | "FA01" / "SITOR" /
  *                                                 "bits" / "buscando" + dot
+ *   DSC    Borrar                               | "buscando" / "sync" /
+ *                                                 "llamada" + dot
  *
  * and upstream's tap on each (rtty_shift_siguiente(), rtty_baud_
  * siguiente(), the Auto toggle, cw_set_aprende()) - on the press here,
@@ -41,6 +43,7 @@
 #include "rtty_auto.h"
 #include "psk31.h"
 #include "navtex.h"
+#include "dsc.h"
 #include "demod.h"         /* demod_quieto(): a decoder reconfigured, no block through it */
 #include "idioma.h"        /* ../../User - tr() */
 
@@ -263,6 +266,26 @@ static void sincroniza(void)
         return;
     }
 
+    if (dsc_activo()) {
+        /* This port's: upstream's digi_sync() has no DSC branch. What the
+         * decoder is doing - a call is a few seconds now and then, and
+         * between them "searching" is the honest word - with the lock as
+         * the dot. The calls themselves go to the rows. */
+        dsc_info_t in;
+        const char *t;
+
+        dsc_info(&in);
+        t = in.en_mensaje ? tr("llamada", "call") : in.enganchado ? "sync"
+          : tr("buscando", "searching");
+        for (i = 0U; t[i] != '\0' && i < (uint8_t)(sizeof s_chip - 1U); i++) {
+            s_chip[i] = t[i];
+        }
+        s_chip[i] = '\0';
+        s_st.chip = s_chip;
+        s_st.enganchado = in.enganchado;
+        return;
+    }
+
     s_st.btn2       = tr("Aprende", "Learn");
     s_st.btn2_press = cw_get_aprende();
 
@@ -323,6 +346,15 @@ static void osciloscopio(void)
         e = navtex_get_invertido() ? c + 0.5f * NAVTEX_SHIFT_HZ : c - 0.5f * NAVTEX_SHIFT_HZ;
         a = (uint16_t)(m / nyq * (float)GFX2_W);
         b = (uint16_t)(e / nyq * (float)GFX2_W);
+        if (a < GFX2_W) { gfx_vline(a, DIGI_SCOPE_Y, DIGI_SCOPE_H, color_tema(PAL_ACCENT)); }
+        if (b < GFX2_W) { gfx_vline(b, DIGI_SCOPE_Y, DIGI_SCOPE_H, color_tema(PAL_WARN)); }
+    } else if (nyq > 0.0f && dsc_activo()) {
+        /* DSC: B, the higher tone (ITU-R M.493 section 1), in the accent,
+         * Y in the warning colour, 85 Hz either side of where it listens. */
+        float    c = dsc_get_centro_hz();
+        uint16_t a = (uint16_t)((c + 0.5f * DSC_SHIFT_HZ) / nyq * (float)GFX2_W);
+        uint16_t b = (uint16_t)((c - 0.5f * DSC_SHIFT_HZ) / nyq * (float)GFX2_W);
+
         if (a < GFX2_W) { gfx_vline(a, DIGI_SCOPE_Y, DIGI_SCOPE_H, color_tema(PAL_ACCENT)); }
         if (b < GFX2_W) { gfx_vline(b, DIGI_SCOPE_Y, DIGI_SCOPE_H, color_tema(PAL_WARN)); }
     } else if (nyq > 0.0f && psk31_activo()) {
@@ -550,6 +582,16 @@ __attribute__((noinline, used)) void digi_report(void)
                        "moved to another bit offset %u times\n",
                        (uint32_t)(par + 0.5f), (uint32_t)nota,
                        (uint32_t)(nota * 100.0f + 0.5f) % 100U, (uint32_t)navtex_recolocados());
+    }
+    if (dsc_activo()) {
+        dsc_info_t in;
+
+        dsc_info(&in);
+        console_printf("               dsc: centre %u Hz (the search last found %u), %s, "
+                       "calls %u good %u with a bad check\n",
+                       (uint32_t)(dsc_get_centro_hz() + 0.5f), (uint32_t)(dsc_busca_hz() + 0.5f),
+                       in.en_mensaje ? "receiving" : in.enganchado ? "locked" : "searching",
+                       (uint32_t)in.llamadas, (uint32_t)in.malas);
     }
     if (f == 0) { return; }
     for (k = 4U; k < RTTY_SCOPE_BINS; k++) { if (f[k] > f[p1]) { p1 = k; } }

@@ -6,6 +6,7 @@ Test signals for the decoders, sent by a HackRF into the radio - 22/11/2026.
     tools/hackrf_gen.py rtty --text "CQ DE R1TEST K" --baud 50 --shift 450 --out r.iq
     tools/hackrf_gen.py psk31 --text "CQ CQ de R1TEST k" --out p.iq
     tools/hackrf_gen.py navtex --snr 10 --out n.iq
+    tools/hackrf_gen.py dsc --snr 10 --out d.iq
     tools/hackrf_gen.py carrier --seconds 10 --out c.iq
     hackrf_transfer -t f.iq -f <carrier Hz - 200000> -s 2000000 -a 0 -x 47
 
@@ -323,6 +324,82 @@ def navtex_baseband(a):
                                         f'{"reversed" if a.reverse else "normal"}')
 
 
+def dsc_symbol_bits(sym):
+    """ITU-R M.493 section 2: ten bits a character - the seven of the
+    value, least significant FIRST, then three that are the COUNT of B
+    (0) elements among those seven, most significant first. Y = 1, B = 0."""
+    info = [(sym >> k) & 1 for k in range(7)]
+    zeros = info.count(0)
+    return info + [(zeros >> 2) & 1, (zeros >> 1) & 1, zeros & 1]
+
+
+def dsc_mmsi(mmsi):
+    """Section 5: nine digits and a trailing 0, two digits a character."""
+    d = (mmsi + '0')
+    assert len(d) == 10 and d.isdigit(), mmsi
+    return [int(d[i:i + 2]) for i in range(0, 10, 2)]
+
+
+def dsc_call(a):
+    """The DX characters of a call, format specifier to the closing EOS.
+    Individual routine call (120), or all-ships (116), or a distress
+    alert (112, synthetic - the decoder's only test of it, as upstream says)."""
+    if a.format == 'individual':
+        info = [120, 120] + dsc_mmsi(a.to) + [100] + dsc_mmsi(a.mmsi) \
+             + [100, 126] + [126] * 6
+        eos = 117
+    elif a.format == 'allships':
+        info = [116, 116] + [108] + dsc_mmsi(a.mmsi) + [100, 126] + [126] * 6
+        eos = 127
+    else:   # distress: self-ID, nature, position (4 x 126 unknown here), time, telecommand
+        info = [112, 112] + dsc_mmsi(a.mmsi) + [105] + [99, 99, 99, 99, 99] \
+             + [88, 88] + [100]
+        eos = 127
+    # Section 10: the ECC is the even parity of the seven information bits
+    # of every information character, the format specifier counted ONCE
+    # and the EOS once.
+    ecc = 0
+    for c in info[1:] + [eos]:
+        ecc ^= c & 0x7F
+    return info + [eos, ecc, eos, eos], ecc
+
+
+def dsc_baseband(a):
+    """HF DSC (ITU-R M.493): 100 Bd FSK +-85 Hz round 0 Hz, B (0) the
+    HIGHER frequency, as F1B always is. A dot pattern (B and Y alternating),
+    then DX and RX alternating: DX 125 six times while RX counts 111 down to
+    104, then the call in DX; each RX position carrying the DX character of
+    two pairs before (five positions, 500 ms). Silence before and after."""
+    dx, ecc = dsc_call(a)
+    dx_all = [125] * 6 + dx
+    npairs = len(dx_all) + 2
+    pos = []
+    for n in range(npairs):
+        d = dx_all[n] if n < len(dx_all) else 126   # nothing after: the RX run out
+        if n < 8:
+            r = 111 - n
+        else:
+            r = dx_all[n - 2]
+        pos += [d, r]
+    pos = pos[:2 * len(dx_all) + 4]                 # the last RX copies, then stop
+    bits = [(k & 1) for k in range(a.dots)]         # B Y B Y ... (0 1 0 1)
+    for sym in pos:
+        bits += dsc_symbol_bits(sym)
+    one = np.array(bits, dtype=np.float64)
+    if a.reverse:
+        one = 1.0 - one
+    lvl = np.repeat(one, int(FS_LO / 100.0))
+    gap = np.full(int(a.pause * FS_LO), -1.0)
+    lvl = np.concatenate([np.full(int(a.lead * FS_LO), -1.0)]
+                         + [np.concatenate([lvl, gap])] * a.repeat)
+    key = (lvl >= 0.0).astype(np.float64)
+    f = (0.5 - np.clip(lvl, 0.0, 1.0)) * 170.0     # 0 (B) +85, 1 (Y) -85
+    x = np.exp(1j * 2 * np.pi * np.cumsum(f) / FS_LO)
+    return x * raised_edges(key, 5.0), (f'DSC {a.format}, {len(dx)} DX characters, '
+                                        f'ECC {ecc}, {a.dots} dots, '
+                                        f'{"reversed" if a.reverse else "normal"}')
+
+
 def carrier_baseband(a):
     return np.ones(int(a.seconds * FS_LO), dtype=np.complex128), 'carrier'
 
@@ -444,6 +521,19 @@ def main():
                    help='s of silence after each emission')
     p.add_argument('--repeat', type=int, default=1)
     p.set_defaults(build=navtex_baseband)
+
+    p = sub.add_parser('dsc', help='HF DSC, ITU-R M.493')
+    common(p)
+    p.add_argument('--format', choices=['individual', 'allships', 'distress'],
+                   default='individual')
+    p.add_argument('--mmsi', default='273123450', help='who calls (9 digits)')
+    p.add_argument('--to', default='002734417', help='whom (9 digits)')
+    p.add_argument('--dots', type=int, default=200, help='bits of dot pattern')
+    p.add_argument('--reverse', action='store_true', help='B the LOWER frequency')
+    p.add_argument('--lead', type=float, default=1.0, help='s of silence before')
+    p.add_argument('--pause', type=float, default=3.0, help='s of silence after each')
+    p.add_argument('--repeat', type=int, default=1)
+    p.set_defaults(build=dsc_baseband)
 
     a = ap.parse_args()
     x, what = a.build(a)

@@ -16,6 +16,7 @@
 #include "config.h"       /* ../../User - CONFIG_RTTY_MARK_HZ/SPACE_HZ */
 #include "psk31.h"        /* ../../User - demod_psk31() */
 #include "navtex.h"       /* ../../User - demod_navtex() */
+#include "dsc.h"          /* ../../User - demod_dsc() */
 
 /*
  * Upstream's call: 512 frames at 192 kHz in (with rf_doble), 512 stereo
@@ -75,7 +76,7 @@ void demod_init(void)
     __asm__ volatile ("" :: "r"(demod_path), "r"(demod_mode),
                             "r"(demod_mix), "r"(demod_report),
                             "r"(estereo_pon), "r"(demod_cw),
-                            "r"(demod_rtty), "r"(demod_psk31), "r"(demod_navtex),
+                            "r"(demod_rtty), "r"(demod_psk31), "r"(demod_navtex), "r"(demod_dsc),
                             "r"(demod_graba));
 }
 
@@ -336,6 +337,21 @@ SWD_ENTRY void demod_navtex(int on)
     demod_quieto(1);
     if (on) { navtex_start(12000.0f); } else { navtex_stop(); }
     demod_quieto(0);
+}
+
+/* DSC on or off, upstream's dsc_start(DEMOD_DEC_FS_HZ) / dsc_stop() - its
+ * state in the borrowed RAM (src/prestamo.c), which dsc_start() refuses if
+ * it is too small: said here, rather than a mode that silently does
+ * nothing. */
+SWD_ENTRY void demod_dsc(int on)
+{
+    if ((uint8_t)(on != 0) == dsc_activo()) { return; }
+    demod_quieto(1);
+    if (on) { dsc_start(12000.0f); } else { dsc_stop(); }
+    demod_quieto(0);
+    if (on && !dsc_activo()) {
+        console_printf("  *** DSC did not start: the borrowed RAM is too small (src/prestamo.c) ***\n");
+    }
 }
 
 /*

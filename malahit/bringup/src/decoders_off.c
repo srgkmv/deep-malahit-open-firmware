@@ -57,7 +57,7 @@ OFF_U16(ais_modo_activo,    ais_modo_mete)
 OFF_U16(ale_modo_activo,    ale_modo_mete)
 OFF_U32(analiz_activo,      analiz_feed)
 OFF_U32(ax25_activo,        ax25_process)
-OFF_U32(dsc_activo,         dsc_process)
+/* dsc_activo, dsc_process: the real ones since 22/11/2026 (dsc.c, step 46) */
 OFF_U16(ft8_modo_activo,    ft8_modo_come)
 OFF_U32(hell_activo,        hell_process)
 OFF_U16(ident_modo_activo,  ident_modo_mete)

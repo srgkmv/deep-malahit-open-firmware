@@ -1577,6 +1577,76 @@ Each step should end with something visible on the radio.
    validity watchdog), the chip keeping the last header after the lock
    is lost (upstream's "old but true"), and a band button setting USB,
    which switches the decoder off. AXI 454.4 of 512 kB.
+46. **DSC, four fixes to upstream's, and a fifth band family.**
+   *22/11/2026, from RAM, against the HackRF at 8414.5 kHz* - upstream's
+   dsc.c (HF DSC, ITU-R M.493: NAVTEX's tone filters and bit clock,
+   ten-bit characters, DX/RX two pairs apart, the ECC), stub gone; entry
+   11 (USB), "Llamada marítima" in Digital; `demod_dsc()` under the flag,
+   saying so on the console if the decoder refuses to start. Its state
+   lives in "the borrowed RAM" (User/hfdl_ram.h): upstream lends the
+   DEEPSDR's waterfall pixels, which this port's main.c keeps writing in
+   every mode, so `src/prestamo.c` lends 8 kB of D2 SRAM instead - the
+   same three calls; WSPR and HFDL will need it grown to 66 kB, and AXI
+   is untouched by it (tools/prestamo_check.py skips it as it skips
+   hfdl_ram.c: it defines the lock). The panel gets each call whole when
+   dsc.c counts it, as upstream's dsc_poll_main() does; the chip, which
+   upstream does not have for DSC, says searching / sync / call, the lock
+   as the dot; the scope draws B and Y round the centre.
+   `tools/hackrf_gen.py dsc` writes calls from the recommendation - ten-
+   bit characters, dot pattern (`--dots`, 200 or 20), phasing 125 /
+   111..104, format specifier twice, the ECC with it once - individual,
+   all-ships or a distress alert; upstream's decoder read the first one
+   whole, ECC included. `deepsdr-ui/sim/dsc_radio.c` (`make
+   out/dscradio`) runs dsc.c the way the radio does, with the scope and
+   dsc_poll() every 15 blocks - upstream's dscaire has neither, and they
+   are what moves the centre.
+   **On the host, as on the radio, upstream lost calls**: SNR 5-20 dB in
+   500 Hz, centres 1100/1700/2300 Hz, 48 of 72; with a 20-bit dot pattern,
+   what many HF calls send, half. Four causes, each found by tracing, and
+   the owner had all four fixed in User/dsc.c:
+   1. The centre of a single scope frame jitters (1676 / 1723 Hz for
+      tones at 1700) by more than the 25 Hz that moves it, and every move
+      threw the character-phase search away - it locked only in the gap
+      between two jumps. A move under 60 Hz now retunes the tones and
+      keeps the search.
+   2. The search's counts (punt[]) were never cleared while hunting, so
+      minutes of noise filled them with chance sync characters until one
+      phase was one short of four; then anything locked it on the WRONG
+      phase, the call came in as garbage and the decoder filled its
+      message for 8 s until it overflowed. Counts now live in 160-bit
+      (1.6 s) windows; the phasing gives 14 sync characters in 1.4 s.
+   3. The bit clock's integrator, with upstream's high gain, reaches its
+      +-2 % clamp in a few dozen bits of noise: a call came in with the
+      clock 1.6 % slow and slipped a bit right after the lock (the
+      phasing's 109 read as 54). The clamp is NAVTEX's +-0.5 %, and the
+      integrator is cleared at the lock and with each window.
+   4. A peak had to be 4x the frame's mean, which noise alone gives five
+      bins a frame: the centre moved 502 times in two minutes of noise,
+      and the scope's lines with it. Now 8x: 20 times, calls the same.
+   Host after: 71 of 72 at SNR 5-20 (36 of 36 short-dot calls at SNR 10,
+   34 at 5 against 32 and 30 halfway); `make dsc` (upstream's dsctest) has
+   a new section 6, audio through scope and dsc_poll() with 40 s of noise
+   first and four short-dot calls - upstream's file gives 2, this one 4.
+   The real recordings upstream checked dsc.c against are not in this
+   clone: the +-0.5 % clamp is the one change that could matter to a
+   recording with a wrong sample rate.
+   **On the air** (dial 8412.8 USB): 20 calls of 20 with the check right,
+   SNR 10 and 5, long and short dots, the station 400 Hz up; before the
+   clock fix, 2 of 4 short-dot calls at SNR 5. The search finds 1664-
+   1699 Hz for a station the references put at ~1655.
+   **The owner asked for the six GMDSS distress and safety DSC channels**
+   (2187.5, 4207.5, 6312, 8414.5, 12577, 16804.5 kHz) in upstream's band
+   table, dial 1.7 kHz under as NAVTEX's. A family holds 16 cells and
+   Utility had 11, so - the owner's choice - a fifth family, **Marítimo /
+   Maritime**, takes the three NAVTEX rows and the six DSC rows (Utility
+   keeps 8): BAND_FAM_MAR in User/main.c, on both radios; the port reads
+   the families from the generated table and needed nothing. The DEEPSDR
+   builds, its 29 firmware checks and its band-screen bench are green.
+   Left as upstream has it: dsc.c's zero-crossing centre (upstream's own
+   note says it does not work for DSC) moves the centre to the noise's
+   ~2300 Hz until the first pair is found; and the search still moves it
+   now and then in noise, ~10 times a minute. AXI 462.2 of 512 kB, D2
+   136 of 288.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

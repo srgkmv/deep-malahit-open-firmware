@@ -63,6 +63,7 @@
 #include "rtty_auto.h"    /* ../../User */
 #include "psk31.h"        /* ../../User - upstream: the PSK31 decoder */
 #include "navtex.h"       /* ../../User - upstream: the NAVTEX decoder */
+#include "dsc.h"          /* ../../User - upstream: the DSC decoder */
 #include "rtty_scope.h"   /* ../../User - its spectrum, for navtex_espectro() */
 #include "config.h"       /* ../../User - CONFIG_RTTY_SHIFT_MIN/MAX_HZ */
 #include "nb.h"           /* ../../User - upstream: the blanker, cw_report() */
@@ -6247,7 +6248,8 @@ static void cw_linea_suelta(void)
     s_cw_lin[s_cw_n] = '\0';
     console_printf("  %s: %s\n", rtty_get_enabled() ? "rtty"
                                  : psk31_activo() ? "psk31"
-                                 : navtex_activo() ? "navtex" : "cw", s_cw_lin);
+                                 : navtex_activo() ? "navtex"
+                                 : dsc_activo() ? "dsc" : "cw", s_cw_lin);
     s_cw_n = 0U;
 }
 
@@ -6268,7 +6270,8 @@ static uint8_t s_rtty_var;              /* 0 off, 1 RTTY-L, 2 RTTY-U */
 static int modo_demod(int mode)
 {
     if (mode == RADIO_MODE_CW || mode == RADIO_MODE_RTTY_U
-        || mode == RADIO_MODE_PSK31 || mode == RADIO_MODE_NAVTEX) { return (int)DEMOD_MODE_USB; }
+        || mode == RADIO_MODE_PSK31 || mode == RADIO_MODE_NAVTEX
+        || mode == RADIO_MODE_DSC)                          { return (int)DEMOD_MODE_USB; }
     if (mode == RADIO_MODE_RTTY_L)                          { return (int)DEMOD_MODE_LSB; }
     return mode;
 }
@@ -6288,17 +6291,24 @@ static void texto_modo(int mode)
                          : (mode == RADIO_MODE_RTTY_U) ? 2U : 0U);
     uint8_t pk = (uint8_t)(mode == RADIO_MODE_PSK31);
     uint8_t nx = (uint8_t)(mode == RADIO_MODE_NAVTEX);
+    uint8_t ds = (uint8_t)(mode == RADIO_MODE_DSC);
     uint8_t era_cw = cw_get_enabled(), era_rv = s_rtty_var, era_pk = psk31_activo();
-    uint8_t era_nx = navtex_activo();
+    uint8_t era_nx = navtex_activo(), era_ds = dsc_activo();
 
-    if (cw == era_cw && rv == era_rv && pk == era_pk && nx == era_nx) { return; }
+    if (cw == era_cw && rv == era_rv && pk == era_pk && nx == era_nx
+        && ds == era_ds) { return; }
     cw_linea_suelta();
     demod_cw(cw);
     demod_rtty(rv);
     demod_psk31(pk);
     demod_navtex(nx);
+    demod_dsc(ds);
     s_rtty_var = rv;
-    digi_pon((uint8_t)(cw || rv || pk || nx));
+    digi_pon((uint8_t)(cw || rv || pk || nx || ds));
+    if (ds != era_ds) {
+        console_printf("  DSC %s - centre %u Hz\n", ds ? (dsc_activo() ? "on" : "REFUSED") : "off",
+                       (uint32_t)(dsc_get_centro_hz() + 0.5f));
+    }
     if (pk != era_pk) {
         console_printf("  PSK31 %s - centre %u Hz\n", pk ? "on" : "off",
                        (uint32_t)(psk31_get_centro_hz() + 0.5f));
@@ -6419,6 +6429,46 @@ static void navtex_log(void)
     navtex_linea_estado("now");
 }
 
+/*
+ * DSC - step 46. Upstream's dsc_poll_main(): dsc_poll() looks for the two
+ * tones in the scope's last frame while there is no lock (the frame made
+ * here too, so a menu over the screen does not stop it), and a call comes
+ * out WHOLE - dsc.c paints up to six lines when its ECC is in - so the
+ * panel gets them when the count of calls moves, line by line. And on the
+ * console, as they change, the lock and where it listens.
+ */
+static void dsc_poll_radio(void)
+{
+    static uint32_t vistas;
+    static uint8_t  eng0 = 0xFFU, msg0 = 0xFFU;
+    static uint32_t c0;
+    dsc_info_t in;
+    uint32_t   c;
+    uint8_t    i;
+
+    rtty_scope_poll();
+    dsc_poll();
+    dsc_info(&in);
+    if (in.llamadas + in.malas != vistas) {
+        vistas = in.llamadas + in.malas;
+        for (i = 0U; i < dsc_lineas(); i++) {
+            const char *l = dsc_linea(i);
+
+            while (*l != '\0') { texto_char(*l++); }
+            texto_char('\n');
+        }
+    }
+    c = (uint32_t)(dsc_get_centro_hz() + 0.5f);
+    if (in.enganchado != eng0 || in.en_mensaje != msg0 || c != c0) {
+        console_printf("  dsc now: %s, centre %u Hz, calls %u good %u with a bad check\n",
+                       in.en_mensaje ? "receiving a call" : in.enganchado ? "locked"
+                       : "searching", c, (uint32_t)in.llamadas, (uint32_t)in.malas);
+        eng0 = in.enganchado;
+        msg0 = in.en_mensaje;
+        c0 = c;
+    }
+}
+
 static void cw_poll(void)
 {
     char c;
@@ -6434,6 +6484,9 @@ static void cw_poll(void)
     }
     if (psk31_activo()) {
         while (psk31_get_char(&c)) { hay = 1U; texto_char(c); }
+    }
+    if (dsc_activo()) {
+        dsc_poll_radio();
     }
     if (navtex_activo()) {
         /* navtex.c's centre, from the scope's spectrum (navtex_espectro(),
@@ -7016,7 +7069,7 @@ static void ui_wf_push(const float *db, uint32_t bins)
  */
 static const char *const k_mode_names[] = { "AM", "USB", "LSB", "NFM",
                                             "WFM", "SAM", "CW", "RTTY-L",
-                                            "RTTY-U", "PSK31", "NAVTEX" };
+                                            "RTTY-U", "PSK31", "NAVTEX", "DSC" };
 _Static_assert(sizeof k_mode_names / sizeof k_mode_names[0]
                == (size_t)RADIO_MODE_LAST + 1U,
                "a name for every mode, upstream's and the decoders' (menus.h)");
@@ -7210,6 +7263,7 @@ int radio_mode_get(void)
     if (m == (int)DEMOD_MODE_USB && s_rtty_var == 2U) { return RADIO_MODE_RTTY_U; }
     if (m == (int)DEMOD_MODE_USB && psk31_activo())   { return RADIO_MODE_PSK31; }
     if (m == (int)DEMOD_MODE_USB && navtex_activo())  { return RADIO_MODE_NAVTEX; }
+    if (m == (int)DEMOD_MODE_USB && dsc_activo())     { return RADIO_MODE_DSC; }
     return m;
 }
 

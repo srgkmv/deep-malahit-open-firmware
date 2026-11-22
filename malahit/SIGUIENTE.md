@@ -4,7 +4,37 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 22/11/2026, evening: step 45 (NAVTEX) IN FLASH (766d0a9), pushed
+## START HERE — 22/11/2026, night: step 46 (DSC) committed and pushed, NOT in flash
+
+**In flash: `766d0a9`** (step 45, below) - the owner chose not to flash
+step 46 yet. **Committed, checked from RAM**: step 46
+(`PORTING.md` 46) - DSC on the decoders' screen, the owner's four fixes to
+upstream's dsc.c (small centre corrections keep the phase search; the
+search's counts in 1.6 s windows; the bit clock's integrator clamped at
++-0.5 % and cleared at the lock; peaks 8x the floor), this port's own
+borrowed RAM (`src/prestamo.c`, 8 kB of D2), and a fifth band family,
+**Maritime**, with NAVTEX's three rows and the six GMDSS DSC channels. On
+the air against the HackRF at 8414.5 kHz: 20 calls of 20, SNR 5 and 10,
+long and short dot patterns.
+
+**The radio's state**: 8412.80 kHz (band DSC 8), DSC, from RAM; the FRAM
+holds mode 11, which the flash image does not know (boots AM, allowed).
+
+**The bench for DSC**: `tools/hackrf_gen.py dsc --snr N --dots 200|20
+--repeat 4 --pause 8 --out d.iq` (`--format individual|allships|distress`,
+`--mmsi`, `--to`), `hackrf_transfer -t d.iq -f 8214500 -s 2000000 -a 0
+-x 47` with the radio on band DSC 8; host: `deepsdr-ui/out/dscradio f.f32`
+(the radio's loop: scope and dsc_poll()), `out/dscaire` (upstream's, the
+decoder alone), `make dsc` (upstream's bench, section 6 new).
+
+**Next**: the owner's pick among the decoders left - JTTY, ALE, STANAG,
+IDENT, APRS, PKT300, AIS, WEFAX, SSTV, SSTV-FM, HELL, FT8, WSPR, HFDL;
+DCF77; SAM-U/L. WEFAX was proposed: upstream's DWD rows are real stations
+to test on. FT8/WSPR want a settable clock; HFDL, STANAG and FT8 will not
+fit a RAM image (AXI 462 of 512 kB) - decide the memory split with the
+owner first.
+
+## 22/11/2026, evening: step 45 (NAVTEX) IN FLASH (766d0a9), pushed
 
 **In flash: `766d0a9`** (step 45, `PORTING.md` 45, on top of `d95bd4d`,
 the three fixes to upstream's navtex.c and its band rows) -

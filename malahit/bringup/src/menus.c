@@ -70,6 +70,7 @@ static const struct { int mode; uint8_t fam; const char *n; texto_t d; } k_modos
     { RADIO_MODE_RTTY_U, FAM_DIG, "RTTY-U", T("Teletipo en USB", "Teletype on USB") },
     { RADIO_MODE_PSK31,  FAM_DIG, "PSK31",  T("Charla en fase", "Phase-shift chat") },
     { RADIO_MODE_NAVTEX, FAM_DIG, "NAVTEX", T("Avisos marítimos", "Marine warnings") },
+    { RADIO_MODE_DSC,    FAM_DIG, "DSC",    T("Llamada marítima", "Maritime DSC") },
 };
 #define N_MODOS ((uint8_t)(sizeof k_modos / sizeof k_modos[0]))
 
