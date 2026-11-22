@@ -29,6 +29,8 @@
  *          and the picture below, the same way
  *   HELL   Borrar                               | "Recibiendo" + dot, and
  *          the strips of columns below
+ *   JTTY   Borrar                               | atoms count + dot, a
+ *          table over the whole area: Time Offset Qual. Message Country
  *
  * and upstream's tap on each (rtty_shift_siguiente(), rtty_baud_
  * siguiente(), the Auto toggle, cw_set_aprende()) - on the press here,
@@ -53,6 +55,7 @@
 #include "wefax.h"
 #include "sstv.h"
 #include "hell.h"
+#include "jtty_modo.h"
 #include "demod.h"         /* demod_quieto(): a decoder reconfigured, no block through it */
 #include "idioma.h"        /* ../../User - tr() */
 
@@ -486,6 +489,41 @@ static void hell_cabecera(void)
     s_st.enganchado = (uint8_t)(in.nivel > 0.01f);
 }
 
+/*
+ * JTTY - step 50, 22/11/2026. Upstream's digi_sync() JTTY branch: the
+ * FT8-style table over the whole area (no scope), the newest line last,
+ * zebra rows, upstream's column titles, the chip its jtty_modo_estado_txt()
+ * and the dot "an atom has come". Upstream's frequency button and its Map
+ * are left out: this port has neither a JTTY frequency list nor maps.
+ * Borrar clears. The columns are this port's (UDG_COLS_JTTY, 480 px).
+ */
+#define JTTY_FILAS ((uint8_t)((FAX_Y + FAX_ALTO - DIGI_SCOPE_Y - UDG_HDR_H) / UDG_LINE_H - 1U))
+
+static uint32_t s_jtty_visto = 0xFFFFFFFFUL;
+
+static void jtty_sync(void)
+{
+    uint8_t n = JTTY_FILAS, k, hay = 0U;
+
+    if (n > (uint8_t)JTTY_MODO_LINEAS) { n = (uint8_t)JTTY_MODO_LINEAS; }
+    memset(&s_st, 0, sizeof s_st);
+    s_st.y       = (int16_t)DIGI_SCOPE_Y;
+    s_st.h       = (int16_t)(FAX_Y + FAX_ALTO - DIGI_SCOPE_Y);
+    s_st.filas   = n;
+    s_st.btn     = tr("Borrar", "Clear");
+    s_st.cebra   = 1U;
+    s_st.cols    = ui_digi_cols_jtty;
+    s_st.ncols   = UI_DIGI_COLS_JTTY_N;
+    s_st.titulos = tr("Hora\tDesvío\tCal.\tMensaje\tPaís",
+                      "Time\tOffset\tQual.\tMessage\tCountry");
+    while ((hay < n) && (hay < jtty_modo_lineas())) { hay++; }
+    for (k = 0U; k < hay; k++) { s_st.fila[k] = jtty_modo_linea(k); }
+    s_st.chip = jtty_modo_estado_txt();
+    s_st.enganchado = (uint8_t)(jtty_modo_atomos() != 0UL);
+    strncpy(s_chip, s_st.chip ? s_st.chip : "", sizeof s_chip - 1U);
+    s_chip[sizeof s_chip - 1U] = '\0';
+}
+
 void digi_pon(uint8_t on)
 {
     s_on = (uint8_t)(on != 0U);
@@ -761,6 +799,17 @@ static void osciloscopio(void)
 void digi_repinta(void)
 {
     if (!s_on) { return; }
+    if (jtty_modo_activo()) {
+        jtty_sync();
+        ui_digi_olvida();
+        if (ui_digi_draw_texto(&s_st)) {
+            s_jtty_visto = jtty_modo_atomos();
+            s_todo = 0U;
+        }
+        strcpy(s_chip_visto, s_chip);
+        s_eng_visto = s_st.enganchado;
+        return;
+    }
     if (hell_activo()) {
         fax_limpia();
         hell_reinicia();
@@ -799,6 +848,17 @@ void digi_repinta(void)
 void digi_dibuja(void)
 {
     if (!s_on) { return; }
+    if (jtty_modo_activo()) {
+        /* upstream's: the whole panel when the count of atoms moves */
+        if (s_todo || jtty_modo_atomos() != s_jtty_visto) { digi_repinta(); return; }
+        jtty_sync();
+        if (strcmp(s_chip_visto, s_chip) != 0 || s_eng_visto != s_st.enganchado) {
+            strcpy(s_chip_visto, s_chip);
+            s_eng_visto = s_st.enganchado;
+            ui_digi_draw_chip(&s_st);
+        }
+        return;
+    }
     if (hell_activo()) {
         if (s_todo) { digi_repinta(); return; }
         hell_cabecera();
@@ -910,6 +970,15 @@ uint8_t digi_toque(uint16_t x, uint16_t y, uint8_t nuevo)
      * if it finds none - the same search that moves the centre by itself,
      * so a tap only matters where that one cannot decide.
      */
+    if (jtty_modo_activo()) {
+        jtty_sync();
+        if (ui_digi_boton_hit(&s_st, x, y)) {
+            jtty_modo_borra();
+            s_todo = 1U;
+            console_printf("  digi: JTTY cleared\n");
+        }
+        return 1U;
+    }
     if (hell_activo()) {
         hell_cabecera();
         if (ui_digi_boton_hit(&s_st, x, y)) {

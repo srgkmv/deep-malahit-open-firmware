@@ -73,6 +73,7 @@ static const struct { int mode; uint8_t fam; const char *n; texto_t d; } k_modos
     { RADIO_MODE_PSK31,  FAM_DIG, "PSK31",  T("Charla en fase", "Phase-shift chat") },
     { RADIO_MODE_NAVTEX, FAM_DIG, "NAVTEX", T("Avisos marítimos", "Marine warnings") },
     { RADIO_MODE_DSC,    FAM_DIG, "DSC",    T("Llamada marítima", "Maritime DSC") },
+    { RADIO_MODE_JTTY,   FAM_DIG, "JTTY",   T("Teletipo digital", "Digital teletype") },
     { RADIO_MODE_WEFAX,  FAM_IMG, "WEFAX",  T("Mapas del tiempo", "Weather charts") },
     { RADIO_MODE_SSTV,   FAM_IMG, "SSTV",   T("Fotos por radio", "Pictures over radio") },
     /* upstream's "Fotos por radio (FM)" / "Pictures, narrow FM" are 96 and

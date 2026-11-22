@@ -579,6 +579,53 @@ def hell_baseband(a):
                                                           f'{n / FS_LO:.1f} s')
 
 
+# JTTY (WSJT-X 3.2's teletype mode): the six normative vectors, their 46
+# data symbols as WSJT-X's own tbcc.f90 computes them (copied from
+# deepsdr-ui/sim/jtty_oro.h, which is generated from the Fortran, not
+# written by hand), and the 13-symbol sync. Each is a whole message (bit 34,
+# the end flag, set) - the text is what a decoder must print.
+JTTY_SYNC = [0, 2, 2, 3, 0, 0, 3, 2, 1, 3, 1, 2, 0]
+JTTY_VECTORS = [
+    ('CQ K1ABC CQ', '2032033023223100122300300333333201300310213223'),
+    ('HELLO', '2323311103331220002310303011201011120221221220'),
+    ('FN42', '3222230101133023330102222130322000010311110211'),
+    ('123 EOM', '1123211212000002133212232230130322213331132103'),
+    ('AGN?', '1212313320000000000000000002322000220003033020'),
+    ('CA', '2030210012000211022113220112101121012121102112'),
+]
+
+
+def jtty_baseband(a):
+    """JTTY: 4-GFSK (BT 1.0) at 31.25 Bd, tones 31.25 Hz apart round 0 Hz
+    (-1.5 .. +1.5 spacings), a frame the 13 sync symbols and the 46 data
+    symbols - 59 symbols, 1.888 s. Each of --messages (indices into the
+    six vectors) sent as one frame, --gap s apart."""
+    sps = int(FS_LO / 31.25)                       # 1536
+    tones = []
+    gaps = []
+    for k in a.messages:
+        tones.append(JTTY_SYNC + [int(c) for c in JTTY_VECTORS[k][1]])
+    n_frame = 59 * sps
+    t = (np.arange(-2.5 * sps, 2.5 * sps) + 0.5) / sps
+    from scipy.special import erf
+    bt = 1.0
+    c = 2 * np.pi * bt / np.sqrt(np.log(2))
+    pulse = 0.5 * (erf(c * (t + 0.5) / np.sqrt(2)) - erf(c * (t - 0.5) / np.sqrt(2)))
+    out = [np.full(int(a.lead * FS_LO), np.nan)]
+    for tn in tones:
+        f = np.zeros(n_frame + len(pulse))
+        for i, s_ in enumerate(tn):
+            f[i * sps:i * sps + len(pulse)] += (s_ - 1.5) * 31.25 * pulse
+        f = f[int(2.5 * sps):int(2.5 * sps) + n_frame]
+        out += [f + a.offset_hz, np.full(int(a.gap * FS_LO), np.nan)]
+    f = np.concatenate(out)
+    key = (~np.isnan(f)).astype(np.float64)
+    f = np.nan_to_num(f, nan=0.0)
+    x = np.exp(1j * 2 * np.pi * np.cumsum(f) / FS_LO)
+    texts = ' | '.join(JTTY_VECTORS[k][0] for k in a.messages)
+    return x * raised_edges(key, 5.0), f'JTTY {texts}, {a.offset_hz:+.0f} Hz'
+
+
 def carrier_baseband(a):
     return np.ones(int(a.seconds * FS_LO), dtype=np.complex128), 'carrier'
 
@@ -739,6 +786,15 @@ def main():
     p.add_argument('--repeat', type=int, default=3)
     p.add_argument('--lead', type=float, default=1.0, help='s of silence before and after')
     p.set_defaults(build=hell_baseband, tone=1000.0)
+
+    p = sub.add_parser('jtty', help="WSJT-X's JTTY, the six normative messages")
+    common(p)
+    p.add_argument('--messages', type=int, nargs='+', default=[0, 1, 2, 3, 4, 5],
+                   help='which of the six (0 CQ K1ABC CQ, 1 HELLO, 2 FN42, 3 123 EOM, 4 AGN?, 5 CA)')
+    p.add_argument('--gap', type=float, default=3.0, help='s between frames')
+    p.add_argument('--offset-hz', type=float, default=0.0, help='Hz off the centre')
+    p.add_argument('--lead', type=float, default=1.0)
+    p.set_defaults(build=jtty_baseband, tone=1500.0)
 
     a = ap.parse_args()
     x, what = a.build(a)

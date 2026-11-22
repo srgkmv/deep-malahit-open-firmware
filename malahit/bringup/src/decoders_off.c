@@ -61,7 +61,7 @@ OFF_U32(ax25_activo,        ax25_process)
 OFF_U16(ft8_modo_activo,    ft8_modo_come)
 /* hell_activo, hell_process: the real ones since 22/11/2026 (hell.c, step 49) */
 OFF_U16(ident_modo_activo,  ident_modo_mete)
-OFF_U16(jtty_modo_activo,   jtty_modo_mete)
+/* jtty_modo_activo, jtty_modo_mete: the real ones since 22/11/2026 (jtty_*.c, step 50) */
 /* navtex_activo, navtex_process: the real ones since 22/11/2026 (navtex.c, step 45) */
 /* psk31_activo, psk31_process: the real ones since 22/11/2026 (psk31.c, step 44) */
 /* rds_activo, rds_feed: the real ones since 22/11/2026 (rds.c, step 40) */

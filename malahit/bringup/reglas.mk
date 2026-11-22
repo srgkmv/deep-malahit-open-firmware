@@ -451,6 +451,15 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/sstv.c
 # hell.c     Feld-Hell: the envelope cut into 245 points a second, columns
 #            of 14; its state in the borrowed RAM (step 49)
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hell.c
+# jtty_*.c   WSJT-X's JTTY: 4-GFSK frames of 34 bits, tail-biting
+#            convolutional code, atoms joined into messages by frequency;
+#            dxcc.c for the country of a callsign; the Viterbi from the
+#            main loop (jtty_modo_poll()) (step 50)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/jtty_rx.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/jtty_fec.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/jtty_msg.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/jtty_modo.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/dxcc.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_digi.c
 #
 # THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]

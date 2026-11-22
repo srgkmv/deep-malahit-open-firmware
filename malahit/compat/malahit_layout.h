@@ -551,4 +551,10 @@
  * that button 68 px (UDG_BTN3_MIN_W 42). */
 #define DIGI_RTTY_BARRA_W   100
 
+/* JTTY's table (step 50): Time, Offset, Qual., Message, Country, in 480 px
+ * of font_ui_10b - upstream's { 8, 62, 132, 176, 672 } are for 800. The
+ * country right-aligned against the edge (a negative x), as upstream does
+ * with FT8's last two columns; the message has 120..390. */
+#define UDG_COLS_JTTY { 4, 38, 90, 120, -476 }
+
 #endif /* MALAHIT_LAYOUT_H */

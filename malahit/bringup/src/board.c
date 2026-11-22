@@ -7,7 +7,13 @@
 #include "enc2.h"           /* the same file again, for the second knob */
 #include "adc.h"
 
-static volatile uint32_t s_millis;
+/*
+ * THE MILLISECOND COUNT, under upstream's name since step 50 (22/11/2026):
+ * its decoders read g_msticks directly (jtty_modo.c the first grafted), so
+ * the port's own counter is that symbol rather than a second one beside it.
+ * board_millis() still returns it.
+ */
+volatile uint32_t g_msticks;
 
 /*
  * WHO ELSE RUNS AT 1 kHz.
@@ -33,7 +39,7 @@ static volatile uint8_t s_encoder_live;
 
 void SysTick_Handler(void)
 {
-    s_millis++;
+    g_msticks++;
 
     /*
      * THE ADC GOES FIRST, and only because of what reads it second:
@@ -87,7 +93,7 @@ void board_encoder_sampling(int on)
 
 uint32_t board_millis(void)
 {
-    return s_millis;
+    return g_msticks;
 }
 
 /*
@@ -102,17 +108,17 @@ static volatile uint32_t s_loop_ms;
 
 void board_loop_alive(void)
 {
-    s_loop_ms = s_millis;
+    s_loop_ms = g_msticks;
 }
 
 uint32_t board_loop_stale_ms(void)
 {
-    return s_millis - s_loop_ms;
+    return g_msticks - s_loop_ms;
 }
 
 void board_delay_ms(uint32_t ms)
 {
-    uint32_t start = s_millis;
+    uint32_t start = g_msticks;
 
     /*
      * THE ONLY UNBOUNDED WAIT IN THIS PROJECT USED TO BE HERE, AND IT
@@ -142,7 +148,7 @@ void board_delay_ms(uint32_t ms)
      */
     uint64_t guard = (uint64_t)(ms + 1U) * (clock_sysclk_hz / 1000U);
 
-    while ((s_millis - start) < ms) {
+    while ((g_msticks - start) < ms) {
         board_watchdog_feed();
         if (guard-- == 0U) { break; }
     }
@@ -161,9 +167,9 @@ uint64_t board_cycles(void)
      * next millisecond.
      */
     do {
-        ms  = s_millis;
+        ms  = g_msticks;
         val = SysTick->VAL;
-        ms2 = s_millis;
+        ms2 = g_msticks;
     } while (ms != ms2);
 
     return (uint64_t)ms * load + (uint64_t)(load - 1U - val);

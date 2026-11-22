@@ -119,7 +119,8 @@ uint32_t    menu_nr_strength(void);
 #define RADIO_MODE_SSTV     13          /* DEMOD_MODE_USB + sstv.c */
 #define RADIO_MODE_SSTV_FM  14          /* DEMOD_MODE_NFM + sstv.c */
 #define RADIO_MODE_HELL     15          /* DEMOD_MODE_USB + hell.c */
-#define RADIO_MODE_LAST     RADIO_MODE_HELL
+#define RADIO_MODE_JTTY     16          /* DEMOD_MODE_USB + jtty_modo.c */
+#define RADIO_MODE_LAST     RADIO_MODE_JTTY
 void        radio_mode_set(int mode);
 int         radio_mode_get(void);
 const char *radio_mode_name(int mode);

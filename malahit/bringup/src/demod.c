@@ -20,6 +20,7 @@
 #include "wefax.h"        /* ../../User - demod_wefax() */
 #include "sstv.h"         /* ../../User - demod_sstv() */
 #include "hell.h"         /* ../../User - demod_hell() */
+#include "jtty_modo.h"    /* ../../User - demod_jtty() */
 
 /*
  * Upstream's call: 512 frames at 192 kHz in (with rf_doble), 512 stereo
@@ -76,11 +77,15 @@ void demod_init(void)
     demod_am_set_mode(DEMOD_MODE_AM);
     demod_am_set_mix_hz((float)s_mix_hz);
 
+    /* The SWD entry points kept: an asm statement takes so many registers,
+     * so two of them (the fifteenth operand did not fit, step 50). */
     __asm__ volatile ("" :: "r"(demod_path), "r"(demod_mode),
                             "r"(demod_mix), "r"(demod_report),
                             "r"(estereo_pon), "r"(demod_cw),
-                            "r"(demod_rtty), "r"(demod_psk31), "r"(demod_navtex), "r"(demod_dsc), "r"(demod_wefax), "r"(demod_sstv), "r"(demod_hell),
-                            "r"(demod_graba));
+                            "r"(demod_rtty), "r"(demod_graba));
+    __asm__ volatile ("" :: "r"(demod_psk31), "r"(demod_navtex), "r"(demod_dsc),
+                            "r"(demod_wefax), "r"(demod_sstv), "r"(demod_hell),
+                            "r"(demod_jtty));
 }
 
 void demod_block(const int16_t *rx, int16_t *tx, uint32_t frames)
@@ -393,6 +398,21 @@ SWD_ENTRY void demod_hell(int on)
     demod_quieto(0);
     if (on && !hell_activo()) {
         console_printf("  *** HELL did not start: the borrowed RAM is too small (src/prestamo.c) ***\n");
+    }
+}
+
+/* JTTY on or off - upstream's jtty_modo_start() takes the borrowed RAM and
+ * says 0 if it cannot. */
+SWD_ENTRY void demod_jtty(int on)
+{
+    uint8_t ok = 1U;
+
+    if ((uint8_t)(on != 0) == jtty_modo_activo()) { return; }
+    demod_quieto(1);
+    if (on) { ok = jtty_modo_start(); } else { jtty_modo_stop(); }
+    demod_quieto(0);
+    if (on && !ok) {
+        console_printf("  *** JTTY did not start: the borrowed RAM is too small (src/prestamo.c) ***\n");
     }
 }
 

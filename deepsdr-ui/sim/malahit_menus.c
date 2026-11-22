@@ -77,6 +77,7 @@ static void modos_fam(uint8_t fam, const char *ppm)
         { 1, "PSK31", "Charla en fase", "Phase-shift chat" },
         { 1, "NAVTEX", "Avisos marítimos", "Marine warnings" },
         { 1, "DSC", "Llamada marítima", "Maritime DSC" },
+        { 1, "JTTY", "Teletipo digital", "Digital teletype" },
         { 2, "WEFAX", "Mapas del tiempo", "Weather charts" },
         { 2, "SSTV", "Fotos por radio", "Pictures over radio" },
         { 2, "SSTV-FM", "Fotos en FM", "Pictures on FM" },

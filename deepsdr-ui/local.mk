@@ -3123,6 +3123,14 @@ out/jttycadena: sim/jtty_cadena.c $(FIRMWARE)/User/jtty_modo.c \
 	@mkdir -p out
 	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -Ihostinc -Isim -o $@ $^ $(LDLIBS)
 
+# JTTY COMO LO LLEVA LA RADIO, CONTRA CUALQUIER FICHERO (22/11/2026, port del
+# Malahit). Ver sim/jtty_radio.c. Pide un fichero: fuera de "comprueba".
+out/jttyradio: sim/jtty_radio.c $(FIRMWARE)/User/jtty_modo.c \
+               $(FIRMWARE)/User/jtty_rx.c $(FIRMWARE)/User/jtty_fec.c \
+               $(FIRMWARE)/User/jtty_msg.c $(FIRMWARE)/User/dxcc.c
+	@mkdir -p out
+	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -Ihostinc -Isim -o $@ $^ $(LDLIBS)
+
 .PHONY: jttycadena
 jttycadena: out/jttycadena ; ./out/jttycadena
 

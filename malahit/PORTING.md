@@ -1724,6 +1724,40 @@ Each step should end with something visible on the radio.
    rows doubled) and `deepsdr-ui/sim/hell_aire.c`. **On the air**: "CQ CQ
    DE R1TEST R1TEST K" at SNR 15, read in the strips. AXI 491.7 of 512
    kB.
+50. **JTTY, WSJT-X's teletype.** *22/11/2026, from RAM, against the
+   HackRF at 14.0915 MHz* - upstream's jtty_rx.c, jtty_fec.c, jtty_msg.c,
+   jtty_modo.c and dxcc.c (the country of a callsign), stub gone; entry 16
+   (USB), "Teletipo digital" in Digital. 4-GFSK frames of 34 bits at 31.25
+   Bd, a tail-biting convolutional code whose Viterbi runs from the main
+   loop (jtty_modo_poll()), atoms joined into messages by frequency. Its
+   spectrum ring and lines are 52.4 kB of borrowed RAM (jtty_rx_ram_t alone
+   49 504 bytes here): the pool in D2 is 56 kB now - 48 was refused on the
+   radio, and demod.c said so. Three things upstream's code asks of the
+   radio, given by this port: `waterfall_prestada()` (src/prestamo.c - the
+   pool's lock), `rtc_hw_get()` (src/reloj.c - the time since power-on,
+   which is what the header shows too: this port has no settable clock
+   yet, so JTTY's "hh:mm" is uptime), and `g_msticks`, upstream's
+   millisecond count, now the name of board.c's own counter.
+   **The panel is upstream's FT8-style table** over the whole area -
+   Time, Offset, Qual., Message, Country, zebra rows, the newest last,
+   Borrar - without its frequency button and Map (no JTTY frequency list,
+   no maps here). The column positions were 800-px numbers in User/
+   ui_digi.c: now `#ifndef UDG_COLS_JTTY` there with upstream's values,
+   and compat/malahit_layout.h's { 4, 38, 90, 120, -476 } (the country
+   right-aligned) - the DEEPSDR's panel renders and its 800 x 480 screen
+   byte-identical, the gfx2 copy in step, the DEEPSDR builds, 29 checks
+   green. `tools/hackrf_gen.py jtty` sends the six normative messages with
+   WSJT-X's OWN data symbols (from the vectors deepsdr-ui/sim/jtty_oro.h
+   generates out of tbcc.f90 - an encoder independent of upstream's), the
+   13-symbol sync, 4-GFSK BT 1.0; `deepsdr-ui/sim/jtty_radio.c` runs the
+   whole mode on any --audio file. Host: all six at SNR 0, none at -10.
+   **On the air**: the six at SNR 0 dB in 500 Hz - "CQ K1ABC CQ" with
+   "USA", HELLO, FN42, 599 123, AGN?, 599 CA - offset -93 Hz (the two
+   references at 14 MHz); a station 200 Hz up read at +109. Also the
+   SWD-entry keep-alive in demod.c is two asm statements now (a fifteenth
+   register operand did not fit). AXI 506.3 of 512 kB, D2 184 of 288: the
+   RAM image has 5.7 kB left - from the next decoder on, flash over SWD
+   (WORKING.md, "Flash over SWD").
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

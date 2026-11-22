@@ -4,7 +4,28 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 22/11/2026, late night: steps 48-49 (SSTV, HELL) IN FLASH (3274486), pushed
+## START HERE — 22/11/2026, late night: step 50 (JTTY) committed, flashing over SWD
+
+**In flash: `3274486`** (below). **Committed, checked from RAM**: step 50
+(`PORTING.md` 50) - WSJT-X's JTTY with upstream's table panel (columns
+for 480 px through a new `#ifndef UDG_COLS_JTTY` in User/ui_digi.c, the
+DEEPSDR byte-identical), the borrowed RAM at 56 kB, an uptime clock for
+its "hh:mm". On the air: the six normative messages at SNR 0 dB.
+
+**The radio's state**: 14.090 MHz, JTTY, from RAM.
+
+**Memory**: AXI 506.3 of 512 kB - the RAM image is at its end. The next
+decoder goes in over SWD into FLASH: `make flash` then `ADAPTER=ft2232d
+../tools/swd.sh flashsrst build_flash/bringup.bin`, and a press on the
+power button (WORKING.md, "Flash over SWD"). Next in the owner's order:
+ALE, STANAG, IDENT, APRS, PKT300, AIS, FT8, WSPR, HFDL.
+
+**The bench for JTTY**: `tools/hackrf_gen.py jtty --snr N [--messages 0
+2 ..] [--offset-hz F] --out j.iq`, `hackrf_transfer -t j.iq -f 13891500
+-s 2000000 -a 0 -x 47` with the radio on 14.090 USB; host:
+`deepsdr-ui/out/jttyradio f.f32`.
+
+## 22/11/2026, late night: steps 48-49 (SSTV, HELL) IN FLASH (3274486), pushed
 
 **In flash: `3274486`** - `build_flash/bringup.bin`, 267 936 bytes, sha256
 `8177ae11…`, SELFTEST 0, clean build; written over DFU without `:leave`,

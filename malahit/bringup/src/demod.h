@@ -85,6 +85,9 @@ void demod_sstv(int on);
 /* Feld-Hell on (1) or off (0), from zero each time. */
 void demod_hell(int on);
 
+/* JTTY on (1) or off (0). */
+void demod_jtty(int on);
+
 /* The bench's recorder of what PSK31 is fed: 1 arms it (2.5 s, g_graba). */
 void demod_graba(int on);
 
