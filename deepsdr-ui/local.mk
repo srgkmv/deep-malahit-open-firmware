@@ -1474,6 +1474,12 @@ out/helltest: sim/helltest.c $(FIRMWARE)/User/hell.c $(FIRMWARE)/User/hell.h
 	@mkdir -p out
 	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -o $@ sim/helltest.c $(FIRMWARE)/User/hell.c $(LDLIBS)
 
+# EL FELD-HELL CONTRA CUALQUIER FICHERO (22/11/2026, port del Malahit). Ver
+# sim/hell_aire.c. Pide un fichero: fuera de "comprueba".
+out/hellaire: sim/hell_aire.c $(FIRMWARE)/User/hell.c
+	@mkdir -p out
+	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -o $@ $(filter %.c,$^) $(LDLIBS)
+
 
 hell: out/helltest ; ./out/helltest
 comprueba: hell
@@ -1487,6 +1493,12 @@ out/sstvaire: sim/sstvaire.c $(FIRMWARE)/User/sstv.c $(FIRMWARE)/User/disc_fm.c 
 	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -o $@ sim/sstvaire.c $(FIRMWARE)/User/sstv.c $(FIRMWARE)/User/disc_fm.c $(FIRMWARE)/User/nco.c $(FIRMWARE)/User/nco_tabla.c $(LDLIBS)
 
 sstv: out/sstvtest ; ./out/sstvtest
+
+# LA FOTO A UN FICHERO (22/11/2026, port del Malahit). Ver sim/sstv_imagen.c.
+out/sstvimagen: sim/sstv_imagen.c $(FIRMWARE)/User/sstv.c $(FIRMWARE)/User/disc_fm.c \
+                $(FIRMWARE)/User/nco.c $(FIRMWARE)/User/nco_tabla.c
+	@mkdir -p out
+	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -o $@ $(filter %.c,$^) $(LDLIBS)
 
 comprueba: sstv
 

@@ -15,10 +15,11 @@
  * todo(), suelta() after, and a decoder that finds it too small refuses to
  * start rather than running on someone else's memory.
  *
- * SIZED FOR WHAT IS GRAFTED: DSC's state is ~3.5 kB. The decoders still to
- * come ask for more (WSPR 47 kB, HFDL HFDL_RAM_TOTAL, 66 kB): grow it when
- * one of them arrives - its start() will refuse until then, and demod.c
- * says so on the console.
+ * SIZED FOR WHAT IS GRAFTED: DSC's state is ~3.5 kB, WEFAX's ring 6 kB,
+ * SSTV's output queue and Robot lines ~13 kB (step 48). The decoders still
+ * to come ask for more (WSPR 47 kB, HFDL HFDL_RAM_TOTAL, 66 kB): grow it
+ * when one of them arrives - its start() will refuse until then, and
+ * demod.c says so on the console.
  *
  * .d2sram is NOLOAD, so not zeroed at boot - every borrower clears what it
  * takes (dsc_start() does). The SRAM1-3 clocks are on from sai1.c's
@@ -28,7 +29,7 @@
 #include "hfdl_ram.h"          /* ../../User - the contract */
 #include "console.h"
 
-#define PRESTAMO_BYTES  8192U
+#define PRESTAMO_BYTES  16384U
 
 __attribute__((section(".d2sram"), aligned(32)))
 static uint8_t s_pozo[PRESTAMO_BYTES];

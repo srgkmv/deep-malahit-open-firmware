@@ -8,6 +8,8 @@ Test signals for the decoders, sent by a HackRF into the radio - 22/11/2026.
     tools/hackrf_gen.py navtex --snr 10 --out n.iq
     tools/hackrf_gen.py dsc --snr 10 --out d.iq
     tools/hackrf_gen.py wefax --snr 20 --lines 200 --out w.iq
+    tools/hackrf_gen.py sstv --sstv-mode scottie1 --snr 20 --out s.iq
+    tools/hackrf_gen.py hell --snr 15 --out h.iq
     tools/hackrf_gen.py carrier --seconds 10 --out c.iq
     hackrf_transfer -t f.iq -f <carrier Hz - 200000> -s 2000000 -a 0 -x 47
 
@@ -464,6 +466,119 @@ def wefax_baseband(a):
                                         f'{a.phasing:.0f} s phasing, {a.ppm:+.0f} ppm')
 
 
+def sstv_picture():
+    """A 320 x 256 test picture: the eight colour bars, a grey ramp, a
+    circle and R1TEST - colours, sharpness and geometry at a glance."""
+    from PIL import Image, ImageDraw, ImageFont
+    im = Image.new('RGB', (320, 256), (0, 0, 0))
+    d = ImageDraw.Draw(im)
+    bars = [(255, 255, 255), (255, 255, 0), (0, 255, 255), (0, 255, 0),
+            (255, 0, 255), (255, 0, 0), (0, 0, 255), (0, 0, 0)]
+    for k, c in enumerate(bars):
+        d.rectangle([k * 40, 0, k * 40 + 39, 99], fill=c)
+    for x in range(320):
+        g = int(255 * x / 319)
+        d.line([(x, 100), (x, 129)], fill=(g, g, g))
+    d.ellipse([20, 140, 130, 250], outline=(255, 255, 255), width=4)
+    try:
+        f = ImageFont.load_default(size=64)
+    except TypeError:
+        f = ImageFont.load_default()
+    d.text((140, 160), 'R1TEST', fill=(255, 128, 0), font=f)
+    return np.asarray(im, dtype=np.float64)
+
+
+# The line plans, from the mode specifications (J. L. Barber, "Proposal for
+# SSTV mode specifications", Dayton 2000): (Hz, ms) pieces, a colour scan
+# written as ('G'|'B'|'R', ms).
+SSTV_MODES = {
+    'martin1': dict(vis=44, lines=256, line=[(1200, 4.862), (1500, 0.572),
+                    ('G', 146.432), (1500, 0.572), ('B', 146.432), (1500, 0.572),
+                    ('R', 146.432), (1500, 0.572)], start=[]),
+    'scottie1': dict(vis=60, lines=256, line=[(1500, 1.5), ('G', 138.240),
+                     (1500, 1.5), ('B', 138.240), (1200, 9.0), (1500, 1.5),
+                     ('R', 138.240)], start=[(1200, 9.0)]),
+}
+
+
+def sstv_baseband(a):
+    """SSTV as a tone whose frequency is the signal (1500 black, 2300
+    white, 1200 sync), round 0 Hz = 1900 Hz of audio: the VIS header
+    (leader 1900 300 ms, break 1200 10 ms, leader 300 ms, start bit 1200
+    30 ms, seven bits least significant first - 1100 a 1, 1300 a 0 - even
+    parity, stop bit 1200 30 ms), then the picture in the mode's plan."""
+    m = SSTV_MODES[a.sstv_mode]
+    pic = sstv_picture()
+    seq = [(1900, 300.0), (1200, 10.0), (1900, 300.0), (1200, 30.0)]
+    bits = [(m['vis'] >> k) & 1 for k in range(7)]
+    seq += [(1100 if b else 1300, 30.0) for b in bits]
+    seq += [(1100 if (sum(bits) & 1) else 1300, 30.0), (1200, 30.0)]
+    f = [np.full(int(a.lead * FS_LO), np.nan)]
+    for hz, ms in seq + m['start']:
+        f.append(np.full(int(round(ms * FS_LO / 1000.0)), float(hz)))
+    ch = {'R': 0, 'G': 1, 'B': 2}
+    for y in range(m['lines']):
+        for piece in m['line']:
+            if isinstance(piece[0], str):
+                n = int(round(piece[1] * FS_LO / 1000.0))
+                px = (np.arange(n) * 320) // n
+                f.append(1500.0 + 800.0 * pic[y, px, ch[piece[0]]] / 255.0)
+            else:
+                f.append(np.full(int(round(piece[1] * FS_LO / 1000.0)), float(piece[0])))
+    f.append(np.full(int(a.pause * FS_LO), np.nan))
+    f = np.concatenate(f)
+    key = (~np.isnan(f)).astype(np.float64)
+    f = np.nan_to_num(f, nan=1900.0) - 1900.0
+    x = np.exp(1j * 2 * np.pi * np.cumsum(f) / FS_LO)
+    return x * raised_edges(key, 2.0), (f'SSTV {a.sstv_mode} (VIS {m["vis"]}), '
+                                        f'{len(f) / FS_LO:.0f} s')
+
+
+# A 5 x 7 font for the test text, rows top to bottom - this file's own.
+HELL_FONT = {
+    'C': ['01110', '10001', '10000', '10000', '10000', '10001', '01110'],
+    'Q': ['01110', '10001', '10001', '10001', '10101', '10010', '01101'],
+    'D': ['11110', '10001', '10001', '10001', '10001', '10001', '11110'],
+    'E': ['11111', '10000', '10000', '11110', '10000', '10000', '11111'],
+    'R': ['11110', '10001', '10001', '11110', '10100', '10010', '10001'],
+    'T': ['11111', '00100', '00100', '00100', '00100', '00100', '00100'],
+    'S': ['01111', '10000', '10000', '01110', '00001', '00001', '11110'],
+    'K': ['10001', '10010', '10100', '11000', '10100', '10010', '10001'],
+    '1': ['00100', '01100', '00100', '00100', '00100', '00100', '01110'],
+    ' ': ['00000'] * 7,
+}
+
+
+def hell_baseband(a):
+    """Feld-Hell: the carrier keyed on and off, 245 points a second
+    (122.5 Bd, a symbol a pair of points), a character 7 columns of 14
+    points, left to right, each column scanned BOTTOM TO TOP. The first and
+    last columns blank; the 5 x 7 glyph with each row doubled fills the 14.
+    Edges a 2 ms raised cosine, as Hell transmitters shape them."""
+    pts = []
+    for ch in a.text.upper():
+        if ch not in HELL_FONT:
+            raise SystemExit(f'hell: {ch!r} is not in this file\'s font')
+        g = HELL_FONT[ch]
+        cols = [[0] * 14]
+        for c in range(5):
+            col = []
+            for r in range(7):
+                col += [int(g[r][c])] * 2      # rows top to bottom, doubled
+            cols.append(col)
+        cols.append([0] * 14)
+        for col in cols:
+            pts += col[::-1]                   # sent bottom to top
+    pts = pts * a.repeat
+    spp = FS_LO / 245.0
+    n = int(len(pts) * spp)
+    key = np.array(pts, dtype=np.float64)[(np.arange(n) / spp).astype(int)]
+    lead = np.zeros(int(a.lead * FS_LO))
+    key = np.concatenate([lead, key, lead])
+    return raised_edges(key, 2.0).astype(np.complex128), (f'Feld-Hell {a.text!r} x{a.repeat}, '
+                                                          f'{n / FS_LO:.1f} s')
+
+
 def carrier_baseband(a):
     return np.ones(int(a.seconds * FS_LO), dtype=np.complex128), 'carrier'
 
@@ -537,6 +652,9 @@ def main():
                        help='the carrier\'s (FSK: the centre\'s) audio frequency for --audio')
         p.add_argument('--lsb', action='store_true',
                        help='--audio as the LSB branch hears it (mirrored)')
+        p.add_argument('--fm', type=float, default=0.0, metavar='DEV_HZ',
+                       help='send the AUDIO (the signal at --tone) as narrow FM with '
+                            'this peak deviation, for the radio\'s NFM modes; 0 = SSB')
 
     p = sub.add_parser('carrier', help='a steady carrier: levels, and the ppm')
     common(p)
@@ -608,8 +726,30 @@ def main():
     p.add_argument('--lead', type=float, default=1.0, help='s of silence before')
     p.set_defaults(build=wefax_baseband, tone=1900.0)
 
+    p = sub.add_parser('sstv', help='slow-scan TV, Martin 1 or Scottie 1')
+    common(p)
+    p.add_argument('--sstv-mode', choices=sorted(SSTV_MODES), default='martin1')
+    p.add_argument('--lead', type=float, default=1.0, help='s of silence before')
+    p.add_argument('--pause', type=float, default=2.0, help='s of silence after')
+    p.set_defaults(build=sstv_baseband, tone=1900.0)
+
+    p = sub.add_parser('hell', help='Feld-Hell')
+    common(p)
+    p.add_argument('--text', default='CQ CQ DE R1TEST R1TEST K ')
+    p.add_argument('--repeat', type=int, default=3)
+    p.add_argument('--lead', type=float, default=1.0, help='s of silence before and after')
+    p.set_defaults(build=hell_baseband, tone=1000.0)
+
     a = ap.parse_args()
     x, what = a.build(a)
+    if a.fm > 0.0:
+        # the audio an SSB receiver would hear, as the modulation of an FM
+        # carrier at 0 Hz: phase = 2 pi dev * integral(audio / peak)
+        n = np.arange(len(x))
+        aud = np.real(x * np.exp(2j * np.pi * a.tone * n / FS_LO))
+        aud = aud / max(1e-9, np.max(np.abs(aud)))
+        x = np.exp(1j * 2 * np.pi * a.fm * np.cumsum(aud) / FS_LO)
+        what += f', NFM +-{a.fm:.0f} Hz'
     x = add_noise(x, a)
     if a.audio:
         write_audio(x, a)

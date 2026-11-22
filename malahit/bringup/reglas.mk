@@ -444,6 +444,13 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/dsc.c
 #            line clock; its eight-line ring in the borrowed RAM (step 47)
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/wefax.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/disc_fm.c
+# sstv.c     slow-scan TV: the VIS header, the line sync, the mode table
+#            computed from its timings; its output queue in the borrowed RAM
+#            (step 48)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/sstv.c
+# hell.c     Feld-Hell: the envelope cut into 245 points a second, columns
+#            of 14; its state in the borrowed RAM (step 49)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hell.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_digi.c
 #
 # THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]

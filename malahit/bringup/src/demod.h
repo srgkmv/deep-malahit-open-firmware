@@ -79,6 +79,12 @@ void demod_dsc(int on);
 /* WEFAX on (1) or off (0). */
 void demod_wefax(int on);
 
+/* SSTV on (1) or off (0), for both of its entries. */
+void demod_sstv(int on);
+
+/* Feld-Hell on (1) or off (0), from zero each time. */
+void demod_hell(int on);
+
 /* The bench's recorder of what PSK31 is fed: 1 arms it (2.5 s, g_graba). */
 void demod_graba(int on);
 

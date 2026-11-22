@@ -55,4 +55,10 @@ void    digi_report(void);
  * out of wefax.c and, if `pinta` (no menu over the screen), draws them. */
 void digi_fax_poll(uint8_t pinta);
 
+/* SSTV (step 48): the same, for its picture. */
+void digi_sstv_poll(uint8_t pinta);
+
+/* Feld-Hell (step 49): the same, for its columns. */
+void digi_hell_poll(uint8_t pinta);
+
 #endif /* MALAHIT_DIGI_H */

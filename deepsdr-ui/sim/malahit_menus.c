@@ -78,6 +78,9 @@ static void modos_fam(uint8_t fam, const char *ppm)
         { 1, "NAVTEX", "Avisos marítimos", "Marine warnings" },
         { 1, "DSC", "Llamada marítima", "Maritime DSC" },
         { 2, "WEFAX", "Mapas del tiempo", "Weather charts" },
+        { 2, "SSTV", "Fotos por radio", "Pictures over radio" },
+        { 2, "SSTV-FM", "Fotos en FM", "Pictures on FM" },
+        { 2, "HELL", "Texto dibujado", "Drawn text" },
     };
     ui_cfg_state_t st;
     uint8_t i;

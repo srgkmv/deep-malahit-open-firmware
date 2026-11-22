@@ -18,6 +18,8 @@
 #include "navtex.h"       /* ../../User - demod_navtex() */
 #include "dsc.h"          /* ../../User - demod_dsc() */
 #include "wefax.h"        /* ../../User - demod_wefax() */
+#include "sstv.h"         /* ../../User - demod_sstv() */
+#include "hell.h"         /* ../../User - demod_hell() */
 
 /*
  * Upstream's call: 512 frames at 192 kHz in (with rf_doble), 512 stereo
@@ -77,7 +79,7 @@ void demod_init(void)
     __asm__ volatile ("" :: "r"(demod_path), "r"(demod_mode),
                             "r"(demod_mix), "r"(demod_report),
                             "r"(estereo_pon), "r"(demod_cw),
-                            "r"(demod_rtty), "r"(demod_psk31), "r"(demod_navtex), "r"(demod_dsc), "r"(demod_wefax),
+                            "r"(demod_rtty), "r"(demod_psk31), "r"(demod_navtex), "r"(demod_dsc), "r"(demod_wefax), "r"(demod_sstv), "r"(demod_hell),
                             "r"(demod_graba));
 }
 
@@ -365,6 +367,32 @@ SWD_ENTRY void demod_wefax(int on)
     demod_quieto(0);
     if (on && !wefax_activo()) {
         console_printf("  *** WEFAX did not start: the borrowed RAM is too small (src/prestamo.c) ***\n");
+    }
+}
+
+/* SSTV on or off - the same decoder for SSTV (USB) and SSTV-FM (NFM), as
+ * upstream's two entries; its queue in the borrowed RAM. */
+SWD_ENTRY void demod_sstv(int on)
+{
+    if ((uint8_t)(on != 0) == sstv_activo()) { return; }
+    demod_quieto(1);
+    if (on) { sstv_start(12000.0f); } else { sstv_stop(); }
+    demod_quieto(0);
+    if (on && !sstv_activo()) {
+        console_printf("  *** SSTV did not start: the borrowed RAM is too small (src/prestamo.c) ***\n");
+    }
+}
+
+/* Feld-Hell on or off, from zero each time (upstream's rule: the peak and
+ * valley trackers belong to the station that was being heard). */
+SWD_ENTRY void demod_hell(int on)
+{
+    if ((uint8_t)(on != 0) == hell_activo()) { return; }
+    demod_quieto(1);
+    if (on) { hell_start(12000.0f); } else { hell_stop(); }
+    demod_quieto(0);
+    if (on && !hell_activo()) {
+        console_printf("  *** HELL did not start: the borrowed RAM is too small (src/prestamo.c) ***\n");
     }
 }
 

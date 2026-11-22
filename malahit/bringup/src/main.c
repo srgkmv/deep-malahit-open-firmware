@@ -65,6 +65,8 @@
 #include "navtex.h"       /* ../../User - upstream: the NAVTEX decoder */
 #include "dsc.h"          /* ../../User - upstream: the DSC decoder */
 #include "wefax.h"        /* ../../User - upstream: the radiofax decoder */
+#include "sstv.h"         /* ../../User - upstream: the SSTV decoder */
+#include "hell.h"         /* ../../User - upstream: the Feld-Hell decoder */
 #include "rtty_scope.h"   /* ../../User - its spectrum, for navtex_espectro() */
 #include "config.h"       /* ../../User - CONFIG_RTTY_SHIFT_MIN/MAX_HZ */
 #include "nb.h"           /* ../../User - upstream: the blanker, cw_report() */
@@ -6274,7 +6276,9 @@ static int modo_demod(int mode)
 {
     if (mode == RADIO_MODE_CW || mode == RADIO_MODE_RTTY_U
         || mode == RADIO_MODE_PSK31 || mode == RADIO_MODE_NAVTEX
-        || mode == RADIO_MODE_DSC || mode == RADIO_MODE_WEFAX) { return (int)DEMOD_MODE_USB; }
+        || mode == RADIO_MODE_DSC || mode == RADIO_MODE_WEFAX
+        || mode == RADIO_MODE_SSTV || mode == RADIO_MODE_HELL) { return (int)DEMOD_MODE_USB; }
+    if (mode == RADIO_MODE_SSTV_FM)                         { return (int)DEMOD_MODE_NFM; }
     if (mode == RADIO_MODE_RTTY_L)                          { return (int)DEMOD_MODE_LSB; }
     return mode;
 }
@@ -6296,11 +6300,14 @@ static void texto_modo(int mode)
     uint8_t nx = (uint8_t)(mode == RADIO_MODE_NAVTEX);
     uint8_t ds = (uint8_t)(mode == RADIO_MODE_DSC);
     uint8_t fx = (uint8_t)(mode == RADIO_MODE_WEFAX);
+    uint8_t sv = (uint8_t)(mode == RADIO_MODE_SSTV || mode == RADIO_MODE_SSTV_FM);
+    uint8_t hl = (uint8_t)(mode == RADIO_MODE_HELL);
     uint8_t era_cw = cw_get_enabled(), era_rv = s_rtty_var, era_pk = psk31_activo();
     uint8_t era_nx = navtex_activo(), era_ds = dsc_activo(), era_fx = wefax_activo();
+    uint8_t era_sv = sstv_activo(), era_hl = hell_activo();
 
     if (cw == era_cw && rv == era_rv && pk == era_pk && nx == era_nx
-        && ds == era_ds && fx == era_fx) { return; }
+        && ds == era_ds && fx == era_fx && sv == era_sv && hl == era_hl) { return; }
     cw_linea_suelta();
     /* Every decoder off first, then the one wanted on: DSC and WEFAX borrow
      * the same RAM (src/prestamo.c), and the one leaving has to give it
@@ -6312,14 +6319,24 @@ static void texto_modo(int mode)
     if (!nx) { demod_navtex(0); }
     if (!ds) { demod_dsc(0); }
     if (!fx) { demod_wefax(0); }
+    if (!sv) { demod_sstv(0); }
+    if (!hl) { demod_hell(0); }
     if (cw)  { demod_cw(1); }
     if (rv)  { demod_rtty(rv); }
     if (pk)  { demod_psk31(1); }
     if (nx)  { demod_navtex(1); }
     if (ds)  { demod_dsc(1); }
     if (fx)  { demod_wefax(1); }
+    if (sv)  { demod_sstv(1); }
+    if (hl)  { demod_hell(1); }
     s_rtty_var = rv;
-    digi_pon((uint8_t)(cw || rv || pk || nx || ds || fx));
+    digi_pon((uint8_t)(cw || rv || pk || nx || ds || fx || sv || hl));
+    if (hl != era_hl) {
+        console_printf("  HELL %s\n", hl ? (hell_activo() ? "on" : "REFUSED") : "off");
+    }
+    if (sv != era_sv) {
+        console_printf("  SSTV %s\n", sv ? (sstv_activo() ? "on" : "REFUSED") : "off");
+    }
     if (fx != era_fx) {
         console_printf("  WEFAX %s - %u lpm\n", fx ? (wefax_activo() ? "on" : "REFUSED") : "off",
                        (uint32_t)wefax_get_lpm());
@@ -6488,6 +6505,27 @@ static void dsc_poll_radio(void)
     }
 }
 
+/* SSTV's state on the console as it changes: a picture starting, its mode
+ * and how it was found, and where it ends. */
+static void sstv_log(void)
+{
+    static uint8_t  e0 = 0xFFU, c0 = 0xFFU;
+    static uint32_t i0;
+    static const char *m0;
+    sstv_info_t in;
+
+    sstv_info(&in);
+    if (in.estado == e0 && in.como == c0 && in.imagenes == i0 && in.modo == m0) { return; }
+    console_printf("  sstv now: %s, mode %s (%s), line %u of %u, pictures %u, bad syncs %u\n",
+                   in.estado == SSTV_IMAGEN ? "receiving" : in.estado == SSTV_BUSCA
+                   ? "waiting" : "stopped", in.modo ? in.modo : "-",
+                   in.como == SSTV_COMO_VIS ? "VIS header" : in.como == SSTV_COMO_RITMO
+                   ? "line rhythm" : in.como == SSTV_COMO_MANO ? "by hand" : "-",
+                   (uint32_t)in.linea, (uint32_t)in.alto, (uint32_t)in.imagenes,
+                   (uint32_t)in.sincs_malos);
+    e0 = in.estado; c0 = in.como; i0 = in.imagenes; m0 = in.modo;
+}
+
 /* WEFAX's phase on the console as it changes - upstream logs "wefax: ..."
  * to a debug UART this port does not build. */
 static void wefax_log(void)
@@ -6525,6 +6563,15 @@ static void cw_poll(void)
     }
     if (dsc_activo()) {
         dsc_poll_radio();
+    }
+    if (hell_activo()) {
+        /* step 49: Feld-Hell's columns, the same way */
+        digi_hell_poll((uint8_t)(menu_open_id() == MENU_NONE && digi_en_pantalla()));
+    }
+    if (sstv_activo()) {
+        /* step 48: the picture's lines, drawn only with the screen its own */
+        digi_sstv_poll((uint8_t)(menu_open_id() == MENU_NONE && digi_en_pantalla()));
+        sstv_log();
     }
     if (wefax_activo()) {
         /* step 47: the chart's lines, drawn only with the screen the fax's */
@@ -7113,7 +7160,7 @@ static void ui_wf_push(const float *db, uint32_t bins)
 static const char *const k_mode_names[] = { "AM", "USB", "LSB", "NFM",
                                             "WFM", "SAM", "CW", "RTTY-L",
                                             "RTTY-U", "PSK31", "NAVTEX", "DSC",
-                                            "WEFAX" };
+                                            "WEFAX", "SSTV", "SSTV-FM", "HELL" };
 _Static_assert(sizeof k_mode_names / sizeof k_mode_names[0]
                == (size_t)RADIO_MODE_LAST + 1U,
                "a name for every mode, upstream's and the decoders' (menus.h)");
@@ -7309,6 +7356,9 @@ int radio_mode_get(void)
     if (m == (int)DEMOD_MODE_USB && navtex_activo())  { return RADIO_MODE_NAVTEX; }
     if (m == (int)DEMOD_MODE_USB && dsc_activo())     { return RADIO_MODE_DSC; }
     if (m == (int)DEMOD_MODE_USB && wefax_activo())   { return RADIO_MODE_WEFAX; }
+    if (m == (int)DEMOD_MODE_USB && sstv_activo())    { return RADIO_MODE_SSTV; }
+    if (m == (int)DEMOD_MODE_NFM && sstv_activo())    { return RADIO_MODE_SSTV_FM; }
+    if (m == (int)DEMOD_MODE_USB && hell_activo())    { return RADIO_MODE_HELL; }
     return m;
 }
 

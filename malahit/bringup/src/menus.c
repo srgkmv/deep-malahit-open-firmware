@@ -74,6 +74,11 @@ static const struct { int mode; uint8_t fam; const char *n; texto_t d; } k_modos
     { RADIO_MODE_NAVTEX, FAM_DIG, "NAVTEX", T("Avisos marítimos", "Marine warnings") },
     { RADIO_MODE_DSC,    FAM_DIG, "DSC",    T("Llamada marítima", "Maritime DSC") },
     { RADIO_MODE_WEFAX,  FAM_IMG, "WEFAX",  T("Mapas del tiempo", "Weather charts") },
+    { RADIO_MODE_SSTV,   FAM_IMG, "SSTV",   T("Fotos por radio", "Pictures over radio") },
+    /* upstream's "Fotos por radio (FM)" / "Pictures, narrow FM" are 96 and
+     * 92 px in a 90 px cell (make malahit-menus) */
+    { RADIO_MODE_SSTV_FM, FAM_IMG, "SSTV-FM", T("Fotos en FM", "Pictures on FM") },
+    { RADIO_MODE_HELL,   FAM_IMG, "HELL",   T("Texto dibujado", "Drawn text") },
 };
 #define N_MODOS ((uint8_t)(sizeof k_modos / sizeof k_modos[0]))
 

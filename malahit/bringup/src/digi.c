@@ -25,6 +25,10 @@
  *                                                 "llamada" + dot
  *   WEFAX  Sincroniza | 120 lpm                 | "Recibiendo" + dot,
  *          and the chart below the header, in place of scope and rows
+ *   SSTV   Empezar | Auto / Martin 1 ...        | "Martin 1 120/256" + dot,
+ *          and the picture below, the same way
+ *   HELL   Borrar                               | "Recibiendo" + dot, and
+ *          the strips of columns below
  *
  * and upstream's tap on each (rtty_shift_siguiente(), rtty_baud_
  * siguiente(), the Auto toggle, cw_set_aprende()) - on the press here,
@@ -47,6 +51,8 @@
 #include "navtex.h"
 #include "dsc.h"
 #include "wefax.h"
+#include "sstv.h"
+#include "hell.h"
 #include "demod.h"         /* demod_quieto(): a decoder reconfigured, no block through it */
 #include "idioma.h"        /* ../../User - tr() */
 
@@ -280,6 +286,206 @@ static void fax_cabecera(void)
     strcpy(s_chip, s_fax_chip);
 }
 
+/*
+ * SSTV - step 48, 22/11/2026. Upstream's sstv_panel_linea()/sstv_hdr_draw():
+ * each line goes to the panel as it comes, at its own row, and nothing
+ * keeps the picture (a menu wipes it, as WEFAX's chart). 320 x 256 does not
+ * fit the 211 rows under the header, so - as WEFAX, proportional - the
+ * picture is 263 x 211, centred: a line to row y * 211/256 (two now and
+ * then on the same row, the later wins), its 320 points averaged to 263.
+ * Upstream draws it 1:1 on its 800 x 480.
+ *
+ * The header: Empezar / Start (upstream's: search again, or start now in
+ * the mode chosen) and, where upstream has its save button, the mode
+ * choice - upstream picks it in a grid of its own; here a button that
+ * steps Auto, then each mode, and applies at once, as upstream's grid does.
+ */
+#define SST_W  ((uint16_t)((SSTV_ANCHO * FAX_ALTO) / SSTV_ALTO))   /* 263 */
+#define SST_X  ((uint16_t)((GFX2_W - SST_W) / 2U))
+
+static uint8_t  s_sst_idx;               /* 0 Auto, k = mode k - 1 */
+static uint16_t s_sst_px[GFX2_W];
+static uint16_t s_sst_r[GFX2_W], s_sst_g[GFX2_W], s_sst_b[GFX2_W];
+static char     s_sst_chip[40];
+
+/* upstream's: Auto searches (the VIS header, or the lines' rhythm), a mode
+ * starts in it now */
+static void sstv_aplica(void)
+{
+    demod_quieto(1);
+    if (s_sst_idx == 0U) {
+        sstv_auto(1U);
+        sstv_busca();
+    } else {
+        sstv_auto(0U);
+        sstv_fuerza((uint8_t)(s_sst_idx - 1U));
+    }
+    demod_quieto(0);
+}
+
+static void sstv_linea_pinta(const uint8_t *l, uint16_t y)
+{
+    uint16_t x, xo, row;
+
+    if (y >= SSTV_ALTO) { return; }
+    row = (uint16_t)(((uint32_t)y * FAX_ALTO) / SSTV_ALTO);
+    memset(s_sst_r, 0, sizeof s_sst_r);
+    memset(s_sst_g, 0, sizeof s_sst_g);
+    memset(s_sst_b, 0, sizeof s_sst_b);
+    memset(s_fax_cnt, 0, sizeof s_fax_cnt);
+    for (x = 0U; x < SSTV_ANCHO; x++) {
+        xo = (uint16_t)(((uint32_t)x * SST_W) / SSTV_ANCHO);
+        s_sst_r[xo] = (uint16_t)(s_sst_r[xo] + l[x * 3U]);
+        s_sst_g[xo] = (uint16_t)(s_sst_g[xo] + l[x * 3U + 1U]);
+        s_sst_b[xo] = (uint16_t)(s_sst_b[xo] + l[x * 3U + 2U]);
+        s_fax_cnt[xo]++;
+    }
+    for (xo = 0U; xo < SST_W; xo++) {
+        uint16_t n = s_fax_cnt[xo] ? s_fax_cnt[xo] : 1U;
+        uint16_t r = (uint16_t)(s_sst_r[xo] / n), g = (uint16_t)(s_sst_g[xo] / n);
+        uint16_t b = (uint16_t)(s_sst_b[xo] / n);
+
+        s_sst_px[xo] = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+    }
+    gfx_blit(SST_X, (uint16_t)(FAX_Y + row), SST_W, 1, s_sst_px);
+}
+
+/* From the main loop whenever SSTV is on: the lines out of sstv.c's queue
+ * even under a menu; drawn when `pinta`. */
+void digi_sstv_poll(uint8_t pinta)
+{
+    const uint8_t *l;
+    uint16_t y;
+
+    if (!s_on || !sstv_activo()) { return; }
+    while ((l = sstv_linea(&y)) != 0) {
+        if (pinta) { sstv_linea_pinta(l, y); }
+    }
+}
+
+/* upstream's sstv_hdr_draw() */
+static void sstv_cabecera(void)
+{
+    sstv_info_t in;
+    const char *e;
+    uint8_t     i = 0U;
+
+    sstv_info(&in);
+    if (in.estado == SSTV_IMAGEN && in.modo) {
+        uint32_t a = in.alto ? in.alto : SSTV_ALTO, v;
+
+        e = in.modo;
+        while (*e != '\0' && i < 20U) { s_sst_chip[i++] = *e++; }
+        if (in.como == SSTV_COMO_RITMO) { s_sst_chip[i++] = '*'; }
+        s_sst_chip[i++] = ' ';
+        v = in.linea;
+        if (v >= 100U) { s_sst_chip[i++] = (char)('0' + (v / 100U) % 10U); }
+        if (v >= 10U)  { s_sst_chip[i++] = (char)('0' + (v / 10U) % 10U); }
+        s_sst_chip[i++] = (char)('0' + v % 10U);
+        s_sst_chip[i++] = '/';
+        if (a >= 100U) { s_sst_chip[i++] = (char)('0' + (a / 100U) % 10U); }
+        s_sst_chip[i++] = (char)('0' + (a / 10U) % 10U);
+        s_sst_chip[i++] = (char)('0' + a % 10U);
+    } else {
+        e = in.vis ? tr("Modo no soportado, VIS ", "Unsupported mode, VIS ")
+          : (sstv_auto_get() ? tr("Buscando el modo", "Finding the mode")
+                             : tr("Esperando una imagen", "Waiting for a picture"));
+        while (*e != '\0' && i < 30U) { s_sst_chip[i++] = *e++; }
+        if (in.vis) {
+            s_sst_chip[i++] = (char)('0' + (in.vis / 100U) % 10U);
+            s_sst_chip[i++] = (char)('0' + (in.vis / 10U) % 10U);
+            s_sst_chip[i++] = (char)('0' + in.vis % 10U);
+        }
+    }
+    s_sst_chip[i] = '\0';
+
+    memset(&s_st, 0, sizeof s_st);
+    s_st.y     = (int16_t)DIGI_SCOPE_Y;
+    s_st.h     = (int16_t)UDG_HDR_H;
+    s_st.btn   = tr("Empezar", "Start");
+    s_st.btn2  = (s_sst_idx == 0U) ? "Auto" : sstv_modo_nombre((uint8_t)(s_sst_idx - 1U));
+    s_st.chip  = s_sst_chip;
+    s_st.enganchado = (uint8_t)(in.estado == SSTV_IMAGEN);
+    strcpy(s_chip, s_sst_chip);
+}
+
+/*
+ * FELD-HELL - step 49, 22/11/2026. Upstream's hell_panel_columna() and
+ * hell_hdr_draw(): each column of 14 points drawn TWICE, one copy over the
+ * other - Hell has no vertical sync, the text drifts up or down, and with
+ * two copies a whole letter is always there - 2 px wide, in strips across
+ * the width, the next strip cleared as the writing reaches it. Nothing is
+ * kept: a menu wipes it, as the fax and SSTV. Here 6 strips of 240 columns
+ * fit the 211 rows (upstream: as many as its area holds). Borrar clears.
+ */
+#define HELL_COL_W   2U
+#define HELL_TIRA_PX ((uint16_t)(2U * HELL_ALTO))
+#define HELL_TIRA_H  ((uint16_t)(HELL_TIRA_PX + 4U))
+#define HELL_TIRAS   ((uint16_t)(FAX_ALTO / HELL_TIRA_H))
+
+static uint16_t s_hell_x;
+static uint8_t  s_hell_tira;
+static uint16_t s_hell_px[HELL_COL_W * 2U * HELL_ALTO];
+
+static void hell_reinicia(void)
+{
+    s_hell_x = 0U;
+    s_hell_tira = 0U;
+}
+
+static void hell_columna_pinta(const uint8_t *c)
+{
+    uint16_t y0 = (uint16_t)(FAX_Y + s_hell_tira * HELL_TIRA_H);
+    uint16_t f, w;
+
+    for (f = 0U; f < HELL_TIRA_PX; f++) {
+        uint16_t g = c[f % (uint16_t)HELL_ALTO];
+        uint16_t px = (uint16_t)(((g >> 3) << 11) | ((g >> 2) << 5) | (g >> 3));
+
+        for (w = 0U; w < HELL_COL_W; w++) { s_hell_px[f * HELL_COL_W + w] = px; }
+    }
+    gfx_blit(s_hell_x, y0, HELL_COL_W, HELL_TIRA_PX, s_hell_px);
+    s_hell_x = (uint16_t)(s_hell_x + HELL_COL_W);
+    if ((uint16_t)(s_hell_x + HELL_COL_W) > GFX2_W) {
+        s_hell_x = 0U;
+        s_hell_tira = (uint8_t)((s_hell_tira + 1U) % HELL_TIRAS);
+        gfx_fill_rect(0, (uint16_t)(FAX_Y + s_hell_tira * HELL_TIRA_H), GFX2_W, HELL_TIRA_H,
+                      color_tema(PAL_SURF_0));
+    }
+}
+
+/* From the main loop whenever Hell is on: columns out even under a menu,
+ * drawn when `pinta`. */
+void digi_hell_poll(uint8_t pinta)
+{
+    const uint8_t *c;
+
+    if (!s_on || !hell_activo()) { return; }
+    while ((c = hell_columna()) != 0) {
+        if (pinta) { hell_columna_pinta(c); }
+    }
+}
+
+/* upstream's hell_hdr_draw() */
+static void hell_cabecera(void)
+{
+    hell_info_t in;
+    const char *e;
+    uint8_t     i = 0U;
+
+    hell_info(&in);
+    e = (in.columnas > 0UL) ? tr("Recibiendo", "Receiving")
+                            : tr("Esperando señal", "Waiting for signal");
+    while (*e != '\0' && i < (uint8_t)(sizeof s_chip - 1U)) { s_chip[i] = *e; i++; e++; }
+    s_chip[i] = '\0';
+    memset(&s_st, 0, sizeof s_st);
+    s_st.y     = (int16_t)DIGI_SCOPE_Y;
+    s_st.h     = (int16_t)UDG_HDR_H;
+    s_st.btn   = tr("Borrar", "Clear");
+    s_st.chip  = s_chip;
+    s_st.enganchado = (uint8_t)(in.nivel > 0.01f);
+}
+
 void digi_pon(uint8_t on)
 {
     s_on = (uint8_t)(on != 0U);
@@ -288,6 +494,11 @@ void digi_pon(uint8_t on)
     s_eng_visto = 0xFFU;
     s_todo = 1U;
     if (s_on) { rtty_scope_avg_reset(); }
+    /* upstream, on entering SSTV: "the chip rules" - Auto searches, a mode
+     * chosen before waits in that mode */
+    if (s_on && sstv_activo()) {
+        sstv_auto((uint8_t)(s_sst_idx == 0U));
+    }
 }
 
 uint8_t digi_en_pantalla(void) { return s_on; }
@@ -550,6 +761,25 @@ static void osciloscopio(void)
 void digi_repinta(void)
 {
     if (!s_on) { return; }
+    if (hell_activo()) {
+        fax_limpia();
+        hell_reinicia();
+        hell_cabecera();
+        ui_digi_draw_cabecera(&s_st);
+        strcpy(s_chip_visto, s_chip);
+        s_eng_visto = s_st.enganchado;
+        s_todo = 0U;
+        return;
+    }
+    if (sstv_activo()) {
+        fax_limpia();                   /* the same area, cleared */
+        sstv_cabecera();
+        ui_digi_draw_cabecera(&s_st);
+        strcpy(s_chip_visto, s_chip);
+        s_eng_visto = s_st.enganchado;
+        s_todo = 0U;
+        return;
+    }
     if (wefax_activo()) {
         fax_limpia();
         fax_cabecera();
@@ -569,6 +799,26 @@ void digi_repinta(void)
 void digi_dibuja(void)
 {
     if (!s_on) { return; }
+    if (hell_activo()) {
+        if (s_todo) { digi_repinta(); return; }
+        hell_cabecera();
+        if (strcmp(s_chip_visto, s_chip) != 0 || s_eng_visto != s_st.enganchado) {
+            strcpy(s_chip_visto, s_chip);
+            s_eng_visto = s_st.enganchado;
+            ui_digi_draw_cabecera(&s_st);
+        }
+        return;
+    }
+    if (sstv_activo()) {
+        if (s_todo) { digi_repinta(); return; }
+        sstv_cabecera();
+        if (strcmp(s_chip_visto, s_chip) != 0 || s_eng_visto != s_st.enganchado) {
+            strcpy(s_chip_visto, s_chip);
+            s_eng_visto = s_st.enganchado;
+            ui_digi_draw_cabecera(&s_st);
+        }
+        return;
+    }
     if (wefax_activo()) {
         /* the rows come from digi_fax_poll(); here the header, when its
          * text or the lock dot change - upstream repaints it every 500 ms */
@@ -660,6 +910,34 @@ uint8_t digi_toque(uint16_t x, uint16_t y, uint8_t nuevo)
      * if it finds none - the same search that moves the centre by itself,
      * so a tap only matters where that one cannot decide.
      */
+    if (hell_activo()) {
+        hell_cabecera();
+        if (ui_digi_boton_hit(&s_st, x, y)) {
+            fax_limpia();
+            hell_reinicia();
+            console_printf("  digi: HELL cleared\n");
+        }
+        return 1U;
+    }
+    if (sstv_activo()) {
+        sstv_cabecera();
+        if (ui_digi_boton_hit(&s_st, x, y)) {
+            sstv_aplica();
+            fax_limpia();
+            console_printf("  digi: SSTV start, %s\n", s_st.btn2);
+        } else if (ui_digi_boton2_hit(&s_st, x, y)) {
+            s_sst_idx = (uint8_t)((s_sst_idx + 1U) % (uint8_t)(sstv_modos_n() + 1U));
+            sstv_aplica();              /* upstream's grid applies at once */
+            fax_limpia();
+            sstv_cabecera();
+            console_printf("  digi: SSTV mode %s\n", s_st.btn2);
+        } else {
+            return 1U;
+        }
+        sstv_cabecera();
+        ui_digi_draw_cabecera(&s_st);
+        return 1U;
+    }
     if (wefax_activo()) {
         fax_cabecera();
         if (ui_digi_boton_hit(&s_st, x, y)) {
@@ -788,6 +1066,18 @@ __attribute__((noinline, used)) void digi_report(void)
                        "moved to another bit offset %u times\n",
                        (uint32_t)(par + 0.5f), (uint32_t)nota,
                        (uint32_t)(nota * 100.0f + 0.5f) % 100U, (uint32_t)navtex_recolocados());
+    }
+    if (sstv_activo()) {
+        sstv_info_t in;
+
+        sstv_info(&in);
+        console_printf("               sstv: state %u, mode %s (%s), line %u of %u, "
+                       "pictures %u, bad syncs %u, offset %d Hz, choice %u\n",
+                       (uint32_t)in.estado, in.modo ? in.modo : "-",
+                       in.como == SSTV_COMO_VIS ? "VIS" : in.como == SSTV_COMO_RITMO
+                       ? "rhythm" : in.como == SSTV_COMO_MANO ? "hand" : "-",
+                       (uint32_t)in.linea, (uint32_t)in.alto, (uint32_t)in.imagenes,
+                       (uint32_t)in.sincs_malos, (int)sstv_desvio_hz(), (uint32_t)s_sst_idx);
     }
     if (wefax_activo()) {
         wefax_info_t in;

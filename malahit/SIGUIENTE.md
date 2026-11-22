@@ -4,7 +4,36 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 22/11/2026, night: steps 46-47 IN FLASH (5813452), pushed
+## START HERE — 22/11/2026, late night: steps 48-49 (SSTV, HELL) committed, flashing
+
+**In flash: `5813452`** (below). **Committed, checked from RAM**: steps 48-49
+(`PORTING.md` 48-49) - SSTV and SSTV-FM, and Feld-Hell, as upstream has
+them, the owner's word; their screens upstream's way (the panel's memory,
+nothing kept), SSTV's picture scaled to 263 x 211. On the air against the
+HackRF: SSTV Martin 1 and SSTV-FM received, Scottie 1 only above SNR ~30
+and jittery, every picture found by line rhythm, none by its VIS header
+(upstream's disc_fm.c filter, PORTING 48); Hell's text read at SNR 15.
+
+**The radio's state**: 14.063 MHz, HELL, from RAM.
+
+**The owner's answers, 22/11/2026**: WEFAX's slant estimate (289 ppm
+once) is not critical. The 14 touches at (479, 0) were NOT the owner's,
+and the touch panel is mounted firmly in the case - only the back cover
+is off. So they are phantom touches the firmware sees: to be traced
+(the FT6236's report at those moments - a corner, the maximum x and zero
+y, smells of a read gone wrong rather than a finger). Open.
+
+**Memory**: AXI 491.7 of 512 kB - 20 kB left for a RAM image. The next
+decoders will not fit: time for the owner's U3 bridge and flash over SWD
+(below).
+
+**The bench**: `tools/hackrf_gen.py sstv --sstv-mode martin1|scottie1
+--snr N [--fm 3000] --out s.iq` (dial 14.230 USB: `-f 14031900`; SSTV-FM
+on 145.5 NFM: `-f 145300000 -x 20`), `hell --snr N --out h.iq` (dial
+14.063 USB, tone 1000: `-f 13864000`); host: `out/sstvimagen f.f32
+out.ppm`, `out/hellaire f.f32 out.pgm`.
+
+## 22/11/2026, night: steps 46-47 IN FLASH (5813452), pushed
 
 **In flash: `5813452`** (steps 46 DSC and 47 WEFAX, `PORTING.md` 46-47,
 on top of `766d0a9`) - `build_flash/bringup.bin`, 255 408 bytes, sha256
@@ -24,10 +53,10 @@ next step writes into sector 2 (what is left there is factory code; the
 backup is in `Deep-Malahit/backups/`).
 
 **The owner's plan for when the RAM image no longer fits** (22/11/2026):
-he will bridge pins 1 and 3 of the regulator U3 (and may solder JP3), so
-the rail stays up whatever the firmware does, and flash can then be
-written over SWD without the power latch getting in the way; while the
-radio is open, he switches it off by unplugging the battery. Until then,
+the owner will bridge pins 1 and 3 of the regulator U3 (and may solder
+JP3), so the rail stays up whatever the firmware does, and flash can then
+be written over SWD without the power latch getting in the way; while the
+radio is open, it is switched off by unplugging the battery. Until then,
 SSTV and HELL go in as upstream has them, from RAM while they fit.
 
 Also seen this session: 14 touches at exactly (479, 0) - the clock
@@ -43,8 +72,8 @@ radio on band FAX 8; host: `deepsdr-ui/out/wefaxaire f.f32 out.pgm`.
 
 **Memory**: AXI 474.5 of 512 kB - the RAM image has 37 kB left. SSTV and
 HELL are the next image modes; the big ones (FT8, STANAG, HFDL) will not
-fit a RAM image at all. The split of code and data (DTCM 128 kB, D2) or a
-DFU-only loop has to be decided with the owner before them.
+fit a RAM image at all - decided: the owner's U3 bridge and flash over
+SWD (above), not a code/data split.
 
 ## 22/11/2026, night: step 46 (DSC) committed and pushed, NOT in flash
 

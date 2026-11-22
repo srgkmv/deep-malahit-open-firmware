@@ -1683,6 +1683,47 @@ Each step should end with something visible on the radio.
    a menu over a chart: as above. Not done: wfx_recoloca.c, upstream's
    re-centring of a finished chart, which works on the saved file. AXI
    474.5 of 512 kB: the RAM image has 37 kB left.
+48. **SSTV and SSTV-FM, as upstream has them.** *22/11/2026, from RAM,
+   against the HackRF at 14.230 MHz and 145.5 MHz* - the owner asked for
+   SSTV and HELL "as they are". Upstream's sstv.c, stub gone; entries 13
+   (USB) and 14 (NFM: the same decoder from demod_am.c's FM branch) in
+   Images - SSTV-FM's description shortened, upstream's is 96 px in a 90
+   px cell. Its output queue (~13 kB) is in the borrowed RAM, now 16 kB.
+   The screen is upstream's way, as WEFAX's: each line to the panel as it
+   comes, nothing kept, a menu wipes it; 320 x 256 does not fit the 211
+   rows, so the picture is 263 x 211, centred (proportional, as the fax).
+   The header: Empezar / Start, and where upstream has its save button a
+   mode choice - Auto, then each mode - that applies at once, as
+   upstream's mode grid does. `tools/hackrf_gen.py sstv` (Martin 1 and
+   Scottie 1 from the mode specifications, the VIS header, a test picture
+   with colour bars) and `--fm DEV` for any of its signals as narrow FM;
+   `deepsdr-ui/sim/sstv_imagen.c` writes what sstv.c decodes to a PPM.
+   **On the air**: Martin 1 at SNR 40 - the bars, the ramp, a round
+   circle, two or three streaked lines; Scottie 1 at SNR 25 - not
+   started; at 35 - received, but its lines jitter (77 syncs thrown
+   away); SSTV-FM at 145.5 MHz, Martin 1 as NFM +-3 kHz - received, a few
+   streaks. **Every picture was found by its line rhythm, none by its VIS
+   header**, and that is upstream's discriminator (disc_fm.c, shared with
+   WEFAX): it moves the audio down by 1900 Hz and smooths with two 12-
+   sample moving averages, whose response falls to zero 1000 Hz from the
+   centre - the VIS bits' 1100 Hz is 25 dB down, 1300 Hz 12 dB, the 1200
+   Hz sync 17 dB. On the host the header decodes clean and at SNR 40, not
+   at 30 (the 1100 Hz bits read 1205); on the radio the two references'
+   ~70 Hz pushes the tones further down that slope. Left as it is, the
+   owner's word; the fix, if wanted, is a filter that passes 1100-2300 Hz
+   for SSTV without touching what WEFAX's chart needs.
+49. **Feld-Hell, as upstream has it.** *22/11/2026, from RAM, against the
+   HackRF at 14.064 MHz* - upstream's hell.c, stub gone; entry 15 (USB),
+   "Texto dibujado" in Images; state in the borrowed RAM; started from
+   zero on every entry, as upstream. The screen is upstream's: each column
+   of 14 points twice, one copy over the other (Hell has no vertical sync:
+   with two copies a whole letter is always there), 2 px wide, in strips
+   across the width - six of 240 columns here - the next strip cleared as
+   the writing reaches it; Borrar clears. `tools/hackrf_gen.py hell` (122.5
+   Bd, 7 x 14, columns bottom to top, a 5 x 7 font of its own with the
+   rows doubled) and `deepsdr-ui/sim/hell_aire.c`. **On the air**: "CQ CQ
+   DE R1TEST R1TEST K" at SNR 15, read in the strips. AXI 491.7 of 512
+   kB.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress
