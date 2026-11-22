@@ -10,7 +10,7 @@ says what the next session should do and what it must not trust.
 decoder, the Digital family on the mode screen, and upstream's text-mode
 screen (tone scope over ui_digi.c's panel, `src/digi.c`), checked on
 the glass and on the air against a HackRF. **Flash is still `484b36e`**
-(below). Writing it is the owner's DFU, as before. **Not pushed.**
+(below) - the owner chose not to flash yet. **Pushed.**
 
 **User/ changed this time, and it is a fix for the DEEPSDR too**:
 `User/cw.c` (`CW_KM_MESETA` - a weaker station after a strong one no
@@ -24,11 +24,11 @@ as unknown and boots AM (the owner allows that, 21/11/2026).
 
 **The HackRF bench**, to repeat any of it: HackRF -> 10 dB -> 40 dB ->
 the antenna input; `hackrf_transfer -t f.iq -f <carrier - 200 kHz> -s
-2000000 -a 0 -x 47` (amp OFF always). The I/Q files came from a script
-in the session's scratchpad (keyed tone at +200 kHz, own Morse table,
-noise band-limited to +/-4 kHz, SNR in 500 Hz) - rewrite it in tools/
-when the next decoder needs one. The HackRF and the radio differ by
-~9 ppm at 14 MHz.
+2000000 -a 0 -x 47` (amp OFF always). The I/Q files come from
+`tools/hackrf_gen.py` (`carrier`, `cw`; its header says how): the signal
+at +200 kHz, its own tables, noise band-limited to +/-4 kHz with the SNR
+in 500 Hz, and `--audio` for the same signal through upstream's host
+tools (sim/cwaire). The HackRF and the radio differ by ~9 ppm at 14 MHz.
 
 **Next, the owner's order (simple to hard)**: RTTY - its stubs are the
 next block in decoders_off.c, and it uses the SAME scope and panel
