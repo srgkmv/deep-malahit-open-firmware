@@ -67,7 +67,7 @@ OFF_U16(jtty_modo_activo,   jtty_modo_mete)
 /* rds_activo, rds_feed: the real ones since 22/11/2026 (rds.c, step 40) */
 OFF_U32(sstv_activo,        sstv_process)
 OFF_U16(stanag_modo_activo, stanag_modo_mete)
-OFF_U32(wefax_activo,       wefax_process)
+/* wefax_activo, wefax_process: the real ones since 22/11/2026 (wefax.c, step 47) */
 OFF_U16(wspr_modo_activo,   wspr_modo_mete)
 
 /* The ones that do not follow the pattern. */

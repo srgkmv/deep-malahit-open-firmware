@@ -77,6 +77,8 @@ typedef struct {
     uint8_t  rtty_baud;     /* v4: index in upstream's four + 1; 0 = not stored (50) */
     uint8_t  rtty_auto;     /* v4: 1 off, 2 on; 0 = not stored (on) */
     uint8_t  cw_aprende;    /* v4: CW learning, 1 off, 2 on; 0 = not stored (off) */
+    uint8_t  wfx_lpm;       /* v4: WEFAX line rate, upstream's index + 1;
+                               0 = not stored (its default, 120) */
 } settings_t;
 
 #define SET_AJ_NB_MASK      0x03U   /* blanker level 0-3 */

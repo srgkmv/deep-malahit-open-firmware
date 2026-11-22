@@ -51,4 +51,8 @@ void    digi_rtty_baud_pon(uint8_t idx);
  * console (swd-call ... digi_report). */
 void    digi_report(void);
 
+/* WEFAX (step 47): from the main loop whenever it is on - takes the lines
+ * out of wefax.c and, if `pinta` (no menu over the screen), draws them. */
+void digi_fax_poll(uint8_t pinta);
+
 #endif /* MALAHIT_DIGI_H */

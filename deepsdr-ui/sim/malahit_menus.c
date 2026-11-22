@@ -77,6 +77,7 @@ static void modos_fam(uint8_t fam, const char *ppm)
         { 1, "PSK31", "Charla en fase", "Phase-shift chat" },
         { 1, "NAVTEX", "Avisos marítimos", "Marine warnings" },
         { 1, "DSC", "Llamada marítima", "Maritime DSC" },
+        { 2, "WEFAX", "Mapas del tiempo", "Weather charts" },
     };
     ui_cfg_state_t st;
     uint8_t i;
@@ -84,7 +85,8 @@ static void modos_fam(uint8_t fam, const char *ppm)
     memset(&st, 0, sizeof st);
     st.cat[0] = "Analógico";
     st.cat[1] = "Digital";
-    st.cats = 2; st.cat_sel = fam; st.denso = 1;
+    st.cat[2] = "Imágenes";
+    st.cats = 3; st.cat_sel = fam; st.denso = 1;
     st.marcada = 0; st.cursor = 1; st.pressed = -1;
     for (i = 0; i < (uint8_t)(sizeof k / sizeof k[0]); i++) {
         if (k[i].fam != fam) { continue; }
@@ -111,6 +113,7 @@ static void modos(void)
 {
     modos_fam(0, "modos");
     modos_fam(1, "modos_dig");
+    modos_fam(2, "modos_img");
 }
 
 /*

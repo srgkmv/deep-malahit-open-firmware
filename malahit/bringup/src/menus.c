@@ -47,15 +47,17 @@ static int8_t          s_pressed = -1;   /* the hit index under the finger */
  * DIGITAL since 22/11/2026, one decoder at a time as each is grafted
  * (PORTING.md step 42 on): an entry is a demodulator plus a decoder,
  * numbered after upstream's demodulators (menus.h, RADIO_MODE_CW). The
- * families upstream has and this port does not yet - Images,
- * Aeronautical - are left out, not shown empty.
+ * families upstream has and this port does not yet are left out, not
+ * shown empty: Images since 22/11/2026 (WEFAX, step 47), Aeronautical
+ * still to come.
  */
 #define FAM_ANA 0U
 #define FAM_DIG 1U
-#define N_FAM   2U
+#define FAM_IMG 2U
+#define N_FAM   3U
 
 static const texto_t k_modo_fam[N_FAM] = {
-    T("Analógico", "Analogue"), T("Digital", "Digital")
+    T("Analógico", "Analogue"), T("Digital", "Digital"), T("Imágenes", "Images")
 };
 
 static const struct { int mode; uint8_t fam; const char *n; texto_t d; } k_modos[] = {
@@ -71,6 +73,7 @@ static const struct { int mode; uint8_t fam; const char *n; texto_t d; } k_modos
     { RADIO_MODE_PSK31,  FAM_DIG, "PSK31",  T("Charla en fase", "Phase-shift chat") },
     { RADIO_MODE_NAVTEX, FAM_DIG, "NAVTEX", T("Avisos marítimos", "Marine warnings") },
     { RADIO_MODE_DSC,    FAM_DIG, "DSC",    T("Llamada marítima", "Maritime DSC") },
+    { RADIO_MODE_WEFAX,  FAM_IMG, "WEFAX",  T("Mapas del tiempo", "Weather charts") },
 };
 #define N_MODOS ((uint8_t)(sizeof k_modos / sizeof k_modos[0]))
 

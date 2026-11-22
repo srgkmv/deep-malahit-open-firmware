@@ -177,7 +177,8 @@ typedef struct {
     uint8_t  rtty_baud;     /* upstream's baud index + 1; 0 = written before it */
     uint8_t  rtty_auto;     /* 1 off, 2 on; 0 = written before it */
     uint8_t  cw_aprende;    /* 1 off, 2 on; 0 = written before it */
-    uint8_t  rsv[24];
+    uint8_t  wfx_lpm;       /* WEFAX lpm index + 1; 0 = written before it */
+    uint8_t  rsv[23];
     uint32_t crc;
 } rec4_t;
 
@@ -364,6 +365,7 @@ int settings_load(settings_t *out)
     out->rtty_baud  = p->rtty_baud;
     out->rtty_auto  = p->rtty_auto;
     out->cw_aprende = p->cw_aprende;
+    out->wfx_lpm    = p->wfx_lpm;
     out->has_rf = out->has_mode = out->has_aj = 1U;
     out->has_sqlnr = out->has_suav = 1U;
     return 1;
@@ -402,6 +404,7 @@ int settings_save(const settings_t *s)
     w.rtty_baud  = s->rtty_baud;
     w.rtty_auto  = s->rtty_auto;
     w.cw_aprende = s->cw_aprende;
+    w.wfx_lpm    = s->wfx_lpm;
     w.crc      = crc32_of((const uint8_t *)&w, V4_BYTES - 4U);
 
     fram_write(v4_addr(slot), (const uint8_t *)&w, sizeof w);

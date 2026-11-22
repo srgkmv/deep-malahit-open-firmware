@@ -1647,6 +1647,42 @@ Each step should end with something visible on the radio.
    ~2300 Hz until the first pair is found; and the search still moves it
    now and then in noise, ~10 times a minute. AXI 462.2 of 512 kB, D2
    136 of 288.
+47. **WEFAX, and the third mode family, Images.** *22/11/2026, from RAM,
+   against the HackRF at 7880 kHz (band FAX 8, dial 7878.1)* - upstream's
+   wefax.c and disc_fm.c, stub gone; entry 12 (USB), "Mapas del tiempo"
+   in a new family on the mode screen, **Imágenes / Images** (menus.c
+   FAM_IMG); `demod_wefax()` under the flag. Its eight-line ring (6 kB)
+   lives in the borrowed RAM with DSC's state, so the mode change now
+   switches every decoder OFF before it switches one on - DSC to WEFAX
+   would otherwise have had both on the same 8 kB for a moment.
+   **The screen is upstream's way** (fax_panel_linea()/fax_hdr_draw()),
+   the owner's choice: the chart is kept nowhere but the panel's own
+   memory, a line at a time in a ring the height of the area (211 rows
+   under the header) with a red line on the row that comes next; a menu
+   wipes it and the next row starts at the top (upstream keeps its charts
+   on a USB stick, which this port does not have). The header is
+   ui_digi's: **Sync** (wefax_sincroniza() + wefax_fuerza_imagen(), for a
+   chart caught half-way), where upstream has its save button the **line
+   rate** (60/90/120/240 lpm, upstream's Ajustes setting; record v4 byte
+   36), and the chip with the phase and the slant correction ("Receiving
+   +12"). **The scale is this port's, also the owner's choice:
+   proportional** - an IOC 576 chart has square pixels, 1809 a line, so a
+   screen row is 1809/480 = 3.77 lines averaged; upstream draws a line a
+   row, 2.4 times taller than wide. `src/digi.c` (digi_fax_poll() from the
+   main loop takes the lines out even under a menu; gfx_blit() a row).
+   `tools/hackrf_gen.py wefax` (start signal - black and white alternating
+   at 300 Hz, 5 s -, phasing with a 5 % white pulse, a test chart with a
+   grid, circles, a grey wedge and R1TEST, the stop signal; `--ppm` for a
+   transmitter running fast) and `deepsdr-ui/sim/wefax_aire.c` (`make
+   out/wefaxaire`: upstream's wefax.c on an --audio file, the lines to a
+   PGM) - upstream's decoder drew the chart straight and aligned.
+   **On the air**: SNR 25 - straight, the circles round, the wedge's ten
+   greys, 12 ppm measured (the two references); SNR 15 with the
+   transmitter 80 ppm fast - 98 ppm measured, straight, a little grain.
+   Sync, the line-rate button round and back to 120 (saved each time) and
+   a menu over a chart: as above. Not done: wfx_recoloca.c, upstream's
+   re-centring of a finished chart, which works on the saved file. AXI
+   474.5 of 512 kB: the RAM image has 37 kB left.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

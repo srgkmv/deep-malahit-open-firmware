@@ -439,6 +439,11 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/navtex.c
 #        the borrowed RAM (src/prestamo.c, not upstream's hfdl_ram.c)
 #        (step 46)
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/dsc.c
+# wefax.c    radiofax: an FM discriminator on the tone (disc_fm.c), the
+#            300/450 Hz start and stop signals, the phasing pulse and the
+#            line clock; its eight-line ring in the borrowed RAM (step 47)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/wefax.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/disc_fm.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_digi.c
 #
 # THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]

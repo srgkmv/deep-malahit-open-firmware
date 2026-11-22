@@ -17,6 +17,7 @@
 #include "psk31.h"        /* ../../User - demod_psk31() */
 #include "navtex.h"       /* ../../User - demod_navtex() */
 #include "dsc.h"          /* ../../User - demod_dsc() */
+#include "wefax.h"        /* ../../User - demod_wefax() */
 
 /*
  * Upstream's call: 512 frames at 192 kHz in (with rf_doble), 512 stereo
@@ -76,7 +77,7 @@ void demod_init(void)
     __asm__ volatile ("" :: "r"(demod_path), "r"(demod_mode),
                             "r"(demod_mix), "r"(demod_report),
                             "r"(estereo_pon), "r"(demod_cw),
-                            "r"(demod_rtty), "r"(demod_psk31), "r"(demod_navtex), "r"(demod_dsc),
+                            "r"(demod_rtty), "r"(demod_psk31), "r"(demod_navtex), "r"(demod_dsc), "r"(demod_wefax),
                             "r"(demod_graba));
 }
 
@@ -351,6 +352,19 @@ SWD_ENTRY void demod_dsc(int on)
     demod_quieto(0);
     if (on && !dsc_activo()) {
         console_printf("  *** DSC did not start: the borrowed RAM is too small (src/prestamo.c) ***\n");
+    }
+}
+
+/* WEFAX on or off, upstream's wefax_start()/wefax_stop() - its line ring in
+ * the borrowed RAM too - under the same flag. */
+SWD_ENTRY void demod_wefax(int on)
+{
+    if ((uint8_t)(on != 0) == wefax_activo()) { return; }
+    demod_quieto(1);
+    if (on) { wefax_start(12000.0f); } else { wefax_stop(); }
+    demod_quieto(0);
+    if (on && !wefax_activo()) {
+        console_printf("  *** WEFAX did not start: the borrowed RAM is too small (src/prestamo.c) ***\n");
     }
 }
 

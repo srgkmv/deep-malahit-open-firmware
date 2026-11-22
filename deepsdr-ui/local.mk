@@ -1444,6 +1444,14 @@ out/wefaxtest: sim/wefaxtest.c $(FIRMWARE)/User/wefax.c $(FIRMWARE)/User/disc_fm
 
 wefax: out/wefaxtest ; ./out/wefaxtest
 
+# EL FAX CONTRA CUALQUIER FICHERO (22/11/2026, port del Malahit). Ver
+# sim/wefax_aire.c: la carta de hackrf_gen.py. Pide un fichero: fuera de
+# "comprueba".
+out/wefaxaire: sim/wefax_aire.c $(FIRMWARE)/User/wefax.c $(FIRMWARE)/User/disc_fm.c \
+               $(FIRMWARE)/User/nco.c $(FIRMWARE)/User/nco_tabla.c
+	@mkdir -p out
+	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -I$(FIRMWARE)/Ft8Lib -o $@ $(filter %.c,$^) $(LDLIBS)
+
 comprueba: wefax
 
 # SSTV. Compila User/sstv.c del firmware y fabrica la señal con sus mismos

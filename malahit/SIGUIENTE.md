@@ -4,7 +4,29 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 22/11/2026, night: step 46 (DSC) committed and pushed, NOT in flash
+## START HERE — 22/11/2026, night: step 47 (WEFAX) committed and pushed, flashing
+
+**In flash: `766d0a9`** (step 45). Step 46 (DSC) committed and pushed,
+not flashed then (the owner's choice); **step 47 (WEFAX) committed**
+(`PORTING.md` 47): upstream's wefax.c on a chart drawn in the panel's
+memory as upstream does, scaled proportionally (the owner's two choices),
+a third mode family, Images; the line rate in record v4 byte 36. On the
+air against the HackRF at 7880 kHz: straight charts at SNR 25 and 15, a
+transmitter 80 ppm fast corrected.
+
+**The radio's state**: 7878.10 kHz (band FAX 8), WEFAX, from RAM.
+
+**The bench for WEFAX**: `tools/hackrf_gen.py wefax --snr N --lines 200
+--phasing 30 [--ppm P] --out w.iq` (~4 MB a second: 150 s is 600 MB),
+`hackrf_transfer -t w.iq -f 7680000 -s 2000000 -a 0 -x 47` with the
+radio on band FAX 8; host: `deepsdr-ui/out/wefaxaire f.f32 out.pgm`.
+
+**Memory**: AXI 474.5 of 512 kB - the RAM image has 37 kB left. SSTV and
+HELL are the next image modes; the big ones (FT8, STANAG, HFDL) will not
+fit a RAM image at all. The split of code and data (DTCM 128 kB, D2) or a
+DFU-only loop has to be decided with the owner before them.
+
+## 22/11/2026, night: step 46 (DSC) committed and pushed, NOT in flash
 
 **In flash: `766d0a9`** (step 45, below) - the owner chose not to flash
 step 46 yet. **Committed, checked from RAM**: step 46

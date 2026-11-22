@@ -115,7 +115,8 @@ uint32_t    menu_nr_strength(void);
 #define RADIO_MODE_PSK31    9           /* DEMOD_MODE_USB + psk31.c */
 #define RADIO_MODE_NAVTEX   10          /* DEMOD_MODE_USB + navtex.c */
 #define RADIO_MODE_DSC      11          /* DEMOD_MODE_USB + dsc.c */
-#define RADIO_MODE_LAST     RADIO_MODE_DSC
+#define RADIO_MODE_WEFAX    12          /* DEMOD_MODE_USB + wefax.c */
+#define RADIO_MODE_LAST     RADIO_MODE_WEFAX
 void        radio_mode_set(int mode);
 int         radio_mode_get(void);
 const char *radio_mode_name(int mode);

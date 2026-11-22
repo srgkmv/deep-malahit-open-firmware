@@ -23,6 +23,8 @@
  *                                                 "bits" / "buscando" + dot
  *   DSC    Borrar                               | "buscando" / "sync" /
  *                                                 "llamada" + dot
+ *   WEFAX  Sincroniza | 120 lpm                 | "Recibiendo" + dot,
+ *          and the chart below the header, in place of scope and rows
  *
  * and upstream's tap on each (rtty_shift_siguiente(), rtty_baud_
  * siguiente(), the Auto toggle, cw_set_aprende()) - on the press here,
@@ -44,6 +46,7 @@
 #include "psk31.h"
 #include "navtex.h"
 #include "dsc.h"
+#include "wefax.h"
 #include "demod.h"         /* demod_quieto(): a decoder reconfigured, no block through it */
 #include "idioma.h"        /* ../../User - tr() */
 
@@ -67,8 +70,8 @@ static uint8_t         s_col;
 static uint8_t         s_eol;          /* the last character was a line end */
 static uint8_t         s_cambio;       /* rows to repaint */
 static uint8_t         s_todo;         /* the whole area to repaint */
-static char            s_chip[24];
-static char            s_chip_visto[24];
+static char            s_chip[48];         /* WEFAX's state is 29 + its slant */
+static char            s_chip_visto[48];
 static uint8_t         s_eng_visto = 0xFFU;
 static float           s_db[RTTY_SCOPE_BINS];
 static char            s_shift_txt[12];
@@ -116,6 +119,165 @@ static void borra_texto(void)
     s_col = 0U;
     s_eol = 1U;                         /* a leading \n makes no empty row */
     s_cambio = 1U;
+}
+
+/*
+ * WEFAX - step 47, 22/11/2026. Upstream's fax screen (fax_panel_linea(),
+ * fax_hdr_draw() in its main.c): the chart is NOT kept anywhere - each line
+ * goes to the panel's own memory as it comes, in a ring the height of the
+ * area with a red line on the row that comes next, and a menu over it wipes
+ * it (upstream keeps it on a USB stick; this port has none, and the owner
+ * chose to stay with upstream's way). The header is ui_digi's: Sync - the
+ * line starts HERE, paint now - and, where upstream puts its save button,
+ * the line rate, which upstream sets in Ajustes.
+ *
+ * THE SCALE IS THIS PORT'S, the owner's choice: PROPORTIONAL. An IOC 576
+ * chart has square pixels, 1809 a line; the panel has 480 across, so a
+ * screen row is 1809/480 = 3.77 chart lines, averaged - the chart looks
+ * like a chart, ~310 rows for 1200 lines. Upstream draws a line a row (756
+ * of its 800 px across), 2.4 times taller than wide.
+ */
+#define FAX_Y        ((uint16_t)(DIGI_SCOPE_Y + UDG_HDR_H))
+#define FAX_ALTO     ((uint16_t)(DIGI_PANEL_Y + DIGI_PANEL_H - FAX_Y))
+#define FAX_W        ((uint16_t)GFX2_W)
+#define FAX_PX_LINEA 1809.0f    /* IOC 576: pi x 576 */
+
+static uint16_t s_fax_fila;
+static uint32_t s_fax_acc[GFX2_W];
+static uint8_t  s_fax_cnt[GFX2_W];       /* source pixels per column */
+static uint8_t  s_fax_n;                 /* lines in the accumulator */
+static float    s_fax_pos;               /* how much of a row they make */
+static uint16_t s_fax_px[GFX2_W];
+static uint8_t  s_fax_linea[WEFAX_ANCHO];
+static char     s_fax_lpm_txt[12];
+static char     s_fax_chip[40];
+
+static void fax_reinicia(void)
+{
+    uint16_t i;
+
+    memset(s_fax_acc, 0, sizeof s_fax_acc);
+    memset(s_fax_cnt, 0, sizeof s_fax_cnt);
+    for (i = 0U; i < WEFAX_ANCHO; i++) {
+        s_fax_cnt[(uint32_t)i * FAX_W / WEFAX_ANCHO]++;
+    }
+    s_fax_n = 0U;
+    s_fax_pos = 0.0f;
+    s_fax_fila = 0U;
+}
+
+/* The area under the header, cleared, and the rows from the top. */
+static void fax_limpia(void)
+{
+    gfx_fill_rect(0, DIGI_SCOPE_Y, GFX2_W, (uint16_t)(FAX_Y + FAX_ALTO - DIGI_SCOPE_Y),
+                  color_tema(PAL_SURF_0));
+    fax_reinicia();
+}
+
+/* upstream's fax_gris565(): a grey of 8 bits, 5-6-5 */
+static uint16_t fax_gris565(uint32_t g)
+{
+    if (g > 255U) { g = 255U; }
+    return (uint16_t)(((g >> 3) << 11) | ((g >> 2) << 5) | (g >> 3));
+}
+
+static void fax_fila_pinta(void)
+{
+    uint16_t x;
+    uint32_t den;
+
+    for (x = 0U; x < FAX_W; x++) {
+        den = (uint32_t)s_fax_cnt[x] * (uint32_t)s_fax_n;
+        s_fax_px[x] = fax_gris565(den ? (s_fax_acc[x] + den / 2U) / den : 0U);
+    }
+    gfx_blit(0, (uint16_t)(FAX_Y + s_fax_fila), FAX_W, 1, s_fax_px);
+    s_fax_fila++;
+    if (s_fax_fila >= FAX_ALTO) { s_fax_fila = 0U; }
+    /* upstream's red line on the next row: where it is, after the wrap */
+    gfx_hline(0, (uint16_t)(FAX_Y + s_fax_fila), FAX_W, 0xF800U);
+}
+
+/*
+ * From the main loop, whenever WEFAX is on - lines have to be taken out of
+ * wefax.c's eight-line ring even under a menu. `pinta`: the screen is the
+ * fax's (no menu). A row is drawn once its 3.77 lines are in.
+ */
+void digi_fax_poll(uint8_t pinta)
+{
+    static uint8_t tapado;
+    uint16_t i;
+
+    if (!s_on || !wefax_activo()) { return; }
+    if (!pinta) {
+        tapado = 1U;
+    } else if (tapado) {
+        tapado = 0U;
+        fax_reinicia();                 /* digi_repinta() has cleared it */
+    }
+    while (wefax_linea_en(s_fax_linea)) {
+        for (i = 0U; i < WEFAX_ANCHO; i++) {
+            s_fax_acc[(uint32_t)i * FAX_W / WEFAX_ANCHO] += s_fax_linea[i];
+        }
+        s_fax_n++;
+        s_fax_pos += (float)FAX_W / FAX_PX_LINEA;
+        if (s_fax_pos >= 1.0f) {
+            s_fax_pos -= 1.0f;
+            if (pinta) { fax_fila_pinta(); }
+            memset(s_fax_acc, 0, sizeof s_fax_acc);
+            s_fax_n = 0U;
+        }
+    }
+}
+
+/* upstream's fax_hdr_draw(): the phase it is in, and the slant correction
+ * once it has one; the line rate on the second button. */
+static void fax_cabecera(void)
+{
+    wefax_info_t in;
+    const char  *e;
+    uint8_t      i = 0U;
+    int32_t      ppm;
+    uint32_t     lpm = wefax_get_lpm();
+
+    wefax_info(&in);
+    switch (in.estado) {
+    case WEFAX_BUSCA:  e = tr("Esperando el tono de arranque", "Waiting for the start tone"); break;
+    case WEFAX_FASE:   e = tr("Señal de fase", "Phasing signal"); break;
+    case WEFAX_IMAGEN: e = tr("Recibiendo", "Receiving"); break;
+    default:           e = tr("Parado", "Stopped"); break;
+    }
+    while (*e != '\0' && i < (uint8_t)(sizeof s_fax_chip - 12U)) { s_fax_chip[i++] = *e++; }
+    ppm = (int32_t)in.ppm;
+    if (ppm != 0) {
+        uint32_t v = (uint32_t)(ppm < 0 ? -ppm : ppm);
+
+        if (v > 9999U) { v = 9999U; }
+        s_fax_chip[i++] = ' ';
+        s_fax_chip[i++] = (ppm < 0) ? '-' : '+';
+        if (v >= 1000U) { s_fax_chip[i++] = (char)('0' + v / 1000U); }
+        if (v >= 100U)  { s_fax_chip[i++] = (char)('0' + (v / 100U) % 10U); }
+        if (v >= 10U)   { s_fax_chip[i++] = (char)('0' + (v / 10U) % 10U); }
+        s_fax_chip[i++] = (char)('0' + v % 10U);
+    }
+    s_fax_chip[i] = '\0';
+
+    i = 0U;
+    if (lpm >= 100U) { s_fax_lpm_txt[i++] = (char)('0' + lpm / 100U); }
+    s_fax_lpm_txt[i++] = (char)('0' + (lpm / 10U) % 10U);
+    s_fax_lpm_txt[i++] = (char)('0' + lpm % 10U);
+    s_fax_lpm_txt[i++] = ' '; s_fax_lpm_txt[i++] = 'l';
+    s_fax_lpm_txt[i++] = 'p'; s_fax_lpm_txt[i++] = 'm';
+    s_fax_lpm_txt[i] = '\0';
+
+    memset(&s_st, 0, sizeof s_st);
+    s_st.y     = (int16_t)DIGI_SCOPE_Y;
+    s_st.h     = (int16_t)UDG_HDR_H;
+    s_st.filas = 0U;
+    s_st.btn   = tr("Sincroniza", "Sync");
+    s_st.btn2  = s_fax_lpm_txt;
+    s_st.chip  = s_fax_chip;
+    s_st.enganchado = (uint8_t)(in.estado == WEFAX_IMAGEN);
+    strcpy(s_chip, s_fax_chip);
 }
 
 void digi_pon(uint8_t on)
@@ -388,6 +550,15 @@ static void osciloscopio(void)
 void digi_repinta(void)
 {
     if (!s_on) { return; }
+    if (wefax_activo()) {
+        fax_limpia();
+        fax_cabecera();
+        ui_digi_draw_cabecera(&s_st);
+        strcpy(s_chip_visto, s_chip);
+        s_eng_visto = s_st.enganchado;
+        s_todo = 0U;
+        return;
+    }
     gfx_fill_rect(0, DIGI_SCOPE_Y, GFX2_W, DIGI_SCOPE_H + DIGI_SCOPE_GAP,
                   color_tema(PAL_SURF_0));
     spectrum_invalida();
@@ -398,6 +569,18 @@ void digi_repinta(void)
 void digi_dibuja(void)
 {
     if (!s_on) { return; }
+    if (wefax_activo()) {
+        /* the rows come from digi_fax_poll(); here the header, when its
+         * text or the lock dot change - upstream repaints it every 500 ms */
+        if (s_todo) { digi_repinta(); return; }
+        fax_cabecera();
+        if (strcmp(s_chip_visto, s_chip) != 0 || s_eng_visto != s_st.enganchado) {
+            strcpy(s_chip_visto, s_chip);
+            s_eng_visto = s_st.enganchado;
+            ui_digi_draw_cabecera(&s_st);
+        }
+        return;
+    }
     osciloscopio();
     sincroniza();
     if (s_todo) {
@@ -477,6 +660,29 @@ uint8_t digi_toque(uint16_t x, uint16_t y, uint8_t nuevo)
      * if it finds none - the same search that moves the centre by itself,
      * so a tap only matters where that one cannot decide.
      */
+    if (wefax_activo()) {
+        fax_cabecera();
+        if (ui_digi_boton_hit(&s_st, x, y)) {
+            /* upstream's: the line starts HERE, and paint without waiting
+             * for the start tone - for a chart caught half-way */
+            demod_quieto(1);
+            wefax_sincroniza();
+            wefax_fuerza_imagen();
+            demod_quieto(0);
+            fax_limpia();
+            console_printf("  digi: WEFAX synchronised by hand\n");
+        } else if (ui_digi_boton2_hit(&s_st, x, y)) {
+            demod_quieto(1);
+            wefax_set_lpm_idx((uint8_t)((wefax_get_lpm_idx() + 1U) % WEFAX_LPM_N));
+            demod_quieto(0);
+            console_printf("  digi: WEFAX %u lpm\n", (uint32_t)wefax_get_lpm());
+        } else {
+            return 1U;
+        }
+        fax_cabecera();
+        ui_digi_draw_cabecera(&s_st);
+        return 1U;
+    }
     if (navtex_activo() && y < DIGI_SCOPE_Y + DIGI_SCOPE_H) {
         float tap = (float)x / (float)GFX2_W * rtty_scope_hz_per_bin() * (float)RTTY_SCOPE_BINS;
         float c = navtex_centro_cerca(tap);
@@ -582,6 +788,18 @@ __attribute__((noinline, used)) void digi_report(void)
                        "moved to another bit offset %u times\n",
                        (uint32_t)(par + 0.5f), (uint32_t)nota,
                        (uint32_t)(nota * 100.0f + 0.5f) % 100U, (uint32_t)navtex_recolocados());
+    }
+    if (wefax_activo()) {
+        wefax_info_t in;
+        float desliz = 0.0f, pulso = 0.0f;
+
+        wefax_info(&in);
+        wefax_fase_dbg(&desliz, &pulso);
+        console_printf("               wefax: state %u, %u lpm, slant %d ppm, %u lines, "
+                       "phasing %u lines, level %d, row %u\n",
+                       (uint32_t)in.estado, (uint32_t)in.lpm, (int)in.ppm,
+                       (uint32_t)in.lineas, (uint32_t)in.fase_n, (int)in.nivel,
+                       (uint32_t)s_fax_fila);
     }
     if (dsc_activo()) {
         dsc_info_t in;

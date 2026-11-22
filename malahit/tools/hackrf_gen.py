@@ -7,6 +7,7 @@ Test signals for the decoders, sent by a HackRF into the radio - 22/11/2026.
     tools/hackrf_gen.py psk31 --text "CQ CQ de R1TEST k" --out p.iq
     tools/hackrf_gen.py navtex --snr 10 --out n.iq
     tools/hackrf_gen.py dsc --snr 10 --out d.iq
+    tools/hackrf_gen.py wefax --snr 20 --lines 200 --out w.iq
     tools/hackrf_gen.py carrier --seconds 10 --out c.iq
     hackrf_transfer -t f.iq -f <carrier Hz - 200000> -s 2000000 -a 0 -x 47
 
@@ -400,6 +401,69 @@ def dsc_baseband(a):
                                         f'{"reversed" if a.reverse else "normal"}')
 
 
+def wefax_chart(lines, width=1809):
+    """A test chart, 0 black .. 1 white: a white page with a black border,
+    a 100-pixel grid, circles, a grey wedge and the word R1TEST in big
+    letters - shapes that show slant, scaling and the grey scale."""
+    from PIL import Image, ImageDraw, ImageFont
+    im = Image.new('L', (width, lines), 255)
+    d = ImageDraw.Draw(im)
+    for x in range(0, width, 100):
+        d.line([(x, 0), (x, lines)], fill=160, width=2)
+    for y in range(0, lines, 100):
+        d.line([(0, y), (width, y)], fill=160, width=2)
+    d.rectangle([4, 4, width - 5, lines - 5], outline=0, width=8)
+    for r in (60, 140, 220):
+        d.ellipse([450 - r, lines // 2 - r, 450 + r, lines // 2 + r], outline=0, width=10)
+    for k in range(10):                        # the grey wedge, 10 steps
+        d.rectangle([900 + 80 * k, 40, 980 + 80 * k, 160], fill=int(255 * k / 9))
+    try:
+        f = ImageFont.load_default(size=180)
+    except TypeError:
+        f = ImageFont.load_default()
+    d.text((900, lines // 2 - 60), 'R1TEST', fill=0, font=f)
+    return np.asarray(im, dtype=np.float64) / 255.0
+
+
+def wefax_baseband(a):
+    """Radiofax (WMO / ITU-R, IOC 576): FM round 0 Hz, black -400 Hz and
+    white +400 Hz (1500 and 2300 Hz in the audio of a dial 1.9 kHz under),
+    at --lpm lines a minute, 1809 pixels a line. In order: the start signal
+    (black and white alternating at 300 Hz, 5 s), phasing (--phasing s of
+    black lines with a white pulse the first 5 % of each), the chart, the
+    stop signal (450 Hz, 5 s) and 10 s of black."""
+    t_line = 60.0 / a.lpm
+    spl = int(round(t_line * FS_LO))
+    W = 1809
+    chart = wefax_chart(a.lines, W)
+    pieces = [np.full(int(a.lead * FS_LO), np.nan)]
+    n_apt = int(5.0 * FS_LO)
+    t = np.arange(n_apt) / FS_LO
+    pieces.append((np.sign(np.sin(2 * np.pi * 300.0 * t)) > 0).astype(np.float64))
+    pulse = np.zeros(spl)
+    pulse[:int(0.05 * spl)] = 1.0
+    pieces.append(np.tile(pulse, int(round(a.phasing / t_line))))
+    idx = (np.arange(spl) * W) // spl
+    for row in chart:
+        pieces.append(row[idx])
+    t = np.arange(n_apt) / FS_LO
+    pieces.append((np.sign(np.sin(2 * np.pi * 450.0 * t)) > 0).astype(np.float64))
+    pieces.append(np.zeros(int(10.0 * FS_LO)))
+    pieces.append(np.full(int(1.0 * FS_LO), np.nan))
+    g = np.concatenate(pieces)
+    key = (~np.isnan(g)).astype(np.float64)
+    g = np.nan_to_num(g, nan=0.5)
+    f = (g - 0.5) * 800.0
+    if a.ppm:
+        # the transmitter's line rate a little off: resample in time
+        n = len(f)
+        src = np.arange(n) * (1.0 + a.ppm * 1e-6)
+        f = np.interp(src, np.arange(n), f)
+    x = np.exp(1j * 2 * np.pi * np.cumsum(f) / FS_LO)
+    return x * raised_edges(key, 5.0), (f'WEFAX {a.lpm} lpm, {a.lines} lines, '
+                                        f'{a.phasing:.0f} s phasing, {a.ppm:+.0f} ppm')
+
+
 def carrier_baseband(a):
     return np.ones(int(a.seconds * FS_LO), dtype=np.complex128), 'carrier'
 
@@ -534,6 +598,15 @@ def main():
     p.add_argument('--pause', type=float, default=3.0, help='s of silence after each')
     p.add_argument('--repeat', type=int, default=1)
     p.set_defaults(build=dsc_baseband)
+
+    p = sub.add_parser('wefax', help='radiofax, IOC 576')
+    common(p)
+    p.add_argument('--lpm', type=float, default=120.0)
+    p.add_argument('--lines', type=int, default=300, help='lines of chart')
+    p.add_argument('--phasing', type=float, default=30.0, help='s of phasing')
+    p.add_argument('--ppm', type=float, default=0.0, help='line rate error, ppm')
+    p.add_argument('--lead', type=float, default=1.0, help='s of silence before')
+    p.set_defaults(build=wefax_baseband, tone=1900.0)
 
     a = ap.parse_args()
     x, what = a.build(a)

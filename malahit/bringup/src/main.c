@@ -64,6 +64,7 @@
 #include "psk31.h"        /* ../../User - upstream: the PSK31 decoder */
 #include "navtex.h"       /* ../../User - upstream: the NAVTEX decoder */
 #include "dsc.h"          /* ../../User - upstream: the DSC decoder */
+#include "wefax.h"        /* ../../User - upstream: the radiofax decoder */
 #include "rtty_scope.h"   /* ../../User - its spectrum, for navtex_espectro() */
 #include "config.h"       /* ../../User - CONFIG_RTTY_SHIFT_MIN/MAX_HZ */
 #include "nb.h"           /* ../../User - upstream: the blanker, cw_report() */
@@ -5930,7 +5931,8 @@ static int settings_same(const settings_t *a, const settings_t *b)
         && a->aj_idioma == b->aj_idioma && a->aj_brillo == b->aj_brillo
         && a->aj_estereo == b->aj_estereo && a->cw_bw == b->cw_bw
         && a->rtty_shift == b->rtty_shift && a->rtty_baud == b->rtty_baud
-        && a->rtty_auto == b->rtty_auto && a->cw_aprende == b->cw_aprende;
+        && a->rtty_auto == b->rtty_auto && a->cw_aprende == b->cw_aprende
+        && a->wfx_lpm == b->wfx_lpm;
 }
 
 static void settings_now(settings_t *out)
@@ -5947,6 +5949,7 @@ static void settings_now(settings_t *out)
     out->rtty_baud  = (uint8_t)(digi_rtty_baud_idx() + 1U);
     out->rtty_auto  = (uint8_t)(rtty_auto_get() ? 2U : 1U);
     out->cw_aprende = (uint8_t)(cw_get_aprende() ? 2U : 1U);
+    out->wfx_lpm    = (uint8_t)(wefax_get_lpm_idx() + 1U);
     out->has_mode = 1U;
     menu_ajustes_get(out);              /* the settings screen's values */
 }
@@ -6271,7 +6274,7 @@ static int modo_demod(int mode)
 {
     if (mode == RADIO_MODE_CW || mode == RADIO_MODE_RTTY_U
         || mode == RADIO_MODE_PSK31 || mode == RADIO_MODE_NAVTEX
-        || mode == RADIO_MODE_DSC)                          { return (int)DEMOD_MODE_USB; }
+        || mode == RADIO_MODE_DSC || mode == RADIO_MODE_WEFAX) { return (int)DEMOD_MODE_USB; }
     if (mode == RADIO_MODE_RTTY_L)                          { return (int)DEMOD_MODE_LSB; }
     return mode;
 }
@@ -6292,19 +6295,35 @@ static void texto_modo(int mode)
     uint8_t pk = (uint8_t)(mode == RADIO_MODE_PSK31);
     uint8_t nx = (uint8_t)(mode == RADIO_MODE_NAVTEX);
     uint8_t ds = (uint8_t)(mode == RADIO_MODE_DSC);
+    uint8_t fx = (uint8_t)(mode == RADIO_MODE_WEFAX);
     uint8_t era_cw = cw_get_enabled(), era_rv = s_rtty_var, era_pk = psk31_activo();
-    uint8_t era_nx = navtex_activo(), era_ds = dsc_activo();
+    uint8_t era_nx = navtex_activo(), era_ds = dsc_activo(), era_fx = wefax_activo();
 
     if (cw == era_cw && rv == era_rv && pk == era_pk && nx == era_nx
-        && ds == era_ds) { return; }
+        && ds == era_ds && fx == era_fx) { return; }
     cw_linea_suelta();
-    demod_cw(cw);
-    demod_rtty(rv);
-    demod_psk31(pk);
-    demod_navtex(nx);
-    demod_dsc(ds);
+    /* Every decoder off first, then the one wanted on: DSC and WEFAX borrow
+     * the same RAM (src/prestamo.c), and the one leaving has to give it
+     * back before the next takes it - upstream's mode change stops before
+     * it starts for the same reason. */
+    if (!cw) { demod_cw(0); }
+    if (!rv) { demod_rtty(0); }
+    if (!pk) { demod_psk31(0); }
+    if (!nx) { demod_navtex(0); }
+    if (!ds) { demod_dsc(0); }
+    if (!fx) { demod_wefax(0); }
+    if (cw)  { demod_cw(1); }
+    if (rv)  { demod_rtty(rv); }
+    if (pk)  { demod_psk31(1); }
+    if (nx)  { demod_navtex(1); }
+    if (ds)  { demod_dsc(1); }
+    if (fx)  { demod_wefax(1); }
     s_rtty_var = rv;
-    digi_pon((uint8_t)(cw || rv || pk || nx || ds));
+    digi_pon((uint8_t)(cw || rv || pk || nx || ds || fx));
+    if (fx != era_fx) {
+        console_printf("  WEFAX %s - %u lpm\n", fx ? (wefax_activo() ? "on" : "REFUSED") : "off",
+                       (uint32_t)wefax_get_lpm());
+    }
     if (ds != era_ds) {
         console_printf("  DSC %s - centre %u Hz\n", ds ? (dsc_activo() ? "on" : "REFUSED") : "off",
                        (uint32_t)(dsc_get_centro_hz() + 0.5f));
@@ -6469,6 +6488,25 @@ static void dsc_poll_radio(void)
     }
 }
 
+/* WEFAX's phase on the console as it changes - upstream logs "wefax: ..."
+ * to a debug UART this port does not build. */
+static void wefax_log(void)
+{
+    static uint8_t e0 = 0xFFU;
+    static int32_t p0;
+    wefax_info_t in;
+    static const char *const k[] = { "stopped", "waiting for the start tone",
+                                     "phasing", "receiving" };
+
+    wefax_info(&in);
+    if (in.estado == e0 && (int32_t)in.ppm == p0) { return; }
+    e0 = in.estado;
+    p0 = (int32_t)in.ppm;
+    console_printf("  wefax now: %s, %u lpm, slant %d ppm, %u lines\n",
+                   in.estado < 4U ? k[in.estado] : "?", (uint32_t)in.lpm,
+                   (int)p0, (uint32_t)in.lineas);
+}
+
 static void cw_poll(void)
 {
     char c;
@@ -6487,6 +6525,11 @@ static void cw_poll(void)
     }
     if (dsc_activo()) {
         dsc_poll_radio();
+    }
+    if (wefax_activo()) {
+        /* step 47: the chart's lines, drawn only with the screen the fax's */
+        digi_fax_poll((uint8_t)(menu_open_id() == MENU_NONE && digi_en_pantalla()));
+        wefax_log();
     }
     if (navtex_activo()) {
         /* navtex.c's centre, from the scope's spectrum (navtex_espectro(),
@@ -7069,7 +7112,8 @@ static void ui_wf_push(const float *db, uint32_t bins)
  */
 static const char *const k_mode_names[] = { "AM", "USB", "LSB", "NFM",
                                             "WFM", "SAM", "CW", "RTTY-L",
-                                            "RTTY-U", "PSK31", "NAVTEX", "DSC" };
+                                            "RTTY-U", "PSK31", "NAVTEX", "DSC",
+                                            "WEFAX" };
 _Static_assert(sizeof k_mode_names / sizeof k_mode_names[0]
                == (size_t)RADIO_MODE_LAST + 1U,
                "a name for every mode, upstream's and the decoders' (menus.h)");
@@ -7264,6 +7308,7 @@ int radio_mode_get(void)
     if (m == (int)DEMOD_MODE_USB && psk31_activo())   { return RADIO_MODE_PSK31; }
     if (m == (int)DEMOD_MODE_USB && navtex_activo())  { return RADIO_MODE_NAVTEX; }
     if (m == (int)DEMOD_MODE_USB && dsc_activo())     { return RADIO_MODE_DSC; }
+    if (m == (int)DEMOD_MODE_USB && wefax_activo())   { return RADIO_MODE_WEFAX; }
     return m;
 }
 
@@ -9120,6 +9165,10 @@ int main(void)
     }
     if (s_boot_have && s_boot_set.cw_aprende != 0U) {
         cw_set_aprende((uint8_t)(s_boot_set.cw_aprende == 2U));
+    }
+    /* WEFAX's line rate, byte 36 - upstream keeps it in CONFIG.CSV. */
+    if (s_boot_have && s_boot_set.wfx_lpm >= 1U && s_boot_set.wfx_lpm <= WEFAX_LPM_N) {
+        wefax_set_lpm_idx((uint8_t)(s_boot_set.wfx_lpm - 1U));
     }
     if (s_boot_have && s_boot_set.has_mode
         && s_boot_set.mode <= (uint8_t)RADIO_MODE_LAST) {
