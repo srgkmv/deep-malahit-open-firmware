@@ -4810,10 +4810,25 @@ static const band_preset_t k_band_presets[] = {
      * hay que elegir despues es "NAVTEX" en la pantalla de modos - la banda
      * deja el aparato en el sitio, no enciende el decodificador, igual que
      * elegir la banda de 40 metros no enciende el RTTY.
+     *
+     * *** Y EL DIAL, 1,7 kHz POR DEBAJO - 22/11/2026, port del Malahit. ***
+     *
+     * Las tres filas ponian el dial EN la frecuencia publicada, y lo que se
+     * publica es el CENTRO de la emision: los dos tonos estan 85 Hz por
+     * encima y por debajo. En USB eso los deja en +85 y -85 Hz de audio, uno
+     * en la banda lateral que se suprime y el otro debajo del corte del
+     * filtro: por estos tres botones no entraba NADA. Es el mismo fallo que
+     * tuvieron los tres del fax hasta el 21/10 (ver abajo), y navtex.c ya lo
+     * decia en el comentario de su centro: "en banda lateral hay que bajar
+     * el dial 1,7 kHz para que caigan ahi". Con el dial 1,7 kHz por debajo
+     * los tonos caen en 1615 y 1785 Hz, alrededor de NAVTEX_CENTRO_HZ.
+     *
+     * EL ROTULO DICE EL DIAL, como en el fax. Las publicadas -518, 490 y
+     * 4.209,5 kHz- son el dial mas 1,7.
      */
-    { T("NAVTEX", "NAVTEX"), "518 kHz",            518000UL, 518000UL, 518000UL,    DEMOD_MODE_USB, BAND_STEP_100HZ, BAND_FAM_UTIL },
-    { T("NAVTEX-N", "NAVTEX-N"),"490 kHz",            490000UL, 490000UL, 490000UL,    DEMOD_MODE_USB, BAND_STEP_100HZ, BAND_FAM_UTIL },
-    { T("NAVTEX-HF", "NAVTEX-HF"),"4.209,5 kHz",        4209500UL, 4209500UL, 4209500UL, DEMOD_MODE_USB, BAND_STEP_100HZ, BAND_FAM_UTIL },
+    { T("NAVTEX", "NAVTEX"), "516,3 kHz",          516300UL, 516300UL, 516300UL,    DEMOD_MODE_USB, BAND_STEP_100HZ, BAND_FAM_UTIL },
+    { T("NAVTEX-N", "NAVTEX-N"),"488,3 kHz",          488300UL, 488300UL, 488300UL,    DEMOD_MODE_USB, BAND_STEP_100HZ, BAND_FAM_UTIL },
+    { T("NAVTEX-HF", "NAVTEX-HF"),"4.207,8 kHz",        4207800UL, 4207800UL, 4207800UL, DEMOD_MODE_USB, BAND_STEP_100HZ, BAND_FAM_UTIL },
     /*
      * Las tres del DWD (Pinneberg), 24/09/2026. Son las emisiones de fax
      * meteorologico que se reciben bien desde España, y tienen horario
@@ -33168,6 +33183,16 @@ static void navtex_poll(void)
     static char line[80];
     static uint8_t line_len = 0U;
     char c;
+
+    /* EL CENTRO, MEDIDO EN EL ESPECTRO DEL OSCILOSCOPIO - 22/11/2026, desde
+     * el port del Malahit. Ver navtex_espectro() en navtex.c: los cruces
+     * por cero median el centro del ruido y por debajo de unos 12 dB se
+     * llevaban los filtros a donde no habia nada. Solo lee el cuadro que
+     * rtty_scope_poll() ya hizo para el dibujo, y cada uno una vez. */
+    if (navtex_activo()) {
+        navtex_espectro(rtty_scope_frame_peek(), (uint16_t)RTTY_SCOPE_BINS,
+                        rtty_scope_hz_per_bin(), rtty_scope_frame_n());
+    }
 
     while (navtex_get_char(&c)) {
         rtty_text_push(c);

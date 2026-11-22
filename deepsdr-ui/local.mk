@@ -1421,9 +1421,13 @@ comprueba: reloj
 
 # NAVTEX (SITOR-B). Compila User/navtex.c del firmware y fabrica la señal con
 # la misma tabla del alfabeto que usa el decodificador - ver sim/navtextest.c.
-out/navtextest: sim/navtextest.c $(FIRMWARE)/User/navtex.c $(FIRMWARE)/User/nco.c $(FIRMWARE)/User/nco_tabla.c
+# Desde el 22/11/2026 tambien el osciloscopio de sintonia (rtty_scope.c y su
+# fft.c): la seccion 8 mide el centro en su espectro, como la radio.
+out/navtextest: sim/navtextest.c $(FIRMWARE)/User/navtex.c $(FIRMWARE)/User/nco.c $(FIRMWARE)/User/nco_tabla.c \
+                $(FIRMWARE)/User/rtty_scope.c $(FIRMWARE)/User/fft.c
 	@mkdir -p out
-	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -o $@ sim/navtextest.c $(FIRMWARE)/User/navtex.c $(FIRMWARE)/User/nco.c $(FIRMWARE)/User/nco_tabla.c $(LDLIBS)
+	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -I$(FIRMWARE)/Ft8Lib -Ihostinc -Isim -o $@ \
+	      $(filter %.c,$^) $(LDLIBS)
 
 NAVTEX_MUESTRAS := out/muestras/sitorb_tfc.wav out/muestras/navtex8424.wav
 
@@ -4122,6 +4126,15 @@ rttyaire: out/rttyaire
 # sim/rtty_auto_aire.c. Tampoco entra en "comprueba": hace falta un fichero.
 out/rttyautoaire: sim/rtty_auto_aire.c $(FIRMWARE)/User/rtty.c $(FIRMWARE)/User/rtty_auto.c \
                   $(FIRMWARE)/User/rtty_scope.c $(FIRMWARE)/User/fft.c
+	@mkdir -p out
+	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -I$(FIRMWARE)/Ft8Lib -Ihostinc -Isim \
+	      -o $@ $(filter %.c,$^) $(LDLIBS)
+
+# EL NAVTEX CONTRA CUALQUIER FICHERO (22/11/2026). Ver sim/navtex_aire.c:
+# la señal de hackrf_gen.py, con su propia tabla. Tampoco entra en
+# "comprueba": hace falta un fichero.
+out/navtexaire: sim/navtex_aire.c $(FIRMWARE)/User/navtex.c $(FIRMWARE)/User/nco.c \
+                $(FIRMWARE)/User/nco_tabla.c $(FIRMWARE)/User/rtty_scope.c $(FIRMWARE)/User/fft.c
 	@mkdir -p out
 	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -I$(FIRMWARE)/Ft8Lib -Ihostinc -Isim \
 	      -o $@ $(filter %.c,$^) $(LDLIBS)

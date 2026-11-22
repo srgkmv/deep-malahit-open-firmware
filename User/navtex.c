@@ -159,6 +159,8 @@ static uint16_t s_punt_n;       /* bits contados en esa busqueda */
 static uint8_t  s_desp;         /* el desplazamiento elegido, 0..6 */
 static uint8_t  s_tiene_desp;
 static uint16_t s_vig_ok, s_vig_n;   /* vigilancia del enganche, ver bit_nuevo() */
+#define RECOLOCA_MARGEN 4U           /* ver "enganchado, se sigue mirando" en bit_nuevo() */
+static uint16_t s_recolocados;       /* cuantas veces ha pasado a otro desplazamiento */
 
 /* --- 4. diversidad temporal --- */
 /*
@@ -263,6 +265,12 @@ static uint8_t  s_signo_ant;   /* el signo de la muestra anterior */
 static float    s_centro_med;  /* lo ultimo que se midio, 0 = todavia nada */
 static uint8_t  s_vueltas;     /* ventanas de busqueda gastadas sin enganchar */
 
+/* El centro medido en el espectro: ver navtex_espectro(), mas abajo. */
+static uint8_t          s_esp_on;   /* 1 = alguien da espectro: los cruces callan */
+static uint8_t          s_fijo;     /* 1 = el centro lo ha puesto el operador */
+static volatile uint8_t s_pide;     /* el bucle pide un centro a la interrupcion */
+static volatile float   s_pide_hz;
+
 static void tonos_fija(void)
 {
     float mitad = NAVTEX_SHIFT_HZ * 0.5f;
@@ -274,9 +282,39 @@ static void tonos_fija(void)
     nco_freq(&s_nco_e, e, s_fs);
 }
 
+/* Un centro medido pasa a mandar, y el reloj de bit, que venia siguiendo
+ * otra cosa, empieza limpio. Desde la interrupcion: navtex_process().
+ *
+ * SALVO QUE SEA UNA CORRECCION - 22/11/2026. Si el centro se mueve menos
+ * de lo que aguantan los filtros (+-60 Hz), lo que el reloj venia
+ * siguiendo ERA la señal, mal centrada pero ella, y ponerlo a cero tira
+ * los segundos que lleva buscando. Solo se retocan los tonos. Para la
+ * medida del espectro (`corrige`); los cruces, como estaban. */
+static void centro_aplica(float f, uint8_t corrige)
+{
+    float ant = (s_centro_med > 0.0f) ? s_centro_med : s_centro_hz;
+    float d = f - ant;
+
+    s_centro_med = f;
+    tonos_fija();
+    if (d < 0.0f) { d = -d; }
+    if (corrige && d < 60.0f) { return; }
+    s_err_int = 0.0f;
+    s_inc = s_inc_nom;
+    memset(s_punt, 0, sizeof s_punt);
+    memset(s_pares, 0, sizeof s_pares);
+    s_punt_n = 0U;
+}
+
 /*
  * Una muestra mas para la cuenta de cruces. Cuando la ventana se llena, si
  * no hay enganche, el resultado pasa a ser el centro.
+ *
+ * Y SOLO SI NADIE DA ESPECTRO NI HA PUESTO EL CENTRO A MANO - 22/11/2026.
+ * Ver navtex_espectro(): los cruces miden el centro del RUIDO en cuanto la
+ * señal no lo tapa de sobra, y entonces mueven los filtros a donde no hay
+ * nada. Se quedan para quien no tenga espectro que dar (el banco de las
+ * grabaciones, sim/navtextest.c, que los prueba asi).
  */
 static void cruces_mete(float x)
 {
@@ -287,7 +325,7 @@ static void cruces_mete(float x)
     s_cruces_n++;
     if (s_cruces_n < CRUCES_VENT) { return; }
 
-    if (!s_tiene_desp && s_vueltas >= VUELTAS_ANTES_DE_MEDIR) {
+    if (!s_tiene_desp && s_vueltas >= VUELTAS_ANTES_DE_MEDIR && !s_esp_on && !s_fijo) {
         float f = (float)s_cruces * s_fs / (2.0f * (float)CRUCES_VENT);
         float d = f - s_centro_med;
 
@@ -302,18 +340,274 @@ static void cruces_mete(float x)
          */
         if (f >= CENTRO_MIN && f <= CENTRO_MAX
             && (s_centro_med <= 0.0f || d > 40.0f)) {
-            s_centro_med = f;
-            tonos_fija();
-            /* El reloj de bit venia siguiendo otra cosa: que empiece limpio. */
-            s_err_int = 0.0f;
-            s_inc = s_inc_nom;
-            memset(s_punt, 0, sizeof s_punt);
-            memset(s_pares, 0, sizeof s_pares);
-            s_punt_n = 0U;
+            centro_aplica(f, 0U);
         }
     }
     s_cruces = 0U;
     s_cruces_n = 0U;
+}
+
+/* ==========================================================================
+ * EL CENTRO, MEDIDO EN EL ESPECTRO - 22/11/2026, en el port del Malahit.
+ * ==========================================================================
+ *
+ * LOS CRUCES POR CERO MIDEN EL CENTRO DEL RUIDO. Lo decia el comentario de
+ * arriba -"con ruido de banda ancha encima los cruces los pone el ruido"- y
+ * lo que no se habia medido es cuanto ruido hace falta. Muy poco: el ruido
+ * de toda la banda de audio pesa en la cuenta como la señal, y en una
+ * banda lateral de 4 kHz eso son 9 dB mas que en los 500 Hz donde se suele
+ * dar la relacion señal/ruido. Medido en el Malahit, con un HackRF dando
+ * un NAVTEX de verdad en 4209,5 kHz y el filtro de 0,3-4,0 kHz:
+ *
+ *     sin señal          el centro se va a 2300-2350 Hz (el del ruido)
+ *     SNR 15 dB/500 Hz   vuelve hasta 1741 (la señal en ~1720): engancha
+ *     SNR  8 dB/500 Hz   se queda en 2020-2100: NO engancha, ni una letra
+ *
+ * Y en el banco del ordenador, la señal en 1100 Hz con SNR 10: medida en
+ * 2245, nada. El decodificador, puesto en su centro, lee limpio hasta SNR 3;
+ * lo que se perdia entre 3 y 15 dB era culpa de donde escuchaba.
+ *
+ * LO QUE NO SE CONFUNDE CON EL RUIDO ES LA FORMA. Un NAVTEX en el espectro
+ * son dos lomos separados 170 Hz, y el ruido es llano. El osciloscopio de
+ * sintonia ya hace ese espectro (rtty_scope.c, 23,4 Hz por casilla, un
+ * cuadro cada 43 ms) para pintarlo, asi que el bucle principal se lo pasa
+ * a navtex_espectro(), que lo promedia ~1,4 s y busca la pareja:
+ *
+ *   - cada lomo (+-45 Hz alrededor de c-85 y c+85) contra el fondo de SU
+ *     lado de fuera (de 90 a 180 Hz mas alla). Hacia fuera y no entre los
+ *     dos, porque entre los dos esta la falda de los lomos. Y por separado:
+ *     junto al corte del filtro de banda lateral el fondo de un lado cae en
+ *     la banda eliminada, y un "fondo" medio entre los dos lados daria por
+ *     buena una pareja hecha solo de ruido junto al corte. Por lados, el
+ *     lomo que cae junto al corte pasa, pero el otro no;
+ *   - la nota es el PEOR de los dos cocientes, asi que una portadora sola
+ *     -un lomo, no dos- no pasa;
+ *   - pasa con el doble (3 dB): la media de 32 cuadros deja el ruido en
+ *     un +-10 % y un NAVTEX con SNR 0 dB en 500 Hz pone sus lomos a mas de
+ *     2,5 veces el fondo.
+ *
+ * Y LAS REGLAS DE ARRIBA, LAS MISMAS: con la señal enganchada no se mueve
+ * nada (un desvanecimiento moveria el centro justo cuando no debe), lo que
+ * ya esta bien no se toca (25 Hz de tolerancia, menos que los +-60 que
+ * aguantan los filtros) y el operador manda (navtex_set_centro_hz()). Lo
+ * nuevo es lo que pasa cuando no hay señal: NADA. Sin pareja no se mide, y
+ * el centro se queda donde estaba en vez de irse al del ruido.
+ *
+ * El bucle no toca los filtros: deja el centro en s_pide y la interrupcion
+ * lo aplica al principio de su siguiente bloque.
+ */
+#define ESP_N          176U     /* casillas promediadas, 0..4125 Hz a 23,4 */
+#define ESP_ALFA       0.03125f /* media exponencial de ~32 cuadros, 1,4 s */
+#define ESP_MIN_CUAD   24U      /* cuadros antes de fiarse de la media */
+#define ESP_CADA       6U       /* se busca cada seis cuadros nuevos */
+#define ESP_LOMO_HZ    45.0f    /* media anchura de cada lomo */
+#define ESP_FONDO0_HZ  90.0f    /* el fondo de cada lado, de 90... */
+#define ESP_FONDO1_HZ  180.0f   /* ...a 180 Hz por fuera de su lomo */
+#define ESP_UMBRAL     2.0f     /* cada lomo, el doble que su fondo */
+#define ESP_MUEVE_HZ   25.0f    /* lo que tiene que discrepar para moverlo */
+#define ESP_ACUERDO_HZ 15.0f    /* y lo que pueden discrepar las medidas */
+#define ESP_CERCA_HZ   150.0f   /* navtex_centro_cerca(): cuanto mira */
+
+static float    s_esp[ESP_N];
+static float    s_esp_hz;       /* Hz por casilla de lo que llega */
+static uint16_t s_esp_n;        /* casillas que valen */
+static uint16_t s_esp_cuad;     /* cuadros promediados */
+static uint32_t s_esp_visto;    /* el numero del ultimo cuadro metido */
+static uint8_t  s_esp_visto_ok;
+static uint8_t  s_esp_acuerdo;  /* busquedas seguidas que han dado lo mismo */
+static float    s_esp_cand;     /* lo que dio la ultima */
+static float    s_esp_ult;      /* lo ultimo encontrado, 0 = ninguna pareja */
+static float    s_esp_nota;     /* y su nota */
+
+static void esp_olvida(void)
+{
+    s_esp_cuad = 0U;
+    s_esp_on = 0U;
+    s_esp_visto_ok = 0U;
+    s_esp_acuerdo = 0U;
+    s_esp_cand = 0.0f;
+    s_esp_ult = 0.0f;
+    s_esp_nota = 0.0f;
+}
+
+/*
+ * La media por casilla del espectro promediado entre f0 y f1 Hz, contando
+ * de cada casilla la PARTE que cae dentro (la casilla k cubre de k-1/2 a
+ * k+1/2). Con casillas enteras la energia de una ventana sube a saltos de
+ * una casilla al correrla, el maximo se queda en el escalon y el centro
+ * salia en dos sitios a 23 Hz uno de otro; asi la curva es continua.
+ */
+static float esp_media(float f0, float f1)
+{
+    float   x0 = f0 / s_esp_hz, x1 = f1 / s_esp_hz, sum = 0.0f;
+    int32_t k, k0, k1;
+
+    if (x0 < 0.5f) { x0 = 0.5f; }
+    if (x1 > (float)s_esp_n - 0.5f) { x1 = (float)s_esp_n - 0.5f; }
+    if (x1 <= x0) { return 0.0f; }
+    k0 = (int32_t)(x0 + 0.5f);
+    k1 = (int32_t)(x1 + 0.5f);
+    if (k1 > (int32_t)s_esp_n - 1) { k1 = (int32_t)s_esp_n - 1; }
+    for (k = k0; k <= k1; k++) {
+        float a = (float)k - 0.5f, b = (float)k + 0.5f;
+        if (a < x0) { a = x0; }
+        if (b > x1) { b = x1; }
+        if (b > a) { sum += s_esp[k] * (b - a); }
+    }
+    return sum / (x1 - x0);
+}
+
+/* Lo que se parece a una pareja de NAVTEX lo que hay centrado en c: el
+ * peor de los dos lomos contra el fondo de su lado. */
+static float esp_nota(float c)
+{
+    float m  = NAVTEX_SHIFT_HZ * 0.5f;
+    float lo = esp_media(c - m - ESP_LOMO_HZ, c - m + ESP_LOMO_HZ);
+    float hi = esp_media(c + m - ESP_LOMO_HZ, c + m + ESP_LOMO_HZ);
+    float fl = esp_media(c - m - ESP_FONDO1_HZ, c - m - ESP_FONDO0_HZ);
+    float fh = esp_media(c + m + ESP_FONDO0_HZ, c + m + ESP_FONDO1_HZ);
+    float a, b;
+
+    if (fl <= 0.0f || fh <= 0.0f) { return 0.0f; }
+    a = lo / fl;
+    b = hi / fh;
+    return (a < b) ? a : b;
+}
+
+/*
+ * DONDE ESTA, QUE NO ES LO MISMO QUE SI ESTA. La nota de arriba decide si
+ * hay una pareja, y es mala para decir donde: corriendo c hacia arriba, el
+ * fondo de la derecha se aleja de su lomo (su cociente sube) y el de la
+ * izquierda se acerca al suyo (baja), y el peor de los dos apenas cambia en
+ * +-35 Hz. Medido en el banco con los tonos en 1672: la mejor nota salia
+ * en 1672 o en 1708 segun el cuadro, y en la radio el centro saltaba entre
+ * los dos, y cada salto volvia a poner el reloj de bit a cero.
+ *
+ * El sitio lo da la ENERGIA de los dos lomos juntos, que es simetrica: con
+ * c corrido, lo que gana una ventana lo pierde la otra, y el maximo cae en
+ * el centro de verdad. Se busca a un cuarto de casilla (5,9 Hz) a +-60 Hz
+ * de donde la nota encontro la pareja, y se afina con una parabola por los
+ * tres puntos de alrededor del maximo.
+ */
+static float esp_energia(float c)
+{
+    float m = NAVTEX_SHIFT_HZ * 0.5f;
+
+    return esp_media(c - m - ESP_LOMO_HZ, c - m + ESP_LOMO_HZ)
+         + esp_media(c + m - ESP_LOMO_HZ, c + m + ESP_LOMO_HZ);
+}
+
+static float esp_situa(float c0)
+{
+    float paso = s_esp_hz * 0.25f, c, cm = c0, em = -1.0f, e0, e1, den, d;
+
+    for (c = c0 - 60.0f; c <= c0 + 60.0f; c += paso) {
+        float e = esp_energia(c);
+        if (e > em) { em = e; cm = c; }
+    }
+    e0 = esp_energia(cm - paso);
+    e1 = esp_energia(cm + paso);
+    den = e0 - 2.0f * em + e1;
+    if (den < 0.0f) {
+        d = 0.5f * (e0 - e1) / den;
+        if (d > -1.0f && d < 1.0f) { cm += d * paso; }
+    }
+    return cm;
+}
+
+/* La mejor pareja entre f0 y f1 (sus centros), y su nota. */
+static float esp_busca(float f0, float f1, float *nota)
+{
+    float c, paso = s_esp_hz * 0.5f, mejor = 0.0f, cm = 0.0f;
+
+    for (c = f0; c <= f1; c += paso) {
+        float p = esp_nota(c);
+        if (p > mejor) { mejor = p; cm = c; }
+    }
+    *nota = mejor;
+    return (mejor > 0.0f) ? esp_situa(cm) : 0.0f;
+}
+
+void navtex_espectro(const float *pot, uint16_t n, float hz_casilla, uint32_t cuadro)
+{
+    uint16_t k;
+    float    sum = 0.0f, inv, nota, c, d, ahora;
+
+    if (!s_on || !pot || n < 16U || hz_casilla <= 0.0f) { return; }
+    s_esp_on = 1U;
+    if (s_esp_visto_ok && cuadro == s_esp_visto) { return; }   /* ese ya esta */
+    /*
+     * EL PRIMER CUADRO QUE SE VE NO SE PROMEDIA: es el que ya estaba hecho
+     * al arrancar, o sea de antes - del modo anterior, de otro dial. Visto
+     * en el banco: un tono que habia en el cuadro viejo se quedo en la
+     * media diez segundos y el centro se fue a buscarlo en puro ruido.
+     */
+    if (!s_esp_visto_ok) {
+        s_esp_visto = cuadro;
+        s_esp_visto_ok = 1U;
+        return;
+    }
+    s_esp_visto = cuadro;
+    if (n > ESP_N) { n = ESP_N; }
+    if (n != s_esp_n || hz_casilla != s_esp_hz) {
+        s_esp_n = n;
+        s_esp_hz = hz_casilla;
+        s_esp_cuad = 0U;
+    }
+
+    /* Cada cuadro, a su propia media antes de promediar: un
+     * desvanecimiento entero no es forma del espectro. */
+    for (k = 1U; k < n; k++) { sum += pot[k]; }
+    if (sum <= 0.0f) { return; }
+    inv = (float)(n - 1U) / sum;
+    /* Los primeros 32, media de verdad (1/1, 1/2, 1/3...); despues, la
+     * exponencial. Arrancar la exponencial con el primer cuadro entero le
+     * deja la mitad del peso veinte cuadros despues. */
+    {
+        float a = (s_esp_cuad < 32U) ? 1.0f / (float)(s_esp_cuad + 1U) : ESP_ALFA;
+        for (k = 0U; k < n; k++) { s_esp[k] += a * (pot[k] * inv - s_esp[k]); }
+    }
+    if (s_esp_cuad < 0xFFFFU) { s_esp_cuad++; }
+    if (s_esp_cuad < ESP_MIN_CUAD || (s_esp_cuad % ESP_CADA) != 0U) { return; }
+
+    c = esp_busca(CENTRO_MIN, CENTRO_MAX, &nota);
+    s_esp_nota = nota;
+    if (nota < ESP_UMBRAL || c <= 0.0f) {
+        s_esp_ult = 0.0f;
+        s_esp_acuerdo = 0U;
+        return;
+    }
+    s_esp_ult = c;
+
+    /* Tres busquedas seguidas a menos de 15 Hz unas de otras, ~0,8 s. */
+    d = c - s_esp_cand;
+    if (d < 0.0f) { d = -d; }
+    s_esp_acuerdo = (s_esp_acuerdo > 0U && d <= ESP_ACUERDO_HZ)
+                  ? (uint8_t)((s_esp_acuerdo < 255U) ? s_esp_acuerdo + 1U : 255U) : 1U;
+    s_esp_cand = c;
+    if (s_esp_acuerdo < 3U || s_fijo || s_tiene_desp || s_pide) { return; }
+
+    ahora = (s_centro_med > 0.0f) ? s_centro_med : s_centro_hz;
+    d = c - ahora;
+    if (d < 0.0f) { d = -d; }
+    if (d <= ESP_MUEVE_HZ) { return; }
+    s_pide_hz = c;
+    s_pide = 1U;
+}
+
+float navtex_centro_cerca(float hz)
+{
+    float nota = 0.0f, c;
+
+    if (!s_on || s_esp_cuad < ESP_MIN_CUAD || s_esp_hz <= 0.0f) { return hz; }
+    c = esp_busca(hz - ESP_CERCA_HZ, hz + ESP_CERCA_HZ, &nota);
+    return (c > 0.0f && nota >= 1.6f) ? c : hz;     /* el ruido llega a 1,5 */
+}
+
+void navtex_espectro_dbg(float *pareja_hz, float *nota)
+{
+    if (pareja_hz) { *pareja_hz = s_esp_ult; }
+    if (nota)      { *nota = s_esp_nota; }
 }
 
 void navtex_start(float fs_hz)
@@ -333,6 +627,9 @@ void navtex_start(float fs_hz)
     nco_fase_cero(&s_nco_e);
     s_centro_med = 0.0f;    /* ANTES de tonos_fija(): lo usa para el centro */
     s_cruces = 0U; s_cruces_n = 0U; s_signo_ant = 1U; s_vueltas = 0U;
+    s_fijo = 0U;            /* lo que puso el operador valia para la emisora de antes */
+    s_pide = 0U;
+    esp_olvida();
     tonos_fija();
 
     memset(s_mi, 0, sizeof s_mi); memset(s_mq, 0, sizeof s_mq);
@@ -352,6 +649,7 @@ void navtex_start(float fs_hz)
     memset(s_pares, 0, sizeof s_pares);
     s_punt_n = 0U; s_desp = 0U; s_tiene_desp = 0U;
     s_vig_ok = s_vig_n = 0U;
+    s_recolocados = 0U;
 
     memset(s_hist, 0, sizeof s_hist);
     s_car_n = 0UL;
@@ -375,6 +673,15 @@ void navtex_set_centro_hz(float hz)
     s_centro_hz = hz;
     s_centro_med = 0.0f;   /* si lo mueve el operador, manda el operador */
     s_vueltas = 0U;
+    /*
+     * Y MANDA HASTA QUE SE VUELVA A ENTRAR EN EL MODO - 22/11/2026. El
+     * comentario de arriba lo prometia y no se cumplia: s_vueltas a cero
+     * solo le daba una ventana de busqueda, 2,2 s, y si en ese tiempo no
+     * enganchaba, los cruces por cero volvian a mover el centro a donde
+     * dijera el ruido. Ahora ni los cruces ni el espectro lo tocan hasta
+     * el proximo navtex_start().
+     */
+    s_fijo = 1U;
     if (s_on) { tonos_fija(); }
 }
 float navtex_get_centro_hz(void) { return s_centro_hz; }
@@ -736,6 +1043,7 @@ static void bit_nuevo(uint8_t bit)
                 s_car_n = 0UL;
                 s_par_cuad[0] = s_par_cuad[1] = 0U;
                 s_tiene_par = 0U;
+                s_vig_ok = s_vig_n = 0U;
             }
             memset(s_punt, 0, sizeof s_punt);
             memset(s_pares, 0, sizeof s_pares);
@@ -743,6 +1051,65 @@ static void bit_nuevo(uint8_t bit)
             if (!s_tiene_desp && s_vueltas < 250U) { s_vueltas++; }
         }
         return;
+    }
+
+    /*
+     * Y ENGANCHADO, SE SIGUE MIRANDO SI OTRO DESPLAZAMIENTO VA MEJOR -
+     * 22/11/2026, port del Malahit.
+     *
+     * La vigilancia de abajo suelta el enganche cuando los codigos validos
+     * caen a lo que da el azar. Se escribio para el reloj que resbala un
+     * bit con un desvanecimiento, y ese caso NO lo ve: corrido un bit, un
+     * texto da todavia el 45-70 % de codigos validos, por encima de su 37 %,
+     * y el decodificador se queda en el sitio equivocado hasta el final del
+     * mensaje, sacando basura. Medido en el banco (seccion 9 de
+     * sim/navtextest.c: un bit que falta en el caracter 60 de 151 y lo demas
+     * ilegible) y en la radio contra el HackRF (dos emisiones de diez
+     * enganchadas con calidad 57-65 % y el mensaje entero en basura).
+     *
+     * Tampoco lo ven las repeticiones comparadas entre si, que fue lo
+     * primero que probe: dos copias corridas el mismo bit comparten seis de
+     * sus siete bits, y si las dos salen validas es que el septimo tambien
+     * coincide - dos palabras de siete bits que se diferencian en uno no
+     * pueden tener las dos cuatro unos. Corridas, cuando valen las dos,
+     * coinciden SIEMPRE.
+     *
+     * Lo que si lo ve es la misma cuenta de la busqueda, la de los siete
+     * desplazamientos a la vez: tras el resbalon, el de al lado pasa a
+     * sacar las parejas y los codigos validos que sacaba el bueno. Asi que
+     * enganchado se sigue contando, y al final de cada ventana (224 bits,
+     * 2,2 s), si otro desplazamiento saca a la vez PAR_MIN parejas, cuatro
+     * parejas mas que el puesto y cuatro codigos validos mas, se pasa a el.
+     * Las dos cosas a la vez, para que el ruido de una recepcion mala no
+     * mueva un enganche bueno; y sin parejas -la señal de fase, el ruido
+     * entre emisiones- no se mueve nada. La paridad se vuelve a medir desde
+     * cero, y el rebobinado la recupera: no se pierde lo que llego entre
+     * medias.
+     */
+    if (navtex_codigo_valido(s_reg)) { s_punt[d]++; }
+    if (s_bits >= 42UL) {
+        uint8_t ant = (uint8_t)((s_bits42 >> 35) & 0x7FU);
+        if (ant == s_reg && navtex_codigo_valido(s_reg)) { s_pares[d]++; }
+    }
+    if (++s_punt_n >= BUSCA_BITS) {
+        uint8_t i, pmej = s_desp;
+
+        for (i = 0U; i < 7U; i++) {
+            if (s_pares[i] > s_pares[pmej]) { pmej = i; }
+        }
+        if (pmej != s_desp && s_pares[pmej] >= PAR_MIN
+            && s_pares[pmej] >= (uint8_t)(s_pares[s_desp] + RECOLOCA_MARGEN)
+            && s_punt[pmej] >= (uint8_t)(s_punt[s_desp] + RECOLOCA_MARGEN)) {
+            s_desp = pmej;
+            s_car_n = 0UL;
+            s_par_cuad[0] = s_par_cuad[1] = 0U;
+            s_tiene_par = 0U;
+            s_vig_ok = s_vig_n = 0U;
+            s_recolocados++;
+        }
+        memset(s_punt, 0, sizeof s_punt);
+        memset(s_pares, 0, sizeof s_pares);
+        s_punt_n = 0U;
     }
 
     if (d == s_desp) {
@@ -877,6 +1244,13 @@ void navtex_process(const float *audio, uint32_t n)
 
     if (!s_on || !audio) { return; }
 
+    /* Un centro que el bucle principal ha medido en el espectro: se aplica
+     * aqui, entre dos muestras, y no alli, a mitad de una. */
+    if (s_pide) {
+        centro_aplica(s_pide_hz, 1U);
+        s_pide = 0U;
+    }
+
     for (k = 0U; k < n; k++) {
         float x = audio[k];
         float sn, cs, mi, mq, ei, eq, pm, pe;
@@ -928,6 +1302,8 @@ void navtex_info(navtex_info_t *out)
                                ? (s_centro_med - s_centro_hz) : 0.0f);
     out->car_sync = (uint8_t)(s_on && s_tiene_desp && s_tiene_par);
 }
+
+uint16_t navtex_recolocados(void) { return s_recolocados; }
 
 void navtex_lazos_dbg(float *reloj_ppm, float *nivel, uint8_t *desp_bit)
 {

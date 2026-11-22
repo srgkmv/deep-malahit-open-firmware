@@ -125,6 +125,27 @@ void navtex_info(navtex_info_t *out);
 void  navtex_set_centro_hz(float hz);
 float navtex_get_centro_hz(void);
 
+/*
+ * EL CENTRO, MEDIDO EN EL ESPECTRO - 22/11/2026, ver navtex.c.
+ *
+ * El bucle principal le da a navtex_espectro() cada cuadro del osciloscopio
+ * de sintonia (rtty_scope.c): la potencia por casilla, lineal y con
+ * cualquier escala, cuantas casillas, los Hz de cada una y el numero del
+ * cuadro (rtty_scope_frame_n()), para no promediar dos veces el mismo. Con
+ * eso busca la pareja de tonos y, si no hay enganche, mueve alli el centro.
+ * Mientras alguien lo llame, la medida por cruces por cero se calla.
+ *
+ * navtex_centro_cerca(): la pareja mas parecida a +-150 Hz de esos Hz, o
+ * los mismos Hz si no hay ninguna - para un dedo en el osciloscopio, que
+ * luego se le da a navtex_set_centro_hz().
+ *
+ * navtex_set_centro_hz() FIJA el centro: ni los cruces ni el espectro lo
+ * mueven hasta el siguiente navtex_start().
+ */
+void  navtex_espectro(const float *pot, uint16_t n, float hz_casilla, uint32_t cuadro);
+float navtex_centro_cerca(float hz);
+void  navtex_espectro_dbg(float *pareja_hz, float *nota);
+
 /* Intercambia marca y espacio. Hace falta porque escuchar en la banda
  * lateral contraria pone los dos tonos del reves. */
 void    navtex_set_invertido(uint8_t inv);
@@ -152,5 +173,9 @@ uint8_t navtex_car_a_cod(char c, uint8_t figuras);
 /* Estado de los lazos, para que el banco pueda ver si se estan yendo en vez
  * de deducirlo de que el texto empeora. */
 void navtex_lazos_dbg(float *reloj_ppm, float *nivel, uint8_t *desp_bit);
+
+/* Cuantas veces, enganchado, ha pasado a otro desplazamiento de bit porque
+ * iba mejor (el reloj resbalo un bit) - 22/11/2026, ver bit_nuevo(). */
+uint16_t navtex_recolocados(void);
 
 #endif /* NAVTEX_H */

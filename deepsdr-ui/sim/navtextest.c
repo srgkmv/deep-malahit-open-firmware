@@ -20,6 +20,7 @@
 #include <string.h>
 #include <math.h>
 #include <stdint.h>
+#include "rtty_scope.h"   /* la seccion 8: el centro en el espectro */
 
 #define FS      12000.0
 #define BAUD    100.0
@@ -94,12 +95,15 @@ typedef struct {
     unsigned long semilla;
     int bits_rotos;    /* cuantos bits se han invertido a proposito */
     int roto_cada;     /* 0 = ninguno */
+    double centro;     /* el de los tonos; 0 = CENTRO (seccion 8) */
+    long salta_en;     /* muestra a partir de la cual falta un bit; 0 = nunca (seccion 9) */
 } tx_t;
 
 static double tono(tx_t *t)
 {
     double bit_dur = FS / (BAUD * (1.0 + t->ppm * 1e-6));
     long ib = (long)(t->muestra / bit_dur);      /* que bit del flujo */
+    if (t->salta_en > 0 && t->muestra >= t->salta_en) { ib++; }   /* un bit perdido */
     int car = (int)(ib / 7);
     int pos = (int)(ib % 7);
     int bit, f;
@@ -120,7 +124,8 @@ static double tono(tx_t *t)
     }
 
     f = bit ? 1 : 0;
-    t->fase += 2.0 * M_PI * (CENTRO + (f ? SHIFT * 0.5 : -SHIFT * 0.5)) / FS;
+    t->fase += 2.0 * M_PI * ((t->centro > 0.0 ? t->centro : CENTRO)
+                             + (f ? SHIFT * 0.5 : -SHIFT * 0.5)) / FS;
     if (t->fase > 2.0 * M_PI) { t->fase -= 2.0 * M_PI; }
     t->muestra++;
     return sin(t->fase);
@@ -150,6 +155,42 @@ static void corre(tx_t *t, double sigma, char *salida, int max)
         if (j == NAVTEX_BLOCK_SAMPLES) {
             char c;
             navtex_process(buf, NAVTEX_BLOCK_SAMPLES);
+            j = 0;
+            while (navtex_get_char(&c)) {
+                if (o < max - 1) { salida[o++] = c; }
+            }
+        }
+    }
+    salida[o] = '\0';
+}
+
+/*
+ * Lo mismo que corre(), pero como en la radio desde el 22/11/2026: el
+ * osciloscopio de sintonia comiendo el mismo audio y cada cuadro suyo a
+ * navtex_espectro(), que es quien mide el centro. Y `antes` segundos de
+ * ruido solo por delante, que es lo que hay en la radio mientras la
+ * emisora no transmite: lo que el centro hace ahi es la mitad de la prueba.
+ */
+static void corre_esp(tx_t *t, double sigma, double antes, char *salida, int max)
+{
+    long pre = (long)(antes * FS);
+    long total = pre + (long)((double)t->n * 7.0 * FS / BAUD) + (long)FS;
+    long k;
+    float buf[NAVTEX_BLOCK_SAMPLES];
+    uint32_t j = 0;
+    int o = 0;
+
+    rtty_scope_init();
+    for (k = 0; k < total; k++) {
+        double x = (k < pre || t->n == 0) ? 0.0 : tono(t);
+        buf[j++] = (float)(x + sigma * ruido(t));
+        if (j == NAVTEX_BLOCK_SAMPLES) {
+            char c;
+            navtex_process(buf, NAVTEX_BLOCK_SAMPLES);
+            rtty_scope_feed(buf, NAVTEX_BLOCK_SAMPLES);
+            rtty_scope_poll();
+            navtex_espectro(rtty_scope_frame_peek(), (uint16_t)RTTY_SCOPE_BINS,
+                            rtty_scope_hz_per_bin(), rtty_scope_frame_n());
             j = 0;
             while (navtex_get_char(&c)) {
                 if (o < max - 1) { salida[o++] = c; }
@@ -541,6 +582,109 @@ int main(int argc, char **argv)
         }
     }
     if (0) {
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*
+     * 8. EL CENTRO, MEDIDO EN EL ESPECTRO - 22/11/2026, port del Malahit.
+     * Ver navtex_espectro() en navtex.c. Los tonos lejos del centro por
+     * omision y con ruido de verdad, diez segundos de ruido solo por
+     * delante: el caso en que los cruces por cero median el ruido. El ruido
+     * de 1,5 son ~SNR 4 dB en 500 Hz (la señal, un seno de amplitud 1; el
+     * ruido, llano en los 6 kHz); con 0,5 ya fallaban los cruces.
+     */
+    printf("\n8. el centro, medido en el espectro\n");
+    {
+        static const double k_cen[] = { 1100.0, 1450.0, 2050.0, 2500.0 };
+        uint32_t i;
+
+        nc = texto_a_codigos(k_msg, cod, (int)sizeof cod);
+        nt = trama(cod, nc, tr, (int)sizeof tr);
+        for (i = 0U; i < sizeof k_cen / sizeof k_cen[0]; i++) {
+            tx_t t; navtex_info_t in; int ac, err;
+            memset(&t, 0, sizeof t); t.tr = tr; t.n = nt; t.semilla = 31UL + i;
+            t.centro = k_cen[i];
+            navtex_start((float)FS);
+            corre_esp(&t, 1.5, 10.0, salida, (int)sizeof salida);
+            navtex_info(&in);
+            ac = parecido(k_msg, salida);
+            err = (int)in.desvio_hz - (int)(k_cen[i] - NAVTEX_CENTRO_HZ);
+            printf("    tonos en %4.0f Hz: medido %+5d Hz (error %+d), %3d de %d caracteres,"
+                   " cabecera \"%s\"\n", k_cen[i], (int)in.desvio_hz, err, ac,
+                   (int)strlen(k_msg), in.tiene_cab ? in.cab : "");
+            comprueba(err >= -25 && err <= 25, "el centro cae a menos de 25 Hz de los tonos");
+            comprueba(ac >= (int)strlen(k_msg) * 95 / 100 && in.tiene_cab
+                      && strcmp(in.cab, "GA42") == 0,
+                      "y el mensaje sale, cabecera incluida");
+            navtex_stop();
+        }
+
+        /* Y con ruido solo, el centro NO se mueve - los cruces se lo
+         * llevaban a donde dijera el ruido. */
+        {
+            tx_t t; navtex_info_t in;
+            memset(&t, 0, sizeof t); t.semilla = 77UL; t.n = 0;
+            navtex_start((float)FS);
+            corre_esp(&t, 1.0, 40.0, salida, (int)sizeof salida);
+            navtex_info(&in);
+            printf("    40 s de ruido solo: el centro se mueve %+d Hz, salen %u caracteres\n",
+                   (int)in.desvio_hz, (unsigned)strlen(salida));
+            comprueba(in.desvio_hz == 0, "con ruido solo el centro se queda donde estaba");
+            comprueba(strlen(salida) == 0U, "y no sale ni una letra");
+            navtex_stop();
+        }
+
+        /* Y lo que pone el operador manda: ni el espectro lo mueve. */
+        {
+            tx_t t; navtex_info_t in;
+            memset(&t, 0, sizeof t); t.tr = tr; t.n = nt; t.semilla = 5UL;
+            t.centro = 1100.0;
+            navtex_start((float)FS);
+            navtex_set_centro_hz(1300.0f);
+            corre_esp(&t, 0.3, 2.0, salida, (int)sizeof salida);
+            navtex_info(&in);
+            printf("    el operador en 1300 Hz, los tonos en 1100: centro %+d Hz sobre el suyo\n",
+                   (int)in.desvio_hz);
+            comprueba(in.desvio_hz == 0 && (int)(navtex_get_centro_hz() + 0.5f) == 1300,
+                      "el centro del operador no lo mueve nadie");
+            comprueba(navtex_centro_cerca(1150.0f) > 1085.0f
+                      && navtex_centro_cerca(1150.0f) < 1115.0f,
+                      "y un dedo a 50 Hz de la pareja la encuentra");
+            navtex_stop();
+            navtex_set_centro_hz(NAVTEX_CENTRO_HZ);
+        }
+    }
+
+    /* ------------------------------------------------------------------ */
+    /*
+     * 9. UN BIT QUE SE PIERDE A MITAD DEL TEXTO - 22/11/2026, port del
+     * Malahit. Es el caso para el que esta la vigilancia del enganche ("si
+     * el reloj de bit resbalaba un bit -un desvanecimiento basta- todo lo
+     * que venia detras caia en el desplazamiento equivocado"), y su umbral,
+     * menos del 37 % de codigos validos, no lo ve: corrido un bit, un texto
+     * da el 70 % (ver PAR_MIN). En la radio, contra el HackRF, salio en dos
+     * de diez emisiones: enganchado con calidad 57-65 % y el mensaje entero
+     * en basura.
+     */
+    printf("\n9. un bit perdido a mitad del texto\n");
+    {
+        tx_t t; navtex_info_t in; int ac;
+        const char *p;
+
+        nc = texto_a_codigos(k_msg, cod, (int)sizeof cod);
+        nt = trama(cod, nc, tr, (int)sizeof tr);
+        memset(&t, 0, sizeof t); t.tr = tr; t.n = nt; t.semilla = 3UL;
+        t.salta_en = (long)((FASE_N + 2 * 60) * 7.0 * FS / BAUD);   /* hacia el caracter 60 */
+        navtex_start((float)FS);
+        corre(&t, 0.05, salida, (int)sizeof salida);
+        navtex_info(&in);
+        p = strstr(salida, "CANCEL");
+        ac = parecido(k_msg + 100, salida + (strlen(salida) > 60U ? strlen(salida) - 60U : 0U));
+        printf("    sale: \"%.110s...\"\n", salida);
+        printf("    el final: \"%s\"\n", salida + (strlen(salida) > 60U ? strlen(salida) - 60U : 0U));
+        comprueba(p != NULL, "despues del bit perdido vuelve a engancharse y se lee el final");
+        (void)ac;
+        navtex_stop();
     }
 
     printf("\n  %s\n", fallos ? "HAY FALLOS" : "TODO CORRECTO (0 fallos)");
