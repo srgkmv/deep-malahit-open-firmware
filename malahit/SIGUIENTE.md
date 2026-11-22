@@ -4,7 +4,22 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 22/11/2026: step 40 (RDS) IN FLASH, pushed
+## START HERE — 22/11/2026: step 41 (FM stereo) IN FLASH, pushed
+
+**In flash: `484b36e`** (step 41 - FM stereo, this port's own - on top
+of `88aafb2` below) - `build_flash/bringup.bin`, 198 776 bytes, sha256
+`b198f8d5…`, SELFTEST 0, clean build; written over DFU without `:leave`,
+read back identical byte for byte, left with the 4-byte `:leave` upload.
+**Cold boot**: record v4 (slot 1, seq 214), WFM from the FRAM, "RDS on",
+"stereo ON" and the station's name within seconds, the memories, screen
+and audio 2112 ms after SysTick, SAI DMA err 0. **Pushed** through this
+commit. The owner listened before it was flashed: "the sound is quite
+satisfactory".
+
+**Next: the owner picks** - the list below (decoders, the SCAN cell, the
+clock from RDS).
+
+## 22/11/2026: step 40 (RDS) in flash (88aafb2), pushed
 
 **In flash: `88aafb2`** (step 40 - RDS, and the header rearranged to
 make room for it - on top of `e71764d` below) - `build_flash/
@@ -15,7 +30,7 @@ byte, left with the 4-byte `:leave` upload. **Cold boot**: record v4
 within seconds, the memories from the FRAM, screen and audio 2108 ms
 after SysTick, SAI DMA err 0. **Pushed** through this commit.
 
-**Since, from RAM (not in flash): step 41, FM stereo** - `src/estereo.c`,
+**Then, step 41, FM stereo (now in flash, above)** - `src/estereo.c`,
 this port's own; 65-75 dB separation on the bench, stereo on the air at
 104.3; "WFM ST" in the mode chip; Settings > Radio > Stereo Auto/Mono.
 Costs 3.5 ms a block in WFM (frame 79 ms against 72 without).
