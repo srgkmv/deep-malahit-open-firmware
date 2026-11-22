@@ -781,6 +781,40 @@ time nothing was written for you.**
 
 ---
 
+## Flash over SWD - since 22/11/2026
+
+**The owner changed the power circuit** on 22/11/2026 (the regulator U3
+bridged, and more parts in this unit's power chain than the schematic
+shows): the rail no longer drops when the firmware "switches off". The
+radio then sleeps instead - standby, DBGMCU_CR cleared, so SWD gets no
+answer from it, running or asleep, unless it is reset. And a reset no
+longer cuts the power, so **connecting under reset works**: the FT2232D
+holds NRST, OpenOCD reads the DP (DPIDR 0x6ba02477), `reset halt` stops
+the core at its reset vector before a single instruction of the firmware,
+and flash can be written:
+
+    cd malahit/bringup && make flash
+    ADAPTER=ft2232d ../tools/swd.sh flashsrst build_flash/bringup.bin
+
+Bank 1 from 0x08000000, the sectors the image covers - bank 2 is never
+erased. 268 kB in 8 s, then verified. The core is let go and the firmware,
+started without the power button held, switches itself off at once, as
+after a DFU write (OpenOCD's last line, "cannot read IDR", is that); a
+short press on the power button starts it. Checked twice on 22/11/2026,
+writing the image that was already there (`3274486`) and verifying it.
+
+The read-only check that the connection is there, any time:
+
+    ADAPTER=ft2232d ../tools/swd.sh -c "reset_config srst_only srst_push_pull connect_assert_srst" \
+        -c init -c "reset halt" -c "verify_image build_flash/bringup.bin 0x08000000 bin" -c exit
+
+After the SWD write the power button started the radio as always (the
+console says "last reset: NRST pin"), HELL from the FRAM, screen and audio
+2363 ms after SysTick; and SWD on the RUNNING radio answers as before
+(DPIDR, IDCODE 0x20036450 read without halting) - right after the first
+soldering it had not, before the owner's second pass. NOT YET CHECKED
+after the change: DFU.
+
 ## Adapters
 
 `ADAPTER=ft2232d` selects a generic FT2232D dongle, `stlink` (the
