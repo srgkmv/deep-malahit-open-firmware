@@ -4,21 +4,28 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 22/11/2026, evening: step 45 (NAVTEX) committed, flash pending
+## START HERE — 22/11/2026, evening: step 45 (NAVTEX) IN FLASH (766d0a9), pushed
 
-**In flash: still `e51e82d`** (below). **Committed, checked from RAM**: step 45
-(`PORTING.md` 45) - NAVTEX on the decoders' screen, and three fixes to
-upstream's navtex.c the owner chose (the tone centre found in the scope's
-spectrum instead of by zero crossings, a tap on the scope that holds, and
-a lock that moves to the right bit offset after a slip), plus upstream's
-three NAVTEX band rows with the dial 1.7 kHz under the published
-frequency. On the air against the HackRF at 4209.5 kHz: clean from SNR 8
-up wherever the station sits, readable at 3. The owner asked for commit,
-push and flash.
+**In flash: `766d0a9`** (step 45, `PORTING.md` 45, on top of `d95bd4d`,
+the three fixes to upstream's navtex.c and its band rows) -
+`build_flash/bringup.bin`, 240 000 bytes, sha256 `84812e15…`, SELFTEST 0,
+clean build; written over DFU without `:leave`, read back identical byte
+for byte, left with the 4-byte `:leave` upload. **Cold boot**, from the
+power button: record v4 (slot 1, seq 254), NAVTEX at 4207.80 kHz from
+the FRAM, the memories, screen and audio 2359 ms after SysTick, SAI DMA
+err 0. **And from flash, on the air**: SNR 8 from the HackRF, both
+repeats clean, the centre found by itself at 1668 Hz (4 Hz under the
+warm radio's 1672 - the cold crystal). Pushed through this commit.
 
-**The radio's state**: 4207.80 kHz, NAVTEX, from RAM; the FRAM holds
-mode 10, which the flash image (e51e82d) does not know - it boots AM over
-it, as the owner allows.
+NAVTEX on the decoders' screen, with the owner's two fixes to upstream
+(the tone centre found in the scope's spectrum instead of by zero
+crossings, a tap on the scope that holds) and a third that was my call
+on the evidence (a lock that moves to the right bit offset after a
+slip), plus upstream's three NAVTEX band rows with the dial 1.7 kHz
+under the published frequency. On the air against the HackRF at 4209.5
+kHz: clean from SNR 8 up wherever the station sits, readable at 3.
+
+**The radio's state**: 4207.80 kHz, NAVTEX, from flash and the FRAM.
 
 **To do next**: the test the
 HackRF cannot do: a real NAVTEX station at 518 kHz (or 490) on an
