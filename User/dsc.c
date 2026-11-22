@@ -49,6 +49,7 @@
  * eso el banco cuenta las peticiones y las sueltas.
  */
 #define SPB_MAX   192U     /* 120 muestras por bit a 12 kHz y 100 Bd */
+#define DSC_VENT_BITS 160U /* la ventana de la busqueda de fase: ver bit_mete() */
 #define MSG_MAX    40U
 #define ANILLO     16U
 
@@ -444,6 +445,35 @@ static void bit_mete(uint8_t b)
 
     if (!s_st->tiene_fase) {
         /*
+         * LO QUE SE CUENTA BUSCANDO, EN VENTANAS - 22/11/2026, port del
+         * Malahit.
+         *
+         * punt[] solo se ponia a cero al pintar una llamada, al desbordar el
+         * mensaje o al mover el centro. Entre llamada y llamada -minutos de
+         * ruido- se iba llenando con los caracteres de enganche que el azar
+         * hace validos (9 de 128 simbolos, y la cuenta de ceros cuadra uno de
+         * cada ocho), repartidos por las diez fases, hasta que alguna estaba
+         * a uno de los cuatro. Entonces cualquier cosa la enganchaba en la
+         * fase EQUIVOCADA, la llamada de verdad entraba como basura y el
+         * decodificador se quedaba ocho segundos llenando el mensaje hasta
+         * desbordar: la llamada perdida. Medido con sim/dsc_radio.c: con el
+         * centro puesto a mano y SNR 20, una llamada de cada cuatro.
+         *
+         * Las cuatro tienen que llegar juntas: la señal de fase son catorce
+         * caracteres de enganche seguidos, 1,4 s. Asi que cada DSC_VENT_BITS
+         * (1,6 s) se empieza de cero.
+         *
+         * Y con ellas el integrador del reloj de bit: en el ruido se va al
+         * tope y una llamada con la señal de puntos corta -20 bits, 0,2 s,
+         * lo que mandan muchas en HF- no le da tiempo a volver antes de la
+         * señal de fase. Medido: 25 de 32 llamadas cortas con la ventana,
+         * 28 con esto tambien. Ver tambien el tope, en discriminador().
+         */
+        if ((s_st->nbits % DSC_VENT_BITS) == 0U) {
+            memset(s_st->punt, 0, sizeof s_st->punt);
+            s_st->err_int = 0.0f;
+        }
+        /*
          * La fase de diez bits se busca con los caracteres de ENGANCHE, que
          * son los únicos cuyo valor se conoce de antemano: 125 y la cuenta
          * atrás de 111 a 104. Un carácter cualquiera que cuadre por azar no
@@ -455,6 +485,11 @@ static void bit_mete(uint8_t b)
             if (s_st->punt[f] >= 4U) {
                 s_st->tiene_fase = 1U;
                 s_st->fase_car = f;
+                /* El reloj, a la velocidad nominal: ver "el tope del
+                 * integrador" en discriminador(). Si la señal de fase ha
+                 * cuadrado, el reloj esta en fase; lo que traia el
+                 * integrador es lo que acumulo el ruido de antes. */
+                s_st->err_int = 0.0f;
                 s_st->estado = 1U;
                 /*
                  * La ranura la dice el carácter que acaba de cuadrar... pero
@@ -550,8 +585,21 @@ static void discriminador(float d)
             if (e > 1.0f)  { e = 1.0f; }
             if (e < -1.0f) { e = -1.0f; }
             s_st->err_int += SIM_KI * e;
-            if (s_st->err_int >  0.02f) { s_st->err_int =  0.02f; }
-            if (s_st->err_int < -0.02f) { s_st->err_int = -0.02f; }
+            /*
+             * EL TOPE DEL INTEGRADOR, +-0,5 % Y NO +-2 % - 22/11/2026, port
+             * del Malahit. Con SIM_KI asi de alto el integrador llega al
+             * tope en una veintena de bits de RUIDO, y entre llamada y
+             * llamada no hay otra cosa. Una llamada que entraba con el reloj
+             * un 1,6 % lento resbalaba un bit justo despues del enganche (el
+             * 109 de la señal de fase llegaba como 54, o sea corrido) y se
+             * perdia entera, ocho segundos llenando el mensaje hasta
+             * desbordar. Ningun transmisor ni ningun receptor de verdad va
+             * un 2 % fuera: el 0,5 % es el tope del NAVTEX. Y se pone a cero
+             * al enganchar. Medido con sim/dsc_radio.c, puntos cortos, 36
+             * llamadas: con SNR 10, 36 en vez de 32; con 5, 34 en vez de 30.
+             */
+            if (s_st->err_int >  0.005f) { s_st->err_int =  0.005f; }
+            if (s_st->err_int < -0.005f) { s_st->err_int = -0.005f; }
             s_st->inc = (uint32_t)((float)s_st->inc_nom
                                    * (1.0f + SIM_KP * e + s_st->err_int));
         }
@@ -647,7 +695,16 @@ void dsc_stop(void)
  * mismo transmisor alternando.
  */
 #define BUSCA_PICOS_MAX   8U
-#define BUSCA_VECES       4.0f    /* cuanto tiene que sacarle un pico al fondo */
+/*
+ * 8 Y NO 4 - 22/11/2026, port del Malahit. Con 4, el ruido solo ya da
+ * picos asi: la potencia de una casilla de ruido pasa de cuatro veces la
+ * media una vez de cada 55 (e^-4), o sea cinco casillas por cuadro, y
+ * alguna pareja de ellas cae a 170 Hz. El centro se movia 502 veces en dos
+ * minutos de ruido, y con el las dos rayas del osciloscopio. Con 8: 20
+ * veces, y las llamadas, las mismas o una mas (58 de 72 contra 55 con
+ * SNR 10, 5 y 3: un tono de DSC en un cuadro saca al fondo mucho mas).
+ */
+#define BUSCA_VECES       8.0f    /* cuanto tiene que sacarle un pico al fondo */
 #define BUSCA_TOL         0.12f   /* 170 Hz +-12 %, igual que rtty_auto */
 
 static float s_busca_hz;          /* lo ultimo que encontro la busqueda */
@@ -703,7 +760,25 @@ static void busca_centro(void)
          * bit, asi que solo se mueve si cambia de verdad. */
         if (c > 400.0f && c < 2800.0f && mov > 25.0f) {
             s_busca_hz = c;
-            dsc_set_centro_hz(c);
+            /*
+             * Y SI ES UNA CORRECCION, SE CORRIGE SIN EMPEZAR DE NUEVO -
+             * 22/11/2026, port del Malahit.
+             *
+             * dsc_set_centro_hz() tira la busqueda de fase. Pero el centro
+             * de un cuadro sale de dos casillas enteras, y con la señal
+             * delante salia 1676 en uno y 1723 en el siguiente (los tonos en
+             * 1700): 47 Hz, mas que los 25 de arriba, asi que se movia una
+             * y otra vez durante la señal de puntos y la de fase, y cada vez
+             * volvia a contar desde cero. Se enganchaba en el hueco entre
+             * dos saltos, si lo habia. Por debajo de 60 Hz los filtros ya
+             * tenian la señal: se retocan los tonos y la fase sigue.
+             */
+            if (mov < 60.0f && s_on && s_st) {
+                s_centro_fijo = c;
+                tonos_fija();
+            } else {
+                dsc_set_centro_hz(c);
+            }
         }
     }
 }

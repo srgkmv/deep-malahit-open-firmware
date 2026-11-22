@@ -4760,7 +4760,18 @@ typedef struct {
  * sitio de sobra en las dos.
  */
 #define BAND_FAM_VHF   3U   /* VHF y UHF */
-#define BAND_FAM_COUNT 4U
+/*
+ * LA QUINTA, 22/11/2026, desde el port del Malahit: lo MARITIMO de HF.
+ *
+ * El usuario pidio los seis canales de socorro y seguridad del DSC, y en
+ * "Utilidades" habia 11: con ellos 17, y la rejilla pinta 16 - la misma
+ * piedra que partio la familia en dos el 30/09 (arriba). Se parte otra vez
+ * por donde el corte cae solo: los tres NAVTEX y los seis DSC son el GMDSS
+ * de onda media y corta, lo que escucha un barco, y se van juntos. Quedan
+ * 8 y 9. La columna de la izquierda tiene cinco sitios (UIC_CATS).
+ */
+#define BAND_FAM_MAR   4U   /* maritimo: NAVTEX y DSC */
+#define BAND_FAM_COUNT 5U
 _Static_assert(BAND_FAM_COUNT <= UIC_CATS,
                "mas familias de bandas que sitios en la columna (UIC_CATS)");
 
@@ -4802,34 +4813,6 @@ static const band_preset_t k_band_presets[] = {
     /* ---- utilidades ---------------------------------------------------- */
     { T("NDB", "NDB"),    "190-535 kHz",        190000UL, 535000UL, 350000UL,    DEMOD_MODE_USB, BAND_STEP_1K,   BAND_FAM_UTIL },
     /*
-     * Las tres frecuencias de NAVTEX, 24/09/2026. 518 kHz es la
-     * internacional y va en ingles; 490 kHz es la misma idea en el idioma
-     * del pais; 4209,5 kHz es la de onda corta, que llega mas lejos.
-     *
-     * Van en USB porque es la convencion del receptor de NAVTEX. El modo que
-     * hay que elegir despues es "NAVTEX" en la pantalla de modos - la banda
-     * deja el aparato en el sitio, no enciende el decodificador, igual que
-     * elegir la banda de 40 metros no enciende el RTTY.
-     *
-     * *** Y EL DIAL, 1,7 kHz POR DEBAJO - 22/11/2026, port del Malahit. ***
-     *
-     * Las tres filas ponian el dial EN la frecuencia publicada, y lo que se
-     * publica es el CENTRO de la emision: los dos tonos estan 85 Hz por
-     * encima y por debajo. En USB eso los deja en +85 y -85 Hz de audio, uno
-     * en la banda lateral que se suprime y el otro debajo del corte del
-     * filtro: por estos tres botones no entraba NADA. Es el mismo fallo que
-     * tuvieron los tres del fax hasta el 21/10 (ver abajo), y navtex.c ya lo
-     * decia en el comentario de su centro: "en banda lateral hay que bajar
-     * el dial 1,7 kHz para que caigan ahi". Con el dial 1,7 kHz por debajo
-     * los tonos caen en 1615 y 1785 Hz, alrededor de NAVTEX_CENTRO_HZ.
-     *
-     * EL ROTULO DICE EL DIAL, como en el fax. Las publicadas -518, 490 y
-     * 4.209,5 kHz- son el dial mas 1,7.
-     */
-    { T("NAVTEX", "NAVTEX"), "516,3 kHz",          516300UL, 516300UL, 516300UL,    DEMOD_MODE_USB, BAND_STEP_100HZ, BAND_FAM_UTIL },
-    { T("NAVTEX-N", "NAVTEX-N"),"488,3 kHz",          488300UL, 488300UL, 488300UL,    DEMOD_MODE_USB, BAND_STEP_100HZ, BAND_FAM_UTIL },
-    { T("NAVTEX-HF", "NAVTEX-HF"),"4.207,8 kHz",        4207800UL, 4207800UL, 4207800UL, DEMOD_MODE_USB, BAND_STEP_100HZ, BAND_FAM_UTIL },
-    /*
      * Las tres del DWD (Pinneberg), 24/09/2026. Son las emisiones de fax
      * meteorologico que se reciben bien desde España, y tienen horario
      * publicado y fijo: por eso son las buenas para probar el decodificador,
@@ -4862,7 +4845,9 @@ static const band_preset_t k_band_presets[] = {
      *
      * Y POR QUE SOLO LE PASA AL FAX. NAVTEX lleva los mismos numeros
      * publicados y no se rompe porque navtex.c BUSCA su centro -ver
-     * navtex_set_centro_hz() y `desvio_hz`-. El fax no busca nada: sus
+     * navtex_set_centro_hz() y `desvio_hz`-. [22/11/2026: SI se rompia.
+     * Buscar el centro no rescata un tono que la banda lateral ha
+     * suprimido; ver las filas de NAVTEX, en la familia maritima.] El fax no busca nada: sus
      * 1.500 y 2.300 Hz estan fijos en wefax.h, asi que si el dial no esta
      * en la portadora no hay nada que lo rescate.
      *
@@ -4902,6 +4887,54 @@ static const band_preset_t k_band_presets[] = {
     { T("APRS 70", "APRS 70"),"432,500 MHz",        432500000UL, 432500000UL, 432500000UL, DEMOD_MODE_NFM, BAND_STEP_5K, BAND_FAM_VHF },
     { T("Horaria", "Time"),"2,5 / 5 / 10 MHz",   0UL, 0UL, 10000000UL,  DEMOD_MODE_AM,  BAND_STEP_1K,   BAND_FAM_UTIL },
     { T("CB", "CB"),     "26,965-27,405 MHz",  26965000UL, 27405000UL, 27185000UL,  DEMOD_MODE_AM,  BAND_STEP_10K,  BAND_FAM_UTIL },
+    /* ---- maritimo: el GMDSS de onda media y corta ------------------------
+     * La quinta familia, 22/11/2026 - ver BAND_FAM_MAR. */
+    /*
+     * Las tres frecuencias de NAVTEX, 24/09/2026. 518 kHz es la
+     * internacional y va en ingles; 490 kHz es la misma idea en el idioma
+     * del pais; 4209,5 kHz es la de onda corta, que llega mas lejos.
+     *
+     * Van en USB porque es la convencion del receptor de NAVTEX. El modo que
+     * hay que elegir despues es "NAVTEX" en la pantalla de modos - la banda
+     * deja el aparato en el sitio, no enciende el decodificador, igual que
+     * elegir la banda de 40 metros no enciende el RTTY.
+     *
+     * *** Y EL DIAL, 1,7 kHz POR DEBAJO - 22/11/2026, port del Malahit. ***
+     *
+     * Las tres filas ponian el dial EN la frecuencia publicada, y lo que se
+     * publica es el CENTRO de la emision: los dos tonos estan 85 Hz por
+     * encima y por debajo. En USB eso los deja en +85 y -85 Hz de audio, uno
+     * en la banda lateral que se suprime y el otro debajo del corte del
+     * filtro: por estos tres botones no entraba NADA. Es el mismo fallo que
+     * tuvieron los tres del fax hasta el 21/10 (en Utilidades), y navtex.c ya lo
+     * decia en el comentario de su centro: "en banda lateral hay que bajar
+     * el dial 1,7 kHz para que caigan ahi". Con el dial 1,7 kHz por debajo
+     * los tonos caen en 1615 y 1785 Hz, alrededor de NAVTEX_CENTRO_HZ.
+     *
+     * EL ROTULO DICE EL DIAL, como en el fax. Las publicadas -518, 490 y
+     * 4.209,5 kHz- son el dial mas 1,7.
+     */
+    { T("NAVTEX", "NAVTEX"), "516,3 kHz",          516300UL, 516300UL, 516300UL,    DEMOD_MODE_USB, BAND_STEP_100HZ, BAND_FAM_MAR },
+    { T("NAVTEX-N", "NAVTEX-N"),"488,3 kHz",          488300UL, 488300UL, 488300UL,    DEMOD_MODE_USB, BAND_STEP_100HZ, BAND_FAM_MAR },
+    { T("NAVTEX-HF", "NAVTEX-HF"),"4.207,8 kHz",        4207800UL, 4207800UL, 4207800UL, DEMOD_MODE_USB, BAND_STEP_100HZ, BAND_FAM_MAR },
+    /*
+     * LOS SEIS CANALES DE SOCORRO Y SEGURIDAD DEL DSC, 22/11/2026, pedidos
+     * por el usuario (port del Malahit). ITU-R M.493 y el Reglamento de
+     * Radiocomunicaciones, apendice 15: 2.187,5 - 4.207,5 - 6.312 - 8.414,5 -
+     * 12.577 - 16.804,5 kHz. Ahi van las alertas de socorro, sus acuses y las
+     * llamadas de seguridad y urgencia.
+     *
+     * Con el dial 1,7 kHz por debajo, por lo mismo que el NAVTEX de arriba:
+     * lo publicado es el centro de la emision y el DSC va en USB, asi que
+     * los dos tonos caen en 1615 y 1785 Hz, alrededor de DSC_CENTRO_HZ. El
+     * rotulo dice el dial. El modo que hay que elegir despues es "DSC".
+     */
+    { T("DSC 2", "DSC 2"),   "2.185,8 kHz",        2185800UL, 2185800UL, 2185800UL, DEMOD_MODE_USB, BAND_STEP_100HZ, BAND_FAM_MAR },
+    { T("DSC 4", "DSC 4"),   "4.205,8 kHz",        4205800UL, 4205800UL, 4205800UL, DEMOD_MODE_USB, BAND_STEP_100HZ, BAND_FAM_MAR },
+    { T("DSC 6", "DSC 6"),   "6.310,3 kHz",        6310300UL, 6310300UL, 6310300UL, DEMOD_MODE_USB, BAND_STEP_100HZ, BAND_FAM_MAR },
+    { T("DSC 8", "DSC 8"),   "8.412,8 kHz",        8412800UL, 8412800UL, 8412800UL, DEMOD_MODE_USB, BAND_STEP_100HZ, BAND_FAM_MAR },
+    { T("DSC 12", "DSC 12"), "12.575,3 kHz",       12575300UL, 12575300UL, 12575300UL, DEMOD_MODE_USB, BAND_STEP_100HZ, BAND_FAM_MAR },
+    { T("DSC 16", "DSC 16"), "16.802,8 kHz",       16802800UL, 16802800UL, 16802800UL, DEMOD_MODE_USB, BAND_STEP_100HZ, BAND_FAM_MAR },
     /*
      * Las DOS bandas de FM comercial que existen en el mundo. 23/09/2026.
      *
@@ -5061,7 +5094,8 @@ static const char *banco_cat_nombre(uint8_t i)
 
 static const texto_t k_band_familias[BAND_FAM_COUNT] = {
     T("Aficionados", "Amateur"), T("Radiodifusión", "Broadcast"),
-    T("Utilidades", "Utility"), T("VHF/UHF", "VHF/UHF")
+    T("Utilidades", "Utility"), T("VHF/UHF", "VHF/UHF"),
+    T("Marítimo", "Maritime")
 };
 #define BAND_PRESET_COUNT (sizeof(k_band_presets) / sizeof(k_band_presets[0]))
 

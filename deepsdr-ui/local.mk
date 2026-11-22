@@ -4464,6 +4464,15 @@ out/dscaire: sim/dscaire.c $(FIRMWARE)/User/dsc.c $(FIRMWARE)/User/nco.c \
 dsc: out/dsctest ; ./out/dsctest
 comprueba: dsc
 
+# EL DSC COMO LO LLEVA LA RADIO (22/11/2026, port del Malahit): el osciloscopio
+# y dsc_poll() tambien, que son los que mueven el centro. Ver sim/dsc_radio.c.
+# Pide un fichero: fuera de "comprueba".
+out/dscradio: sim/dsc_radio.c $(FIRMWARE)/User/dsc.c $(FIRMWARE)/User/nco.c \
+              $(FIRMWARE)/User/nco_tabla.c $(FIRMWARE)/User/rtty_scope.c \
+              $(FIRMWARE)/User/fft.c
+	@mkdir -p out
+	$(CC) $(CFLAGS) $(GFX2) -I$(FIRMWARE)/User -o $@ $(filter %.c,$^) $(LDLIBS)
+
 # ---------------------------------------------------------------------------
 # EL ECUALIZADOR ADAPTATIVO, CONTRA UN CANAL CON ECO.
 # Ver la cabecera de sim/ecualiztest.c y la de $(FIRMWARE)/User/ecualiz.h.

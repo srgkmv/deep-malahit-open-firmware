@@ -79,8 +79,11 @@ FUERA = ('/build/', '/build_470/', '/out/', '/.git/', '/__pycache__/',
          '/CMSIS/', '/Firmware/', '/usb/', '/Ft8Lib/', '/vendor/',
          '/_archivo/', '/rescate/', '/deepsdr-ui/')
 
-# El fichero que DEFINE el cerrojo no puede preguntarse a si mismo.
-SALTA = ('hfdl_ram.c',)
+# El fichero que DEFINE el cerrojo no puede preguntarse a si mismo. Y el
+# port del Malahit tiene el suyo, malahit/bringup/src/prestamo.c (22/11/2026):
+# las mismas tres funciones sobre una RAM propia en D2, porque su cascada no
+# se puede prestar. Tambien define, no coge.
+SALTA = ('hfdl_ram.c', 'prestamo.c')
 
 COGE = re.compile(r'\bhfdl_ram_coge\s*\(')
 PREGUNTA = re.compile(r'\bwaterfall_prestada\s*\(')

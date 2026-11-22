@@ -40,9 +40,6 @@ static const banda_t banda[] = {
     { "13 m", "13 m", "21.450-21.850 kHz", "AM", 21600000UL, 1, 21450000UL, 21850000UL, 4 },
     { "11 m", "11 m", "25.670-26.100 kHz", "AM", 25800000UL, 1, 25670000UL, 26100000UL, 4 },
     { "NDB", "NDB", "190-535 kHz", "USB", 350000UL, 2, 190000UL, 535000UL, 3 },
-    { "NAVTEX", "NAVTEX", "516,3 kHz", "USB", 516300UL, 2, 516300UL, 516300UL, 1 },
-    { "NAVTEX-N", "NAVTEX-N", "488,3 kHz", "USB", 488300UL, 2, 488300UL, 488300UL, 1 },
-    { "NAVTEX-HF", "NAVTEX-HF", "4.207,8 kHz", "USB", 4207800UL, 2, 4207800UL, 4207800UL, 1 },
     { "FAX 4", "FAX 4", "DWD 3.853,1 kHz", "USB", 3853100UL, 2, 3853100UL, 3853100UL, 1 },
     { "FAX 8", "FAX 8", "DWD 7.878,1 kHz", "USB", 7878100UL, 2, 7878100UL, 7878100UL, 1 },
     { "FAX 14", "FAX 14", "DWD 13.880,6 kHz", "USB", 13880600UL, 2, 13880600UL, 13880600UL, 1 },
@@ -52,6 +49,15 @@ static const banda_t banda[] = {
     { "APRS 70", "APRS 70", "432,500 MHz", "NFM", 432500000UL, 3, 432500000UL, 432500000UL, 4 },
     { "Horaria", "Time", "2,5 / 5 / 10 MHz", "AM", 10000000UL, 2, 0UL, 0UL, 3 },
     { "CB", "CB", "26,965-27,405 MHz", "AM", 27185000UL, 2, 26965000UL, 27405000UL, 6 },
+    { "NAVTEX", "NAVTEX", "516,3 kHz", "USB", 516300UL, 4, 516300UL, 516300UL, 1 },
+    { "NAVTEX-N", "NAVTEX-N", "488,3 kHz", "USB", 488300UL, 4, 488300UL, 488300UL, 1 },
+    { "NAVTEX-HF", "NAVTEX-HF", "4.207,8 kHz", "USB", 4207800UL, 4, 4207800UL, 4207800UL, 1 },
+    { "DSC 2", "DSC 2", "2.185,8 kHz", "USB", 2185800UL, 4, 2185800UL, 2185800UL, 1 },
+    { "DSC 4", "DSC 4", "4.205,8 kHz", "USB", 4205800UL, 4, 4205800UL, 4205800UL, 1 },
+    { "DSC 6", "DSC 6", "6.310,3 kHz", "USB", 6310300UL, 4, 6310300UL, 6310300UL, 1 },
+    { "DSC 8", "DSC 8", "8.412,8 kHz", "USB", 8412800UL, 4, 8412800UL, 8412800UL, 1 },
+    { "DSC 12", "DSC 12", "12.575,3 kHz", "USB", 12575300UL, 4, 12575300UL, 12575300UL, 1 },
+    { "DSC 16", "DSC 16", "16.802,8 kHz", "USB", 16802800UL, 4, 16802800UL, 16802800UL, 1 },
     { "FM OIRT", "FM OIRT", "65,8-74 MHz", "WFM", 66300000UL, 3, 65800000UL, 74000000UL, 6 },
     { "FM", "FM", "CCIR 87,5-108 MHz", "WFM", 100000000UL, 3, 87500000UL, 108000000UL, 9 },
     { "Aérea", "Air", "108-137 MHz", "AM", 118000000UL, 3, 108000000UL, 137000000UL, 8 },
@@ -79,7 +85,7 @@ __attribute__((unused)) static const paso_t paso_tabla[] = {
 };
 #define N_PASOS ((int)(sizeof paso_tabla / sizeof paso_tabla[0]))
 
-static const char *const familia_nombre[] = { "Aficionados", "Radiodifusión", "Utilidades", "VHF/UHF" };
-static const char *const familia_nombre_en[] = { "Amateur", "Broadcast", "Utility", "VHF/UHF" };
+static const char *const familia_nombre[] = { "Aficionados", "Radiodifusión", "Utilidades", "VHF/UHF", "Marítimo" };
+static const char *const familia_nombre_en[] = { "Amateur", "Broadcast", "Utility", "VHF/UHF", "Maritime" };
 
 #endif
