@@ -1269,6 +1269,42 @@ Each step should end with something visible on the radio.
    100 % and 16 at 50 % again, A/B in one run over swd-call, at a quiet
    151 MHz - the k x 20 kHz bins within +/-2 dB, the same spread as 50 %
    against itself, the floor's median 62.1 / 62.3 / 62.2 dB.
+40. **RDS, and room for it in the header.** *22/11/2026, from RAM, on
+   the air* - upstream's header already has a strip for RDS (ui_top.c:
+   the station's name over a scrolling line, between the band pill and
+   MEM), which on this 480 px header had 0 px. Room made for it, on the
+   owner's lines: **the clock and the battery stacked** in one 32 px
+   column (clock 1..14, battery 18..31, as upstream stacks them), **MEM
+   pulled up against it** and narrowed to its text plus 4 px a side, and
+   **the mode and band pills' side air cut to 5 px** from upstream's
+   13/11 - those two numbers, the strip's left margin and its two lines'
+   offsets were literals in ui_top.c/h and are `#ifndef` now, with the
+   old values (PROCEDENCIA.md: the DEEPSDR's 800 x 480 screen identical
+   to the pixel, ui_top's disassembly identical on the host and for the
+   Cortex-M4). Then the owner's last pixels: the frequency from x = 3
+   (its ink at 6, over the S-meter bar's edge), 4 px from "kHz" to the
+   mode chip instead of 10, MEM 2 px closer to the battery - three more
+   upstream literals `#ifndef` (HDR_FREQ_X, HDR_UNIT_GAP, HDR_FREQ_HIT_M),
+   proven the same way. The strip measures **109 px at the widest
+   header** (104.300,00 WFM FM) and 146 on HF (deepsdr-ui `cab_wfm`,
+   `cab_hf`). On the way: the frequency's touch zone ran 4 px into the
+   mode chip (upstream's 12 px after "kHz" against this port's 34 px
+   gap); it ends at the chip now - checked, x 219 opens the keypad and
+   223 does not. And the bring-up's touch report in the knob pill
+   ("Touched" / "Unassigned", left standing after a tap on anything
+   unwired) is gone: everything there is wired; the console still logs.
+   RDS itself is upstream's: rds.c and rds_pi.c in place of their stubs,
+   fed by upstream's WFM hook; upstream's rds_marq_sync()/poll()/
+   reinicia() and its PTY table in main.c - name from the PI table, else
+   the PS, else the PI in hex; traffic, programme type and radiotext
+   scrolling 2 px a frame. On in WFM, off elsewhere, from zero on every
+   retune. Not taken: the clock from RDS (this clock is an uptime count).
+   **On the air at 104.3 MHz**: the name built two characters at a time
+   (the station runs a dynamic PS - "Tiffany Aris - Find Me"); the
+   radiotext read over SWD "Pop music   Teddy Swims - Mr. Know It All";
+   the strip scrolls on the glass; to AM it empties, back to WFM it
+   starts again; a step away and back, from zero. The WFM hook with RDS:
+   13.4 ms of 42.7 (6.7 without), no overrun.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

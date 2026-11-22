@@ -182,6 +182,22 @@ static const char *knob_name(ui_knob_t k)
  * es 50, exactamente como antes. Comprobado comparando el PPM del
  * simulador byte a byte antes y despues.
  */
+/*
+ * Donde empieza la frecuencia, el aire entre su ultima cifra y el "kHz", y
+ * lo que la zona de toque de la frecuencia se alarga detras del "kHz". Con
+ * #ifndef para una cabecera mas estrecha; sin -D, los de siempre. La zona
+ * de toque tiene que acabar antes del chip de modo, que empieza en
+ * HDR_CHIP_GAP: quien estreche uno ha de mirar el otro.
+ */
+#ifndef HDR_FREQ_X
+#define HDR_FREQ_X      10
+#endif
+#ifndef HDR_UNIT_GAP
+#define HDR_UNIT_GAP     6
+#endif
+#ifndef HDR_FREQ_HIT_M
+#define HDR_FREQ_HIT_M  12
+#endif
 #ifndef HDR_FREQ_Y
 #define HDR_FREQ_Y      (UI_TOP_H *  2 / 64)    /* 2  */
 #endif
@@ -244,6 +260,18 @@ static const char *knob_name(ui_knob_t k)
 #endif
 #ifndef HDR_CHIP_GAP
 #define HDR_CHIP_GAP     62
+#endif
+/*
+ * Lo que una pastilla de la cabecera lleva de mas sobre su texto, sumando
+ * los dos lados: 13 + 13 la de modo y 11 + 11 la de banda. Con #ifndef para
+ * que una pantalla mas estrecha los ponga a su medida; sin -D, los de
+ * siempre.
+ */
+#ifndef HDR_MODO_PAD
+#define HDR_MODO_PAD     26
+#endif
+#ifndef HDR_BANDA_PAD
+#define HDR_BANDA_PAD    22
 #endif
 #ifndef HDR_BAND_GAP
 #define HDR_BAND_GAP     10
@@ -352,7 +380,7 @@ static void draw_header(gfx2_surf_t *s, void *ctx)
      * numero. Asi el paso de sintonia se lee en la frecuencia y no hace falta
      * el "STEP 1kHz" de otra columna, que obliga a traducir mentalmente
      * cuanto se va a mover antes de girar. */
-    x = 10;
+    x = HDR_FREQ_X;
     for (p = st->freq, i = 0; *p; p++, i++) {
         char b[2];
         int16_t aw;
@@ -365,17 +393,18 @@ static void draw_header(gfx2_surf_t *s, void *ctx)
         }
         x = (int16_t)(x + aw);
     }
-    gfx2_text(s, (int16_t)(x + 6), HDR_UNIT_Y, "kHz", &font_ui_18b, dim); /* ETAPA 4: era "MHz" y el numero eran Hz - ver tune_freq_format_khz() en main.c */
+    gfx2_text(s, (int16_t)(x + HDR_UNIT_GAP), HDR_UNIT_Y, "kHz", &font_ui_18b, dim); /* ETAPA 4: era "MHz" y el numero eran Hz - ver tune_freq_format_khz() en main.c */
 
     /* Fin de la lectura de frecuencia, para ui_top_freq_hit(): el final del
      * "kHz" mas un margen, y siempre por delante del chip de modo (que
      * empieza en x+62). Ver el comentario de s_freq_x2. */
-    s_freq_x2 = (int16_t)(x + 6 + gfx2_text_w("kHz", &font_ui_18b) + 12);
+    s_freq_x2 = (int16_t)(x + HDR_UNIT_GAP + gfx2_text_w("kHz", &font_ui_18b)
+                          + HDR_FREQ_HIT_M);
 
     /* --- modo, como chip con acento --- */
     {
         int16_t cx = (int16_t)(x + HDR_CHIP_GAP);
-        int16_t w  = (int16_t)(gfx2_text_w(st->mode, &font_ui_18b) + 26);
+        int16_t w  = (int16_t)(gfx2_text_w(st->mode, &font_ui_18b) + HDR_MODO_PAD);
         gfx2_rrect(s, cx, HDR_CHIP_Y, w, HDR_CHIP_H, 6, gfx2_rgba(PAL_ACCENT, 42));
         gfx2_rrect_outline(s, cx, HDR_CHIP_Y, w, HDR_CHIP_H, 6, 1,
                            gfx2_rgba(PAL_ACCENT, 170));
@@ -392,7 +421,7 @@ static void draw_header(gfx2_surf_t *s, void *ctx)
         s_band_x1 = s_band_x2 = 0;
         if (st->band) {
             int16_t bx = (int16_t)(cx + w + HDR_BAND_GAP);
-            int16_t bw = (int16_t)(gfx2_text_w(st->band, &font_ui_18b) + 22);
+            int16_t bw = (int16_t)(gfx2_text_w(st->band, &font_ui_18b) + HDR_BANDA_PAD);
             gfx2_rrect(s, bx, HDR_CHIP_Y, bw, HDR_CHIP_H, 6, gfx2_rgb(PAL_SURF_2));
             /*
              * El borde dice EN QUE CLASE de banda estas, con el mismo codigo
@@ -1193,7 +1222,7 @@ static void draw_status(gfx2_surf_t *s, void *ctx)
  * por cero. */
 static int16_t rds_x1(void)
 {
-    return (int16_t)((s_band_x2 > 0) ? (s_band_x2 + 12) : 470);
+    return (int16_t)((s_band_x2 > 0) ? (s_band_x2 + UI_TOP_RDS_X1_M) : 470);
 }
 
 int16_t ui_top_rds_ancho(void)

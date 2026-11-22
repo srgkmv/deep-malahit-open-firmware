@@ -21,6 +21,13 @@ backlight going dark at once under a held power button (boot.c now puts
 PB8 back to an output first). **Next, the owner's order: decoders one by
 one, RDS first.** Also open: upstream's SCAN cell on the memory screen.
 
+**Since, from RAM (not in flash): step 40, RDS** - the header made room
+(clock over battery, MEM narrowed against them, pills' side air 5 px,
+the frequency from x 3, 4 px from "kHz" to the mode chip; strip 109 px
+at the widest, 146 on HF), upstream's rds.c in place, name + scrolling
+radiotext on the air at 104.3. The owner declined moving MEM down to
+the status band for more (JMP/NCO there are inert on this port).
+
 ## 22/11/2026, just after midnight: step 9 done and in flash (22c50fe)
 
 **In flash: `22c50fe`** (steps 33-36 on top of the `df61818` below) -

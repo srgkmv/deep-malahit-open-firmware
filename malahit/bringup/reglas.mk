@@ -410,6 +410,10 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/spec_snap.c
 # banco.c  the memory channels: four banks of fifteen, upstream's table
 #          and its MEM.CSV, kept in the FRAM by src/memfram.c (22/11/2026)
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/banco.c
+# rds.c, rds_pi.c  RDS on WFM: the decoder upstream's WFM hook feeds, and
+#                  its table of networks by PI code (22/11/2026)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/rds.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/rds_pi.c
 #
 # THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]
 # out of User/main.c by the script the host render uses for the same

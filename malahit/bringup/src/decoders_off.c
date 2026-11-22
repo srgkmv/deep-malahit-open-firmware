@@ -64,7 +64,7 @@ OFF_U16(ident_modo_activo,  ident_modo_mete)
 OFF_U16(jtty_modo_activo,   jtty_modo_mete)
 OFF_U32(navtex_activo,      navtex_process)
 OFF_U32(psk31_activo,       psk31_process)
-OFF_U32(rds_activo,         rds_feed)
+/* rds_activo, rds_feed: the real ones since 22/11/2026 (rds.c, step 40) */
 OFF_U32(sstv_activo,        sstv_process)
 OFF_U16(stanag_modo_activo, stanag_modo_mete)
 OFF_U32(wefax_activo,       wefax_process)

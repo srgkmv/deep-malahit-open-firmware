@@ -155,9 +155,26 @@
  */
 
 /* --- header internals: 64 rows become 26 --- */
-#define UI_TOP_RDS_Y          4
-#define UI_TOP_RDS_H         18
-#define UI_TOP_RDS_X2       300     /* 620 -> same 180 px from the right */
+/*
+ * THE RDS STRIP - 22/11/2026, room made for it on the owner's word: the
+ * clock and the battery stacked in one 32 px column (below), the MEM chip
+ * pulled up against it, and the mode and band pills' side air cut from
+ * 13/11 px a side to 5 (HDR_MODO_PAD, HDR_BANDA_PAD - upstream's numbers
+ * made #ifndef for it). What is left between the band pill and MEM is
+ * the strip: upstream's two lines, the station's name over the
+ * radiotext, here in font_ui_10b / font_ui_10 (line box 13):
+ *
+ *     name     rows  2..14      radiotext  rows 18..30
+ *
+ * inside rows 1..32 - the divider is row 33. The deepsdr-ui render
+ * `cab_wfm` measures it at the widest the header gets, 104.300,00 WFM FM.
+ */
+#define UI_TOP_RDS_Y          1
+#define UI_TOP_RDS_H         32
+#define UI_TOP_RDS_NOM_DY     1
+#define UI_TOP_RDS_MAR_DY    17
+#define UI_TOP_RDS_X1_M       6     /* air after the band pill */
+#define UI_TOP_RDS_X2   (UI_TOP_MEM_X - 6)
 #define UI_TOP_SAM_X        302
 #define UI_TOP_SAM_Y         14
 #define UI_TOP_SAM_W         54
@@ -165,11 +182,11 @@
 #define UI_TOP_SAM_RY        14
 #define UI_TOP_SAM_RW        56
 #define UI_TOP_SAM_RH        10
-#define UI_TOP_MEM_X        352
+#define UI_TOP_MEM_X        406     /* 406..439: 5 px of air to the battery at 445 */
 #define UI_TOP_MEM_Y          8
-#define UI_TOP_MEM_W         44
+#define UI_TOP_MEM_W         34     /* "MEM" in font_ui_11 and 4 px a side */
 #define UI_TOP_MEM_H         18
-#define UI_TOP_HORA_RX      396     /* 716 -> same 84 px from the right */
+#define UI_TOP_HORA_RX      442     /* the clock and battery column */
 #define UI_TOP_HORA_RY        0
 
 /* --- status band internals: 40 rows become 16.
@@ -223,6 +240,19 @@
  * from across a room.
  */
 #define HDR_FREQ_Y            0
+/*
+ * THE FREQUENCY TO THE EDGE, AND "kHz" UP TO THE MODE CHIP - 22/11/2026,
+ * the owner's last pixels for the RDS strip. font_num_31's digits carry
+ * 3 px of bearing, so a frequency at x = 3 puts its ink at x = 6 - the
+ * S-meter bar's own left edge (ST_BAR_X), right under it. "kHz" is 18 px
+ * (measured, the cab_* render prints it); 6 px after the digits as
+ * before, and 4 px of air to the mode chip instead of 10:
+ * HDR_CHIP_GAP = 6 + 18 + 4. The frequency's touch zone ends where the
+ * chip begins (HDR_FREQ_HIT_M), where upstream's 12 had it 4 px into it.
+ */
+#define HDR_FREQ_X            3
+#define HDR_UNIT_GAP          6
+#define HDR_FREQ_HIT_M        4
 #define HDR_UND_Y            31
 #define HDR_UND_H             2
 
@@ -231,22 +261,27 @@
 #define HDR_CHIP_H           18
 #define HDR_CHIP_TXT_Y       10     /* font_ui_11: (18-14)/2 = 2 */
 #define HDR_UNIT_Y           18
-#define HDR_CLK_Y            10
+#define HDR_CLK_Y             1     /* font_ui_11: line box 1..14 */
 #define HDR_MEM_TXT_PAD       2     /* MEM draws in font_ui_18b, which this
                                      * port maps to font_ui_11: line box 14
                                      * in a chip of 18, so (18-14)/2 = 2.
                                      * It was 4 here, computed against the
                                      * 8 px face the STATUS chips use - the
                                      * wrong font for this one label. */
-#define HDR_CHIP_GAP         34     /* 6 de aire + el ancho de "kHz" + 8 */
-#define HDR_BAND_GAP          6
+#define HDR_CHIP_GAP         28     /* 6 de aire + el ancho de "kHz" (18) + 4 */
+#define HDR_BAND_GAP          4
+#define HDR_MODO_PAD         10     /* 5 a side: was upstream's 13 */
+#define HDR_BANDA_PAD        10     /* 5 a side: was upstream's 11 */
 /*
- * THE CLOCK AND THE BATTERY SHARE A ROW, and that is new - 02/11/2026.
+ * THE CLOCK AND THE BATTERY ARE STACKED AGAIN - 22/11/2026, as upstream
+ * has them, the clock over the battery, so the width they took side by
+ * side goes to the RDS strip. 34 rows hold two 14-row lines: the clock
+ * 1..14, the battery 18..31. What follows is the side-by-side layout of
+ * 02/11/2026, kept for the measurements in it.
  *
- * Upstream stacks them: the clock at the top right and the battery
- * directly under it, in a 64-row header. 34 rows cannot stack
- * anything, so they go side by side instead, which is what the width
- * is for.
+ * (02/11/2026: THE CLOCK AND THE BATTERY SHARE A ROW. Upstream stacks
+ * them in a 64-row header; 34 rows, it was thought then, cannot stack
+ * anything, so they went side by side.)
  *
  * AND UNTIL TODAY THE BATTERY WAS SIMPLY NOT THERE. Its x was 790
  * minus its own width, hard-coded for an 800 px panel, so on this one
@@ -267,11 +302,11 @@
  * 395, so there are 13 px of air on the other side as well.
  */
 #define HDR_CLK_W            32
-#define HDR_CLK_X    (GFX2_W - 34)
+#define HDR_CLK_X    (GFX2_W - 34)              /* 446..477, right-aligned */
 #define HDR_BAT_W            30
 #define HDR_BAT_H            14
-#define HDR_BAT_X           409
-#define HDR_BAT_Y            10
+#define HDR_BAT_X           445                 /* 445..474 + 3 of nipple */
+#define HDR_BAT_Y            18
 /* 6 and not the derived 5: the box is 14 rows, and only an even nub
  * can sit exactly in the middle of an even box. At 5 it lands one row
  * low, which is visible on a pill this small - it is what the 20-row

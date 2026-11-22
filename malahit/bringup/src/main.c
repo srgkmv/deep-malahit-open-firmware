@@ -55,6 +55,8 @@
 #include "idioma.h"       /* ../../User - upstream: tr(), T(), idioma() */
 #include "spec_snap.h"    /* ../../User - upstream: a tap lands on the signal */
 #include "backlight.h"    /* ../../User - upstream's API, src/backlight.c */
+#include "rds.h"          /* ../../User - upstream: the RDS decoder */
+#include "rds_pi.h"       /* ../../User - upstream: networks by their PI */
 #include "bandas_tabla.h" /* GENERATED from ../../User/main.c: the steps */
 #include "demod_am.h"     /* ../../User - upstream: DEMOD_MODE_*, for the menus */
 #include "nr_ss.h"        /* ../../User - upstream: the Ruido button */
@@ -62,6 +64,7 @@
 #include "agc.h"          /* ../../User/agc.c - upstream; the retune test
                            * computes the gain with ITS constants */
 #include <math.h>         /* log10f, for the retune test's decibels */
+#include <string.h>       /* strcmp, strcpy: the RDS strip */
 #include "fft.h"          /* ../../User/fft.c - upstream */
 #include "iqbal.h"        /* ../../User/iqbal.c - upstream */
 #include "gfx2.h"         /* ../../User/gfx2.c  - upstream */
@@ -6050,6 +6053,182 @@ static void test_msi_round(void)
  */
 static void band_pill_sync(void);
 
+/*
+ * RDS - 22/11/2026. Upstream's decoder (rds.c, rds_pi.c, compiled in
+ * place) is fed by its own WFM hook (demod_am.c: rds_feed() on the
+ * discriminator's output whenever rds_activo()), and this is upstream's
+ * rds_marq_sync() / rds_marq_poll() / rds_reinicia() from its main.c, on
+ * this port's s_top: the header's strip shows the station's name - the
+ * network from its PI code if rds_pi.c knows it, else the PS, else the
+ * PI in hex - over a line that scrolls when it does not fit: traffic, the
+ * programme type, the radiotext.
+ *
+ * Started on entering WFM and stopped on leaving it (upstream has a
+ * setting for it; here WFM is where RDS is, so it is simply on), and
+ * restarted on every retune: "a station name left over from the last
+ * station is a screen that lies" (upstream).
+ *
+ * Not taken: setting the clock from RDS (group 4A) - this port's clock is
+ * an uptime counter with nothing to set yet.
+ */
+static char     s_rds_txt[176], s_rds_txt_ant[176];
+static char     s_rds_nom[20], s_rds_nom_ant[20];
+static int16_t  s_rds_off, s_rds_txt_w;
+static uint32_t s_rds_freq;             /* the dial the decoder was started on */
+
+#define RDS_MARQ_PX  2                  /* upstream's: 2 px a step */
+
+static uint8_t rds_txt_pon(char *b, uint8_t i, const char *t)
+{
+    while (*t != '\0' && i < (uint8_t)(sizeof s_rds_txt - 1U)) { b[i++] = *t++; }
+    return i;
+}
+
+/* Upstream's rds_pty_txt(), the table as it is there. 0 = undefined. */
+static const char *rds_pty_txt(uint8_t pty)
+{
+    static const texto_t k_pty[32] = {
+        T(0, 0),
+        T("Noticias", "News"),                  T("Actualidad", "Current affairs"),
+        T("Informacion", "Information"),        T("Deportes", "Sport"),
+        T("Educacion", "Education"),            T("Teatro", "Drama"),
+        T("Cultura", "Culture"),                T("Ciencia", "Science"),
+        T("Variedades", "Varied"),              T("Musica pop", "Pop music"),
+        T("Musica rock", "Rock music"),         T("Musica ligera", "Easy listening"),
+        T("Clasica ligera", "Light classical"), T("Clasica", "Serious classical"),
+        T("Otra musica", "Other music"),        T("El tiempo", "Weather"),
+        T("Economia", "Finance"),               T("Infantil", "Children's"),
+        T("Temas sociales", "Social affairs"),  T("Religion", "Religion"),
+        T("Participacion", "Phone-in"),         T("Viajes", "Travel"),
+        T("Ocio", "Leisure"),                   T("Musica jazz", "Jazz music"),
+        T("Musica country", "Country music"),   T("Musica nacional", "National music"),
+        T("Melodias de siempre", "Oldies music"), T("Musica folk", "Folk music"),
+        T("Documental", "Documentary"),         T("Prueba de alarma", "Alarm test"),
+        T("ALARMA", "Alarm")
+    };
+
+    if (pty > 31U || k_pty[pty][0] == 0) { return (const char *)0; }
+    return k_pty[pty][idioma()];
+}
+
+/* What the strip says, from what the decoder knows: upstream's
+ * rds_marq_sync() without the clock. */
+static void rds_marq_sync(void)
+{
+    rds_info_t in;
+    uint8_t    i = 0U, j;
+
+    rds_info(&in);
+    if (in.tp && in.ta) {
+        i = rds_txt_pon(s_rds_txt, i, tr("TRAFICO", "TRAFFIC"));
+    }
+    if (in.tiene_pty) {
+        const char *t = rds_pty_txt(in.pty);
+
+        if (t != 0) {
+            if (i > 0U) { i = rds_txt_pon(s_rds_txt, i, "   "); }
+            i = rds_txt_pon(s_rds_txt, i, t);
+        }
+    }
+    if (in.tiene_rt) {
+        uint8_t fin;
+
+        if (i > 0U) { i = rds_txt_pon(s_rds_txt, i, "   "); }
+        fin = i;
+        for (j = 0U; j < 64U && i < (uint8_t)(sizeof s_rds_txt - 8U); j++) {
+            s_rds_txt[i++] = in.rt[j];
+            if (in.rt[j] != ' ') { fin = i; }
+        }
+        i = fin;                        /* the radiotext's trailing blanks out */
+    }
+    if (i > 0U) { i = rds_txt_pon(s_rds_txt, i, "     "); }   /* the gap before it comes round */
+    s_rds_txt[i] = '\0';
+
+    {
+        const char *n = in.tiene_pi ? rds_pi_nombre(in.pi) : 0;
+        uint8_t     k = 0U;
+
+        if (n) {
+            while (n[k] != '\0' && k < (uint8_t)(sizeof s_rds_nom - 1U)) { s_rds_nom[k] = n[k]; k++; }
+        } else if (in.tiene_ps) {
+            for (k = 0U; k < 8U; k++) { s_rds_nom[k] = in.ps[k]; }
+            while (k > 0U && s_rds_nom[k - 1U] == ' ') { k--; }
+        } else if (in.tiene_pi) {
+            static const char hx[] = "0123456789ABCDEF";
+
+            s_rds_nom[k++] = hx[(in.pi >> 12) & 0xFU];
+            s_rds_nom[k++] = hx[(in.pi >> 8) & 0xFU];
+            s_rds_nom[k++] = hx[(in.pi >> 4) & 0xFU];
+            s_rds_nom[k++] = hx[in.pi & 0xFU];
+        }
+        s_rds_nom[k] = '\0';
+    }
+}
+
+/* Once a pass of the loop - a frame, ~45 ms, where upstream's is 40 ms -
+ * in WFM: the strip is repainted only when its text changed or it has to
+ * scroll, and only the strip (ui_top_draw_rds(), its own band). */
+static void rds_marq_poll(void)
+{
+    if (!rds_activo() || demod_am_get_mode() != DEMOD_MODE_WFM) { return; }
+
+    rds_marq_sync();
+    if (strcmp(s_rds_txt, s_rds_txt_ant) == 0 && strcmp(s_rds_nom, s_rds_nom_ant) == 0
+        && s_rds_txt_w + 8 <= ui_top_rds_ancho()) {
+        return;
+    }
+    if (strcmp(s_rds_nom, s_rds_nom_ant) != 0) {
+        strcpy(s_rds_nom_ant, s_rds_nom);
+        console_printf("  RDS: \"%s\"\n", s_rds_nom);
+    }
+    if (strcmp(s_rds_txt, s_rds_txt_ant) != 0) {
+        strcpy(s_rds_txt_ant, s_rds_txt);
+        s_rds_txt_w = ui_top_rds_texto_w(s_rds_txt);
+        if (s_rds_off > (int16_t)(s_rds_txt_w + 8)) { s_rds_off = 0; }
+    }
+    s_top.rds        = s_rds_txt;
+    s_top.rds_off    = s_rds_off;
+    s_top.rds_nombre = s_rds_nom;
+    ui_top_draw_rds(&s_top);
+
+    if (s_rds_txt_w + 8 > ui_top_rds_ancho()) {
+        s_rds_off = (int16_t)(s_rds_off + RDS_MARQ_PX);
+        if (s_rds_off > (int16_t)(s_rds_txt_w + 8)) {
+            s_rds_off = (int16_t)(-ui_top_rds_ancho());       /* back in from the right */
+        }
+    } else {
+        s_rds_off = 0;
+    }
+}
+
+/* A new station, or none: the decoder from zero and the strip empty. */
+static void rds_limpia(void)
+{
+    s_rds_txt[0] = '\0';
+    s_rds_nom[0] = '\0';
+    s_rds_txt_ant[0] = '\1';           /* force a re-measure and a repaint */
+    s_rds_nom_ant[0] = '\0';
+    s_rds_off = 0;
+    s_top.rds = s_rds_txt;
+    s_top.rds_nombre = s_rds_nom;
+    s_top.rds_off = 0;
+}
+
+static void rds_modo(void)
+{
+    if (demod_am_get_mode() == DEMOD_MODE_WFM) {
+        rds_start(192000.0f);           /* the WFM path's rate */
+        s_rds_freq = s_tuned_hz;
+        console_printf("  RDS on\n");
+    } else if (rds_activo()) {
+        rds_stop();
+        console_printf("  RDS off\n");
+    }
+    rds_limpia();
+    s_top.rds = 0;                      /* nothing in the strip until there is */
+    s_top.rds_nombre = 0;
+}
+
 static int dial_tune(int64_t dial_hz)
 {
     if (dial_hz < (int64_t)TUNE_MIN_HZ) { dial_hz = (int64_t)TUNE_MIN_HZ; }
@@ -6126,6 +6305,15 @@ static int dial_tune(int64_t dial_hz)
         s_addon_was = (uint32_t)addon;
     }
     band_pill_sync();
+
+    /* Another frequency is another station: RDS from zero (upstream's
+     * apply_lo_tune()), but not on a call that lands where it was. */
+    if (rds_activo() && s_tuned_hz != s_rds_freq) {
+        s_rds_freq = s_tuned_hz;
+        rds_start(192000.0f);
+        rds_limpia();
+        ui_top_draw_rds(&s_top);
+    }
     return 1;
 }
 
@@ -6687,6 +6875,7 @@ void radio_mode_set(int mode)
             console_printf("  tuner %s the dial\n", off ? "12 kHz below" : "on");
         }
     }
+    rds_modo();                         /* on in WFM, off elsewhere */
     s_top.mode = radio_mode_name(radio_mode_get());
     top_sync_chips();                   /* the filter family follows the mode */
     ui_top_draw(&s_top);
@@ -7406,32 +7595,16 @@ static void ui_touch(void)
             }
 
             /*
-             * AND SAY IT ON THE PANEL, NOT ONLY DOWN THE CABLE.
+             * THE KNOB PILL NO LONGER REPORTS TOUCHES - 22/11/2026.
              *
-             * Everything above the action bar hit correctly from the
-             * first run and looked completely dead to whoever was
-             * doing the pressing: the six buttons draw a pressed state
-             * and no other element has one, because upstream gives
-             * them one by CHANGING SOMETHING - the AGC chip cycles the
-             * AGC, the band pill opens the band list - and there is
-             * nothing behind any of them here yet.
-             *
-             * So the knob pill, which is otherwise sitting there
-             * saying "sin mando", reports the last thing touched. It
-             * is the honest amount of feedback available: it claims no
-             * setting changed, and it turns a finger into an
-             * instrument that can check the hit boxes without reading
-             * a serial log at the same time as looking at the glass.
-             *
-             * It goes through ui_top_draw_status(), which is the band
-             * redraw upstream already has - 480 x 16 px, about 6 ms -
-             * and not a new drawing path. ui_top_draw_smeter(), which
-             * runs every frame, stops short of the pill and so cannot
-             * rub this out.
+             * From the bring-up, when nothing above the action bar did
+             * anything, the pill said what the finger had hit ("Tocado" /
+             * "Sin asignar") so the hit boxes could be checked on the
+             * glass. Everything there is wired now, and the report had
+             * turned into a pill that read "Unassigned" after a tap on
+             * the mode chip - which upstream gives no action either - and
+             * stayed so. The console line above still says what was hit.
              */
-            s_top.knob_name  = que ? tr("Tocado", "Touched") : tr("Sin asignar", "Unassigned");
-            s_top.knob_value = que;
-            ui_top_draw_status(&s_top);
         }
     }
 }
@@ -8488,6 +8661,7 @@ int main(void)
         && s_boot_set.mode <= (uint8_t)DEMOD_MODE_SAM) {
         (void)demod_mode((int)s_boot_set.mode);
     }
+    rds_modo();                         /* a WFM session comes back with RDS on */
     console_printf("Mode      : %s%s\n", radio_mode_name(radio_mode_get()),
                    (s_boot_have && s_boot_set.has_mode) ? ", from the FRAM"
                                                         : "");
@@ -8663,6 +8837,7 @@ int main(void)
         }
 
         retune_test_step();
+        rds_marq_poll();                /* the header's RDS strip, in WFM */
 
         /*
          * THE PRESS, which is upstream's gesture and upstream's

@@ -247,8 +247,19 @@ typedef struct {
 #ifndef UI_TOP_RDS_H
 #define UI_TOP_RDS_H      44
 #endif
-#define UI_TOP_RDS_NOM_Y  (UI_TOP_RDS_Y + 2)    /* el renglon fijo */
-#define UI_TOP_RDS_MAR_Y  (UI_TOP_RDS_Y + 24)   /* la marquesina */
+/* Donde va cada renglon dentro de la franja, y el aire entre la pastilla
+ * de banda y donde empieza. Con #ifndef: sin -D, los de siempre. */
+#ifndef UI_TOP_RDS_NOM_DY
+#define UI_TOP_RDS_NOM_DY  2
+#endif
+#ifndef UI_TOP_RDS_MAR_DY
+#define UI_TOP_RDS_MAR_DY 24
+#endif
+#ifndef UI_TOP_RDS_X1_M
+#define UI_TOP_RDS_X1_M   12
+#endif
+#define UI_TOP_RDS_NOM_Y  (UI_TOP_RDS_Y + UI_TOP_RDS_NOM_DY)   /* el renglon fijo */
+#define UI_TOP_RDS_MAR_Y  (UI_TOP_RDS_Y + UI_TOP_RDS_MAR_DY)   /* la marquesina */
 /*
  * 05/10/2026: 632 -> 620. Los doce pixeles son para que la lectura de PPM de
  * SAM, que se ha mudado aqui al lado, no empiece dentro de la franja. Ver

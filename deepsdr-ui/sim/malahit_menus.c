@@ -512,9 +512,55 @@ static void memorias(void)
     escribe("memorias");
 }
 
+/*
+ * LA CABECERA CON RDS - 22/11/2026. ui_top.c con la geometria de
+ * malahit_layout.h, como la pinta la radio en FM ancha: la frecuencia mas
+ * ancha que hay (104.300,00), el chip WFM, la pastilla FM, el nombre de la
+ * emisora y el radiotexto en su franja, MEM, la bateria y el reloj. Se
+ * mide lo que no se ve: cuanto mide la franja, y que nada pisa a nada.
+ */
+#include "ui_top.h"
+extern const gfx2_font_t font_ui_10;
+
+static void cabecera(const char *nombre, const char *freq, const char *modo,
+                     const char *banda, const char *rds_nom, const char *rds)
+{
+    ui_top_state_t st;
+    int16_t x1, w;
+
+    memset(&st, 0, sizeof st);
+    st.freq = freq; st.freq_digit = -1;
+    st.mode = modo; st.band = banda; st.en_banda = 1; st.fam_banda = 1;
+    st.clock = "23:41"; st.batt_pct = 100;
+    st.agc = "MED"; st.att = "-59"; st.bw = "15 k";
+    st.knob = UI_KNOB_TUNE; st.knob_value = "V -46";
+    st.rds_nombre = rds_nom; st.rds = rds;
+    fondo_principal();
+    ui_top_draw(&st);
+    w  = ui_top_rds_ancho();
+    x1 = (int16_t)(UI_TOP_RDS_X2 - w);
+    printf("  cabecera: \"kHz\" %d px, la frecuencia %d px\n",
+           gfx2_text_w("kHz", &font_ui_11), gfx2_text_w(freq, &font_num_31));
+    printf("  cabecera %-8s franja RDS x %d..%d = %d px, MEM %d..%d, reloj desde %d\n",
+           nombre, x1, UI_TOP_RDS_X2, w, UI_TOP_MEM_X, UI_TOP_MEM_X + UI_TOP_MEM_W,
+           UI_TOP_HORA_RX);
+    if (w < 0) { printf("  SE SALE  la franja no tiene sitio\n"); s_fallos++; }
+    if (UI_TOP_RDS_X2 > UI_TOP_MEM_X) {
+        printf("  SE SALE  la franja pisa MEM\n"); s_fallos++;
+    }
+    if (UI_TOP_MEM_X + UI_TOP_MEM_W > UI_TOP_HORA_RX) {
+        printf("  SE SALE  MEM pisa el reloj\n"); s_fallos++;
+    }
+    if (rds_nom) { cabe("rds nom", rds_nom, &font_ui_10b, w); }
+    escribe(nombre);
+}
+
 int main(void)
 {
     printf("menus del Malahit, 480 x 320\n");
+    cabecera("cab_wfm", "104.300,00", "WFM", "FM", "RADIO 7",
+             "Ahora suena: The Beatles - Here Comes The Sun     ");
+    cabecera("cab_hf", "9.600,00", "AM", "31 m", 0, 0);
     memorias();
     modos();
     bandas();

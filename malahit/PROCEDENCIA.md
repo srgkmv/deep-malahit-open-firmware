@@ -35,6 +35,7 @@ directly — no copy, no fork, objects prefixed `up_` and `dsp_`:
 | `User/demod_am.c` | 6992 |
 | `User/ui_cfg.c`, `User/ui_grid.c`, `User/ui_det.c`, `User/ui_kbd.c` | step 9, 21/11/2026 |
 | `User/spec_snap.c`, `User/banco.c` | steps 37-38, 22/11/2026, unmodified; banco.c's disk is `src/memfram.c` (MEM.CSV in the FRAM) |
+| `User/rds.c`, `User/rds_pi.c` | step 40, 22/11/2026, unmodified, in place of their stubs |
 | `User/semibanda.c`, `nco.c`, `nco_tabla.c`, `nb.c`, `anotch.c`, `nr_ss.c`, `sam.c`, `rapido.c`, `bip.c` | step 8, 21/11/2026 |
 | `CMSIS/DSP/Source/**` | 9 files |
 
@@ -152,6 +153,20 @@ and each is recorded here so the divergence is never a surprise:
   identical; and the Cortex-M4 object (`-mcpu=cortex-m4 -mfpu=fpv4-sp-d16`,
   HEAD's file against the new one) identical, 544 lines.**
   `deepsdr-ui/gfx2/` copies synced, `copias_check.py` clean.
+
+- `User/ui_top.h`, `User/ui_top.c` — step 40, 22/11/2026, room for RDS on
+  a narrower header: the side air of the mode and band pills (`+ 26`,
+  `+ 22`), the RDS strip's left margin (`+ 12`) and its two lines'
+  offsets (`+ 2`, `+ 24`) turned into `#ifndef` constants with those
+  values (HDR_MODO_PAD, HDR_BANDA_PAD, UI_TOP_RDS_X1_M,
+  UI_TOP_RDS_NOM_DY, UI_TOP_RDS_MAR_DY); and the frequency's left edge
+  (`x = 10`), the air before "kHz" (`+ 6`) and the touch zone's tail
+  after it (`+ 12`) as HDR_FREQ_X, HDR_UNIT_GAP, HDR_FREQ_HIT_M.
+  **Verified three ways, after each of the two edits: the
+  DEEPSDR's 800 x 480 main screen identical to the pixel (`make
+  ref800-guarda` before, `ref800-comprueba` after), and the object's
+  disassembly identical on the host and for the Cortex-M4 (2417
+  lines).** `deepsdr-ui/gfx2/` copies synced.
 
 - `deepsdr-ui/tools/gen_temas.py` — 21/11/2026, for the port's English:
   it read k_temas[]'s `T("es", "en")` and kept only the Spanish; it now
