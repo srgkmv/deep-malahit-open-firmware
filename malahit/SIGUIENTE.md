@@ -4,17 +4,37 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 22/11/2026, night: step 47 (WEFAX) committed and pushed, flashing
+## START HERE — 22/11/2026, night: steps 46-47 IN FLASH (5813452), pushed
 
-**In flash: `766d0a9`** (step 45). Step 46 (DSC) committed and pushed,
-not flashed then (the owner's choice); **step 47 (WEFAX) committed**
-(`PORTING.md` 47): upstream's wefax.c on a chart drawn in the panel's
-memory as upstream does, scaled proportionally (the owner's two choices),
-a third mode family, Images; the line rate in record v4 byte 36. On the
-air against the HackRF at 7880 kHz: straight charts at SNR 25 and 15, a
-transmitter 80 ppm fast corrected.
+**In flash: `5813452`** (steps 46 DSC and 47 WEFAX, `PORTING.md` 46-47,
+on top of `766d0a9`) - `build_flash/bringup.bin`, 255 408 bytes, sha256
+`e4423f39…`, SELFTEST 0, clean build; written over DFU without `:leave`,
+read back identical byte for byte, left with the 4-byte `:leave` upload.
+**Cold boot**, from the power button: record v4 (slot 1, seq 260), WEFAX
+at 7878.10 kHz from the FRAM, the memories, screen and audio 2367 ms
+after SysTick, SAI DMA err 0. **From flash, on the air**: a chart at SNR
+15 with the transmitter 80 ppm fast was received and drawn, but SLANTED
+- 289 ppm measured, where the same file from RAM had measured 98 and
+come out straight. Upstream's slant estimate from the phasing signal
+spreads at that SNR (host, six seeds: 65-120 ppm for 80); 289 is outside
+that - open, not chased (real DWD charts are usually strong).
 
-**The radio's state**: 7878.10 kHz (band FAX 8), WEFAX, from RAM.
+The image is 255 408 bytes: sectors 0-1 of bank 1 hold 262 144, so the
+next step writes into sector 2 (what is left there is factory code; the
+backup is in `Deep-Malahit/backups/`).
+
+**The owner's plan for when the RAM image no longer fits** (22/11/2026):
+he will bridge pins 1 and 3 of the regulator U3 (and may solder JP3), so
+the rail stays up whatever the firmware does, and flash can then be
+written over SWD without the power latch getting in the way; while the
+radio is open, he switches it off by unplugging the battery. Until then,
+SSTV and HELL go in as upstream has them, from RAM while they fit.
+
+Also seen this session: 14 touches at exactly (479, 0) - the clock
+corner - in ~40 minutes that nobody made (one in the DSC session too):
+the touch controller, with the radio open. Watch for it.
+
+**The radio's state**: 7878.10 kHz (band FAX 8), WEFAX, from flash.
 
 **The bench for WEFAX**: `tools/hackrf_gen.py wefax --snr N --lines 200
 --phasing 30 [--ppm P] --out w.iq` (~4 MB a second: 150 s is 600 MB),
