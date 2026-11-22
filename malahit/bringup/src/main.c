@@ -59,6 +59,9 @@
 #include "rds_pi.h"       /* ../../User - upstream: networks by their PI */
 #include "estereo.h"      /* src/ - FM stereo, this port's own */
 #include "cw.h"           /* ../../User - upstream: the Morse decoder */
+#include "rtty.h"         /* ../../User - upstream: the RTTY decoder */
+#include "rtty_auto.h"    /* ../../User */
+#include "config.h"       /* ../../User - CONFIG_RTTY_SHIFT_MIN/MAX_HZ */
 #include "nb.h"           /* ../../User - upstream: the blanker, cw_report() */
 #include "digi.h"         /* src/ - the decoders' screen: scope and text */
 #include "bandas_tabla.h" /* GENERATED from ../../User/main.c: the steps */
@@ -5921,7 +5924,9 @@ static int settings_same(const settings_t *a, const settings_t *b)
         && a->aj_sql == b->aj_sql && a->aj_nr == b->aj_nr
         && a->aj_suav == b->aj_suav && a->aj_wfm_bw == b->aj_wfm_bw
         && a->aj_idioma == b->aj_idioma && a->aj_brillo == b->aj_brillo
-        && a->aj_estereo == b->aj_estereo && a->cw_bw == b->cw_bw;
+        && a->aj_estereo == b->aj_estereo && a->cw_bw == b->cw_bw
+        && a->rtty_shift == b->rtty_shift && a->rtty_baud == b->rtty_baud
+        && a->rtty_auto == b->rtty_auto && a->cw_aprende == b->cw_aprende;
 }
 
 static void settings_now(settings_t *out)
@@ -5934,6 +5939,10 @@ static void settings_now(settings_t *out)
     out->has_rf   = 1U;
     out->mode     = (uint8_t)radio_mode_get();     /* CW is 6: menus.h */
     out->cw_bw    = (uint8_t)((demod_am_get_cw_bw_hz() + 5.0f) / 10.0f);
+    out->rtty_shift = (uint8_t)((rtty_get_shift_hz() + 2.5f) / 5.0f);
+    out->rtty_baud  = (uint8_t)(digi_rtty_baud_idx() + 1U);
+    out->rtty_auto  = (uint8_t)(rtty_auto_get() ? 2U : 1U);
+    out->cw_aprende = (uint8_t)(cw_get_aprende() ? 2U : 1U);
     out->has_mode = 1U;
     menu_ajustes_get(out);              /* the settings screen's values */
 }
@@ -6213,11 +6222,15 @@ static void rds_marq_poll(void)
  * NR, cw_process_chunks()) once cw_get_enabled() says so; demod_am_init()
  * already set its tone and its band-pass to CONFIG_CW_PITCH_HZ, 700 Hz.
  *
- * THE TEXT GOES TO THE CONSOLE for now, the way upstream's cw_poll()
- * also logs it ("cw: ..."): the screen's text panel is the next step.
+ * THE TEXT goes to the screen's panel (src/digi.c) and to the console,
+ * the way upstream's cw_poll()/rtty_poll() also log it ("cw: ...").
  * Upstream logs a line when it fills or at a line break, and Morse has
  * no line breaks - so a pause of CW_LINEA_MS flushes it too, or a slow
  * station would sit unseen in the buffer.
+ *
+ * RTTY since step 43, the same way: upstream's rtty.c on the SAME branch
+ * of demod_am.c, RTTY-L on LSB and RTTY-U on USB with the tones swapped
+ * (demod.c, demod_rtty()), its text through the same panel.
  */
 #define CW_LINEA_MS   2000U
 
@@ -6229,25 +6242,71 @@ static void cw_linea_suelta(void)
 {
     if (s_cw_n == 0U) { return; }
     s_cw_lin[s_cw_n] = '\0';
-    console_printf("  cw: %s\n", s_cw_lin);
+    console_printf("  %s: %s\n", rtty_get_enabled() ? "rtty" : "cw", s_cw_lin);
     s_cw_n = 0U;
 }
 
-static void cw_modo(uint8_t on)
+/* A decoded character: the panel, and the console's line. */
+static void texto_char(char c)
 {
-    uint8_t era = cw_get_enabled();
+    s_cw_t = board_millis();
+    digi_texto(c);
+    if (c == '\r' || c == '\n') { cw_linea_suelta(); return; }
+    if (c < ' ' || c > '~') { c = '.'; }
+    s_cw_lin[s_cw_n++] = c;
+    if (s_cw_n >= (uint8_t)(sizeof s_cw_lin - 1U)) { cw_linea_suelta(); }
+}
 
-    demod_cw(on);
-    if (on == era) { return; }
+static uint8_t s_rtty_var;              /* 0 off, 1 RTTY-L, 2 RTTY-U */
+
+/* The demodulator under a mode entry (menus.h). */
+static int modo_demod(int mode)
+{
+    if (mode == RADIO_MODE_CW || mode == RADIO_MODE_RTTY_U) { return (int)DEMOD_MODE_USB; }
+    if (mode == RADIO_MODE_RTTY_L)                          { return (int)DEMOD_MODE_LSB; }
+    return mode;
+}
+
+/*
+ * The text decoders an entry wants, after demod_mode() has set its
+ * demodulator - upstream's rule: choosing any other entry switches them
+ * off without asking (menu_mode_preset_callback()). And the screen: in a
+ * text mode the spectrum gives its place to the scope and the panel
+ * (src/digi.c); from one text mode to another the panel starts empty.
+ * Under a menu, its close repaints.
+ */
+static void texto_modo(int mode)
+{
+    uint8_t cw = (uint8_t)(mode == RADIO_MODE_CW);
+    uint8_t rv = (uint8_t)((mode == RADIO_MODE_RTTY_L) ? 1U
+                         : (mode == RADIO_MODE_RTTY_U) ? 2U : 0U);
+    uint8_t era_cw = cw_get_enabled(), era_rv = s_rtty_var;
+
+    if (cw == era_cw && rv == era_rv) { return; }
     cw_linea_suelta();
-    s_cw_n = 0U;
-    /* The screen: upstream's, the spectrum gives its place to the scope
-     * and the text (src/digi.c). Under a menu, its close repaints. */
-    digi_pon(on);
+    demod_cw(cw);
+    demod_rtty(rv);
+    s_rtty_var = rv;
+    digi_pon((uint8_t)(cw || rv));
     if (menu_open_id() == MENU_NONE) { radio_screen_restore(); }
-    console_printf("  CW %s - tone %u Hz, band-pass %u Hz\n", on ? "on" : "off",
-                   (uint32_t)(cw_get_pitch_hz() + 0.5f),
-                   (uint32_t)(demod_am_get_cw_bw_hz() + 0.5f));
+    if (cw != era_cw) {
+        console_printf("  CW %s - tone %u Hz, band-pass %u Hz\n", cw ? "on" : "off",
+                       (uint32_t)(cw_get_pitch_hz() + 0.5f),
+                       (uint32_t)(demod_am_get_cw_bw_hz() + 0.5f));
+    }
+    if (rv != era_rv) {
+        if (rv) {
+            console_printf("  RTTY on, %s - mark %u Hz, space %u Hz, %u.%02u Bd, auto %s\n",
+                           rv == 1U ? "LSB" : "USB",
+                           (uint32_t)(rtty_get_mark_hz() + 0.5f),
+                           (uint32_t)(rtty_get_space_hz() + 0.5f),
+                           (uint32_t)rtty_get_baud(),
+                           (uint32_t)(rtty_get_baud() * 100.0f + 0.5f) % 100U,
+                           rtty_auto_get() ? "on" : "off");
+        } else {
+            console_printf("  RTTY off\n");
+        }
+    }
 }
 
 /*
@@ -6278,24 +6337,52 @@ __attribute__((noinline, used)) void cw_report(void)
                    (uint32_t)demod_am_get_agc_profile());
 }
 
+/* What rtty_auto.c and rtty.c's inversion detector decided, on the
+ * console as it happens - upstream's own lines go to a debug UART this
+ * port does not build. */
+static void rtty_auto_log(void)
+{
+    static uint32_t m0, s0, b0;
+    static uint8_t  v0 = 0xFFU;
+    uint32_t m = (uint32_t)(rtty_get_mark_hz() + 0.5f);
+    uint32_t sp = (uint32_t)(rtty_get_space_hz() + 0.5f);
+    uint32_t b = (uint32_t)(rtty_get_baud() * 100.0f + 0.5f);
+    uint8_t  v = rtty_get_vuelta_auto();
+
+    if (m == m0 && sp == s0 && b == b0 && v == v0) { return; }
+    console_printf("  rtty now: mark %u Hz, space %u Hz, %u.%02u Bd%s (health %u %%)\n",
+                   m, sp, b / 100U, b % 100U, v ? ", flipped by the detector" : "",
+                   (uint32_t)rtty_salud_pc());
+    m0 = m; s0 = sp; b0 = b; v0 = v;
+}
+
 static void cw_poll(void)
 {
     char c;
+    uint8_t hay = 0U;
 
-    if (!cw_get_enabled()) { return; }
-    while (cw_get_char(&c)) {
-        s_cw_t = board_millis();
-        digi_texto(c);
-        if (c == '\r' || c == '\n') { cw_linea_suelta(); continue; }
-        s_cw_lin[s_cw_n++] = c;
-        if (s_cw_n >= (uint8_t)(sizeof s_cw_lin - 1U)) { cw_linea_suelta(); }
+    if (cw_get_enabled()) {
+        while (cw_get_char(&c)) { hay = 1U; texto_char(c); }
     }
+    if (rtty_get_enabled()) {
+        while (rtty_get_char(&c)) { hay = 1U; texto_char(c); }
+        rtty_auto_poll();               /* upstream's: shift, baud and polarity by itself */
+        rtty_auto_log();
+    }
+    (void)hay;
     if (s_cw_n > 0U && (board_millis() - s_cw_t) >= CW_LINEA_MS) {
         cw_linea_suelta();
-        console_printf("  cw: -- %u wpm, tone at %u Hz, fit error %u/100\n",
-                       (uint32_t)(cw_get_wpm() + 0.5f),
-                       (uint32_t)(cw_get_detect_hz() + 0.5f),
-                       (uint32_t)(100.0f * cw_get_quality() + 0.5f));
+        if (cw_get_enabled()) {
+            console_printf("  cw: -- %u wpm, tone at %u Hz, fit error %u/100\n",
+                           (uint32_t)(cw_get_wpm() + 0.5f),
+                           (uint32_t)(cw_get_detect_hz() + 0.5f),
+                           (uint32_t)(100.0f * cw_get_quality() + 0.5f));
+        } else {
+            console_printf("  rtty: -- %u Hz shift, %u Bd, %u %% of frames whole\n",
+                           (uint32_t)(rtty_get_shift_hz() + 0.5f),
+                           (uint32_t)(rtty_get_baud() + 0.5f),
+                           (uint32_t)rtty_salud_pc());
+        }
     }
 }
 
@@ -6841,7 +6928,8 @@ static void ui_wf_push(const float *db, uint32_t bins)
  * action bar all live in this file. See src/menus.h.
  */
 static const char *const k_mode_names[] = { "AM", "USB", "LSB", "NFM",
-                                            "WFM", "SAM", "CW" };
+                                            "WFM", "SAM", "CW", "RTTY-L",
+                                            "RTTY-U" };
 _Static_assert(sizeof k_mode_names / sizeof k_mode_names[0]
                == (size_t)RADIO_MODE_LAST + 1U,
                "a name for every mode, upstream's and the decoders' (menus.h)");
@@ -7031,12 +7119,14 @@ int radio_mode_get(void)
     int m = (int)demod_am_get_mode();
 
     if (m == (int)DEMOD_MODE_USB && cw_get_enabled()) { return RADIO_MODE_CW; }
+    if (m == (int)DEMOD_MODE_LSB && s_rtty_var == 1U) { return RADIO_MODE_RTTY_L; }
+    if (m == (int)DEMOD_MODE_USB && s_rtty_var == 2U) { return RADIO_MODE_RTTY_U; }
     return m;
 }
 
 void radio_mode_set(int mode)
 {
-    int dm = (mode == RADIO_MODE_CW) ? (int)DEMOD_MODE_USB : mode;
+    int dm = modo_demod(mode);
 
     if (mode < 0 || mode > RADIO_MODE_LAST) {
         console_printf("  mode %d refused\n", mode);
@@ -7049,9 +7139,7 @@ void radio_mode_set(int mode)
      */
     if (!demod_path_get()) { demod_path(1); }
     (void)demod_mode(dm);
-    /* Upstream's rule: choosing any other entry switches the decoder
-     * off without asking (menu_mode_preset_callback()). */
-    cw_modo((uint8_t)(mode == RADIO_MODE_CW));
+    texto_modo(mode);                   /* the text decoders, and the screen */
 
     /* Into or out of WFM: the same dial, the tuner moved under it. */
     {
@@ -8849,7 +8937,7 @@ int main(void)
     demod_init();
     grab_init();
     __asm__ volatile ("" :: "r"(ui_tap), "r"(ui_swipe), "r"(ui_hold));   /* swd-call's, see ui_tap() */
-    __asm__ volatile ("" :: "r"(cw_report));                             /* and the CW bench's */
+    __asm__ volatile ("" :: "r"(cw_report), "r"(digi_report));           /* and the decoders' bench */
 
     /*
      * UPSTREAM'S DEMODULATOR IS WHAT PLAYS, from step 9 on: the mode
@@ -8864,17 +8952,35 @@ int main(void)
      * (s_lo_off, set from the record before the boot tune). */
     if (s_boot_have && s_boot_set.has_mode
         && s_boot_set.mode <= (uint8_t)RADIO_MODE_LAST) {
-        (void)demod_mode(s_boot_set.mode == (uint8_t)RADIO_MODE_CW
-                         ? (int)DEMOD_MODE_USB : (int)s_boot_set.mode);
+        (void)demod_mode(modo_demod((int)s_boot_set.mode));
     }
     /* CW's band-pass, from byte 31 of the record (tens of hertz, 0 = not
      * stored), and the decoder itself if the session was in CW. */
     if (s_boot_have && s_boot_set.cw_bw >= 10U && s_boot_set.cw_bw <= 100U) {
         demod_am_set_cw_bw_hz(10.0f * (float)s_boot_set.cw_bw);
     }
+    /* RTTY's shift, speed and automatic, and CW's learning: bytes 32-35,
+     * before the decoders come on below (nothing runs them yet). The
+     * shift within config.h's own limits, as upstream's ex_rec(). */
+    if (s_boot_have && s_boot_set.rtty_shift != 0U) {
+        float sh = 5.0f * (float)s_boot_set.rtty_shift;
+
+        if (sh >= CONFIG_RTTY_SHIFT_MIN_HZ && sh <= CONFIG_RTTY_SHIFT_MAX_HZ) {
+            rtty_set_shift_hz(sh);
+        }
+    }
+    if (s_boot_have && s_boot_set.rtty_baud >= 1U && s_boot_set.rtty_baud <= 4U) {
+        digi_rtty_baud_pon((uint8_t)(s_boot_set.rtty_baud - 1U));
+    }
+    if (s_boot_have && s_boot_set.rtty_auto != 0U) {
+        rtty_auto_set((uint8_t)(s_boot_set.rtty_auto == 2U));
+    }
+    if (s_boot_have && s_boot_set.cw_aprende != 0U) {
+        cw_set_aprende((uint8_t)(s_boot_set.cw_aprende == 2U));
+    }
     if (s_boot_have && s_boot_set.has_mode
-        && s_boot_set.mode == (uint8_t)RADIO_MODE_CW) {
-        cw_modo(1U);
+        && s_boot_set.mode <= (uint8_t)RADIO_MODE_LAST) {
+        texto_modo((int)s_boot_set.mode);   /* CW or RTTY: on, and the screen */
     }
     rds_modo();                         /* a WFM session comes back with RDS on */
     console_printf("Mode      : %s%s\n", radio_mode_name(radio_mode_get()),
@@ -9054,7 +9160,7 @@ int main(void)
         retune_test_step();
         rds_marq_poll();                /* the header's RDS strip, in WFM */
         estereo_ui_poll();              /* and "WFM ST" in the mode chip */
-        cw_poll();                      /* the Morse decoder's text, in CW */
+        cw_poll();                      /* the text decoders' text, CW and RTTY */
 
         /*
          * THE PRESS, which is upstream's gesture and upstream's

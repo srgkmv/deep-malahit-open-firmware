@@ -66,6 +66,8 @@ static const struct { int mode; uint8_t fam; const char *n; texto_t d; } k_modos
     { DEMOD_MODE_NFM, FAM_ANA, "NFM", T("FM estrecha", "Narrow FM") },
     { DEMOD_MODE_WFM, FAM_ANA, "WFM", T("FM ancha", "Wide FM") },
     { RADIO_MODE_CW,  FAM_DIG, "CW",  T("Telegrafía Morse", "Morse telegraphy") },
+    { RADIO_MODE_RTTY_L, FAM_DIG, "RTTY-L", T("Teletipo en LSB", "Teletype on LSB") },
+    { RADIO_MODE_RTTY_U, FAM_DIG, "RTTY-U", T("Teletipo en USB", "Teletype on USB") },
 };
 #define N_MODOS ((uint8_t)(sizeof k_modos / sizeof k_modos[0]))
 

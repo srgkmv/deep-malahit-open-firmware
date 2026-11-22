@@ -110,7 +110,9 @@ uint32_t    menu_nr_strength(void);
  * know a number refuses it and boots on AM (main.c), which the owner's
  * rule for the FRAM allows. */
 #define RADIO_MODE_CW       6           /* DEMOD_MODE_USB + cw.c */
-#define RADIO_MODE_LAST     RADIO_MODE_CW
+#define RADIO_MODE_RTTY_L   7           /* DEMOD_MODE_LSB + rtty.c, config.h's tones */
+#define RADIO_MODE_RTTY_U   8           /* DEMOD_MODE_USB + rtty.c, the tones swapped */
+#define RADIO_MODE_LAST     RADIO_MODE_RTTY_U
 void        radio_mode_set(int mode);
 int         radio_mode_get(void);
 const char *radio_mode_name(int mode);

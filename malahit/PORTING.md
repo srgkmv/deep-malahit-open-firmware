@@ -1395,6 +1395,75 @@ Each step should end with something visible on the radio.
    (grab.py): text wrapping across rows, Clear, USB back to the spectrum
    and the waterfall, Digital > CW from the mode screen by taps. Cost:
    the frame 40.6 ms (24 fps), AXI 427 of 512 kB.
+43. **RTTY, on the same screen.** *22/11/2026, from RAM, against the
+   HackRF* - upstream's rtty.c and rtty_auto.c (its automatic shift,
+   speed and polarity), stubs gone. Upstream's two entries, numbered on:
+   **RTTY-L** (7, LSB, config.h's mark 2525 / space 2075) and **RTTY-U**
+   (8, USB, the two swapped - USB hears the same radio tones mirrored),
+   switched under demod.c's flag (`demod_rtty()`, and `demod_quieto()` for
+   any decoder change from the display loop). One deviation: the shift
+   the person chose survives entering the mode (upstream sets config.h's
+   pair and drops it). src/digi.c's RTTY header is upstream's - Borrar |
+   shift | speed | Auto, the bar cut to 100 of 174 px to make room
+   (`DIGI_RTTY_BARRA_W`, upstream's 170 of 300), no chip - and the scope
+   shows mark and space; each button acts on its press (upstream's 170/
+   425/450/850 Hz and 45.45/50/75/100 Bd round, Auto on/off). CW got
+   upstream's second button, **Aprende / Learn**. In the FRAM, record v4
+   bytes 32-35: the shift in 5 Hz, the speed's index, Auto, Learn.
+   `tools/hackrf_gen.py rtty` (ITA2 from ITU-T S.2 by hand, continuous-
+   phase FSK, 1.5 stop bits, the shift re-sent after a space).
+   **On the air at 14.085 MHz** (dial 14.0873 LSB, the HackRF 125 Hz up
+   for the two references): 50 Bd / 450 Hz clean at SNR 5 and 10, at 3
+   one figures-shift lost ("1234567890" as "QWERTYUIOP"); 45.45 Bd / 170
+   Hz set by hand, clean at 12 but for a few letters. Noise prints
+   characters before and after a transmission - upstream's RTTY has no
+   squelch. **Four things about upstream's RTTY the bench showed, and the
+   owner had three of them fixed in User/** (reproduced first on the host
+   with the new `sim/rtty_auto_aire.c` - any f32 file, any starting point -
+   on hackrf_gen.py's `--audio` files: a normal and a reversed station at
+   50/450, 45.45/170 starting from 50/450, a minute of noise):
+   1. **RTTY-L's polarity was the reverse of the convention** (mark the
+      HIGHER radio frequency): config.h said mark 2525 / space 2075 under
+      two comments of its own saying the opposite ("marca por debajo de
+      espacio", "marca + 450"). Now 2075 / 2525. A normal station decodes
+      at once; a reversed one still gets flipped by rtty.c's detector -
+      but that flip no longer writes the person's setting
+      (`rtty_set_station_inverted()`): it is the station's (`s_inv_auto`),
+      thrown away on entering the mode and when rtty_auto.c has seen no
+      tone pair for three windows (`rtty_olvida_vuelta()`), so the NEXT
+      station starts on the convention. On the DEEPSDR a stored "inverted"
+      that the old detector wrote is now the wrong way round - the
+      detector flips it back per station.
+   2. **Auto no longer touches anything without a signal**: a tone pair
+      (dos_picos()) in one of the last three windows, or nothing moves. A
+      minute of noise used to walk the speed from 50 to 45.45; now nothing,
+      and a speed set by hand stays.
+   3. **Auto reaches 45.45/170 from 50/450** - it never did. Three causes:
+      the tones and the speed were only looked at when the decoder was
+      UNHEALTHY, and a wrong shift or a 10 % wrong speed still closes the
+      frames (now, healthy or not, a measured pair or a measured speed
+      that points elsewhere two windows running is applied); "coherent"
+      was "within 8 %", which took a 46.3 Bd measurement for 50 (now the
+      nearest in the list must be the one set); and a failed speed went to
+      the NEXT in the list rather than to the one measured, with the
+      search starting from index 0 whatever was set. And the run lengths
+      measured with the tones in the wrong place - the decision flickering,
+      "112 Bd" - are thrown away when the tones move, as upstream already
+      did on a speed change. Host: 45.45/170 at SNR 15 decodes at 40 s,
+      clean after; the reversed station flips in two windows; the normal
+      one never flips; noise changes nothing.
+   4. deepsdr-ui's `make rttyaire` rule lacked rtty_auto.c and did not
+      link - fixed in local.mk on the way. `make rttysolo` (upstream's own
+      auto bench) needs a DWD recording this clone does not have.
+   **On the air, after the fixes**: from a stored 100 Bd a normal 50/450
+   station pulled it to 50 and the tones 62 Hz down onto the signal (the
+   two references), 97 % frames; a reversed one flipped and decoded; 45.45/
+   170 found from 50/450 and decoded repeat after repeat; 25-30 s of
+   silence before and after moved nothing. The console logs each decision
+   ("rtty now: mark ... Bd ... flipped by the detector").
+   `digi_report` (swd-call) prints RTTY's settings and the scope's two
+   peaks - how the 50 Hz left between the two references was measured.
+   CW re-checked on the air after the change. AXI 439 of 512 kB.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

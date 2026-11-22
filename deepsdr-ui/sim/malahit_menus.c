@@ -72,6 +72,8 @@ static void modos_fam(uint8_t fam, const char *ppm)
         { 0, "NFM", "FM estrecha",        "Narrow FM" },
         { 0, "WFM", "FM ancha",           "Wide FM" },
         { 1, "CW",  "Telegrafía Morse",   "Morse telegraphy" },
+        { 1, "RTTY-L", "Teletipo en LSB", "Teletype on LSB" },
+        { 1, "RTTY-U", "Teletipo en USB", "Teletype on USB" },
     };
     ui_cfg_state_t st;
     uint8_t i;
@@ -588,7 +590,8 @@ static uint16_t color_tema(uint32_t hex)
                       (uint8_t)((hex >> 8) & 0xFFU), (uint8_t)(hex & 0xFFU));
 }
 
-static void digi_cw(const char *nombre, const char *chip, const char *btn)
+static void digi_cw(const char *nombre, const char *chip, const char *btn,
+                    const char *btn2, uint8_t rtty)
 {
     static const char *const k_qso[UDG_ROWS] = {
         "CQ CQ DE EA4XYZ EA4XYZ K",
@@ -633,14 +636,36 @@ static void digi_cw(const char *nombre, const char *chip, const char *btn)
         cabe("renglon", k_qso[i], &font_ui_10b, GFX2_W - 2 * UDG_PAD_X);
     }
     st.chip = chip;
-    st.enganchado = 1U;
+    st.enganchado = (uint8_t)(chip != 0);
     st.btn = btn;
+    st.btn2 = btn2;
+    if (rtty) {
+        /* src/digi.c's RTTY header: the bar short, shift, speed, Auto */
+        st.barra_w = DIGI_RTTY_BARRA_W;
+        st.btn3 = "850 Hz";
+        st.btn4 = "45.45 Bd";
+        st.btn5 = "Auto";
+        st.btn5_press = 1U;
+        printf("  digi rtty: btn3 x %d w %d, btn4 x %d w %d, btn5 x %d w %d\n",
+               ui_digi_btn3_x_dbg(&st), ui_digi_btn3_w_dbg(&st),
+               ui_digi_btn4_x_dbg(&st), ui_digi_btn4_w_dbg(&st),
+               ui_digi_btn5_x_dbg(&st), ui_digi_btn5_w_dbg(&st));
+        if (ui_digi_btn3_w_dbg(&st) <= 0 || ui_digi_btn4_w_dbg(&st) <= 0
+            || ui_digi_btn5_w_dbg(&st) <= 0) {
+            printf("  NO CABE un boton del RTTY\n");
+            s_fallos++;
+        }
+        cabe("boton3", st.btn3, &font_ui_10b, ui_digi_btn3_w_dbg(&st) - 8);
+        cabe("boton4", st.btn4, &font_ui_10b, ui_digi_btn4_w_dbg(&st) - 8);
+        cabe("boton5", st.btn5, &font_ui_10b, ui_digi_btn5_w_dbg(&st) - 8);
+    }
+    if (btn2) { cabe("boton2", btn2, &font_ui_10b, UDG_BTN2_W - 8); }
     ui_digi_draw_texto(&st);
     printf("  digi: osciloscopio y=%d..%d, panel y=%d..%d, chapa \"%s\"\n",
            DIGI_SCOPE_Y, DIGI_SCOPE_Y + DIGI_SCOPE_H - 1,
            DIGI_PANEL_Y, DIGI_PANEL_Y + DIGI_PANEL_H - 1,
-           ui_digi_chip_visible(&st));
-    if (strcmp(ui_digi_chip_visible(&st), chip) != 0) {
+           chip ? ui_digi_chip_visible(&st) : "-");
+    if (chip && strcmp(ui_digi_chip_visible(&st), chip) != 0) {
         printf("  SE CORTA la chapa \"%s\"\n", chip);
         s_fallos++;
     }
@@ -650,8 +675,9 @@ static void digi_cw(const char *nombre, const char *chip, const char *btn)
 int main(void)
 {
     printf("menus del Malahit, 480 x 320\n");
-    digi_cw("cw", "20 ppm 14 dB", "Borrar");
-    digi_cw("cw_en", "20 wpm 14 dB", "Clear");
+    digi_cw("cw", "20 ppm 14 dB", "Borrar", "Aprende", 0U);
+    digi_cw("cw_en", "20 wpm 14 dB", "Clear", "Learn", 0U);
+    digi_cw("rtty", 0, "Borrar", 0, 1U);
     cabecera("cab_wfm", "104.300,00", "WFM", "FM", "RADIO 7",
              "Ahora suena: The Beatles - Here Comes The Sun     ");
     cabecera("cab_hf", "9.600,00", "AM", "31 m", 0, 0);

@@ -63,6 +63,15 @@ int  demod_mode(int mode);
  * the block interrupt preempts the caller. */
 void demod_cw(int on);
 
+/* RTTY: 0 off, 1 RTTY-L's polarity (config.h's mark and space), 2
+ * RTTY-U's (swapped) - upstream's RTTY_VARIANT_NORMAL / _INVERTED. */
+void demod_rtty(int variante);
+
+/* Hold the block interrupt off (1) while a decoder is reconfigured from
+ * the display loop, and let it run again (0): a block that lands plays
+ * silence and is counted, as during a mode change. Microseconds. */
+void demod_quieto(int on);
+
 /* The digital mix in hertz: tuned frequency minus the LO, upstream's
  * definition (demod_am.h). The dial sits AM_IF_HZ above the LO, so
  * +12000 - the sign is a prediction from the I/Q order, and this is the

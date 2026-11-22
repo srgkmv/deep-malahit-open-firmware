@@ -13,9 +13,15 @@
  *                       spectrum_draw() across the full width, 0 to
  *                       Nyquist (6 kHz), and the tone's two lines
  *
- * What this port adds is only the cut: one decoder so far, so no
- * dispatch on which one is running. The next one (RTTY) brings its own
- * chip and its lines into the same three places.
+ * What this port adds is only the cut to the decoders grafted so far,
+ * CW (step 42) and RTTY (step 43), each with upstream's header:
+ *
+ *   CW     Borrar | Aprende                     | "20 ppm 14 dB" + dot
+ *   RTTY   Borrar |      | 450 Hz | 50 Bd | Auto
+ *
+ * and upstream's tap on each (rtty_shift_siguiente(), rtty_baud_
+ * siguiente(), the Auto toggle, cw_set_aprende()) - on the press here,
+ * with the button drawn down for that frame, as Borrar.
  */
 #include <string.h>
 #include <math.h>
@@ -27,7 +33,10 @@
 #include "spectrum.h"      /* ../../User - spectrum_draw() */
 #include "ui_digi.h"       /* ../../User - the panel */
 #include "rtty_scope.h"    /* ../../User - the scope's audio spectrum */
-#include "cw.h"            /* ../../User - the decoder */
+#include "cw.h"            /* ../../User - the decoders */
+#include "rtty.h"
+#include "rtty_auto.h"
+#include "demod.h"         /* demod_quieto(): a decoder reconfigured, no block through it */
 #include "idioma.h"        /* ../../User - tr() */
 
 /*
@@ -54,6 +63,34 @@ static char            s_chip[24];
 static char            s_chip_visto[24];
 static uint8_t         s_eng_visto = 0xFFU;
 static float           s_db[RTTY_SCOPE_BINS];
+static char            s_shift_txt[12];
+static char            s_baud_txt[12];
+
+/* upstream's k_rtty_shift_values[] and k_rtty_baud_values[]/_labels[] */
+static const float      k_shift[4] = { 170.0f, 425.0f, 450.0f, 850.0f };
+static const float      k_baud[4]  = { 45.45f, 50.0f, 75.0f, 100.0f };
+static const char *const k_baud_txt[4] = { "45.45", "50", "75", "100" };
+
+uint8_t digi_rtty_baud_idx(void)
+{
+    uint8_t i, best = 1U;
+    float   d, dbest = 1.0e9f, b = rtty_get_baud();
+
+    for (i = 0U; i < 4U; i++) {
+        d = k_baud[i] - b;
+        if (d < 0.0f) { d = -d; }
+        if (d < dbest) { dbest = d; best = i; }
+    }
+    return best;
+}
+
+void digi_rtty_baud_pon(uint8_t idx)
+{
+    if (idx >= 4U) { return; }
+    demod_quieto(1);
+    rtty_set_baud(k_baud[idx]);
+    demod_quieto(0);
+}
 
 /* upstream's color_tema(): a theme colour as gfx.c's RGB565 */
 static uint16_t color_tema(uint32_t hex)
@@ -131,6 +168,7 @@ static void sincroniza(void)
 {
     uint8_t  r, i = 0U;
     uint32_t w = (uint32_t)(cw_get_wpm() + 0.5f);
+
     const char *u = tr("ppm", "wpm");
     float    lo = cw_get_floor(), hi = cw_get_peak();
     uint32_t db = 0U;
@@ -143,6 +181,37 @@ static void sincroniza(void)
     for (r = 0U; r < (uint8_t)UDG_ROWS; r++) {
         s_st.fila[r] = (s_fila[r][0] != '\0') ? s_fila[r] : 0;
     }
+
+    if (rtty_get_enabled()) {
+        /* upstream's RTTY header: the bar shortened to make room for the
+         * shift, then the speed, then Auto - and no chip. */
+        uint32_t sh = (uint32_t)(rtty_get_shift_hz() + 0.5f);
+        const char *b = k_baud_txt[digi_rtty_baud_idx()];
+
+        i = 0U;
+        if (sh >= 1000U) { s_shift_txt[i++] = (char)('0' + sh / 1000U); }
+        if (sh >= 100U)  { s_shift_txt[i++] = (char)('0' + (sh / 100U) % 10U); }
+        s_shift_txt[i++] = (char)('0' + (sh / 10U) % 10U);
+        s_shift_txt[i++] = (char)('0' + sh % 10U);
+        s_shift_txt[i++] = ' '; s_shift_txt[i++] = 'H'; s_shift_txt[i++] = 'z';
+        s_shift_txt[i] = '\0';
+        i = 0U;
+        while (*b != '\0') { s_baud_txt[i++] = *b++; }
+        s_baud_txt[i++] = ' '; s_baud_txt[i++] = 'B'; s_baud_txt[i++] = 'd';
+        s_baud_txt[i] = '\0';
+        s_st.barra_w    = (int16_t)DIGI_RTTY_BARRA_W;
+        s_st.btn3       = s_shift_txt;
+        s_st.btn4       = s_baud_txt;
+        s_st.btn5       = tr("Auto", "Auto");
+        s_st.btn5_press = rtty_auto_get();
+        s_chip[0] = '\0';
+        s_st.chip = 0;
+        s_st.enganchado = 0U;
+        return;
+    }
+
+    s_st.btn2       = tr("Aprende", "Learn");
+    s_st.btn2_press = cw_get_aprende();
 
     /* "20 ppm 14 dB": the speed, and the margin between cw.c's two
      * means in dB - not the signal's SNR, what the threshold has to work
@@ -186,7 +255,15 @@ static void osciloscopio(void)
     }
     spectrum_draw(s_db, RTTY_SCOPE_BINS, 0, DIGI_SCOPE_Y, GFX2_W, DIGI_SCOPE_H,
                   DIGI_SCOPE_FLOOR, 0.0f, 0, 0U, 0, 0);
-    if (nyq > 0.0f) {
+    if (nyq > 0.0f && rtty_get_enabled()) {
+        /* RTTY: mark in the accent, space in the warning colour */
+        uint16_t a = (uint16_t)(rtty_get_mark_hz()  / nyq * (float)GFX2_W);
+        uint16_t b = (uint16_t)(rtty_get_space_hz() / nyq * (float)GFX2_W);
+
+        if (a < GFX2_W) { gfx_vline(a, DIGI_SCOPE_Y, DIGI_SCOPE_H, color_tema(PAL_ACCENT)); }
+        if (b < GFX2_W) { gfx_vline(b, DIGI_SCOPE_Y, DIGI_SCOPE_H, color_tema(PAL_WARN)); }
+    } else if (nyq > 0.0f) {
+        /* CW: the pitch set, muted, and the tone locked, in the accent */
         uint16_t a = (uint16_t)(cw_get_pitch_hz()  / nyq * (float)GFX2_W);
         uint16_t b = (uint16_t)(cw_get_detect_hz() / nyq * (float)GFX2_W);
 
@@ -235,13 +312,72 @@ uint8_t digi_toque(uint16_t x, uint16_t y, uint8_t nuevo)
 {
     if (!s_on) { return 0U; }
     if (y < DIGI_SCOPE_Y || y >= DIGI_PANEL_Y + DIGI_PANEL_H) { return 0U; }
-    if (nuevo && ui_digi_boton_hit(&s_st, x, y)) {
+    if (!nuevo) { return 1U; }
+    if (ui_digi_boton_hit(&s_st, x, y)) {
         borra_texto();
         s_st.btn_press = 1U;
         ui_digi_draw_boton(&s_st);
         s_st.btn_press = 0U;
         s_todo = 1U;                    /* the rows, and the button back up */
         console_printf("  digi: text cleared\n");
+        return 1U;
     }
+    if (cw_get_enabled() && ui_digi_boton2_hit(&s_st, x, y)) {
+        cw_set_aprende((uint8_t)!cw_get_aprende());   /* upstream's: drops what it learnt */
+        console_printf("  digi: CW learning %s\n", cw_get_aprende() ? "on" : "off");
+    } else if (rtty_get_enabled() && ui_digi_boton3_hit(&s_st, x, y)) {
+        float   hoy = rtty_get_shift_hz(), nuevo_hz = k_shift[0];
+        uint8_t k;
+
+        for (k = 0U; k < 4U; k++) {
+            if (k_shift[k] > hoy + 1.0f) { nuevo_hz = k_shift[k]; break; }
+        }
+        demod_quieto(1);
+        rtty_set_shift_hz(nuevo_hz);
+        demod_quieto(0);
+        console_printf("  digi: RTTY shift %u Hz\n", (uint32_t)(nuevo_hz + 0.5f));
+    } else if (rtty_get_enabled() && ui_digi_boton4_hit(&s_st, x, y)) {
+        digi_rtty_baud_pon((uint8_t)((digi_rtty_baud_idx() + 1U) % 4U));
+        console_printf("  digi: RTTY %s Bd\n", k_baud_txt[digi_rtty_baud_idx()]);
+    } else if (rtty_get_enabled() && ui_digi_boton5_hit(&s_st, x, y)) {
+        rtty_auto_set((uint8_t)!rtty_auto_get());
+        console_printf("  digi: RTTY auto %s\n", rtty_auto_get() ? "on" : "off");
+    } else {
+        return 1U;
+    }
+    sincroniza();
+    ui_digi_draw_cabecera(&s_st);       /* the buttons, with their new labels */
     return 1U;
+}
+
+/*
+ * For the bench: swd-call ... digi_report. What RTTY is set to now -
+ * rtty_auto.c moves the tones, the speed and the polarity by itself -
+ * and the two strongest peaks of the scope's last frame, 23.4 Hz a bin,
+ * which is where the tones really are.
+ */
+__attribute__((noinline, used)) void digi_report(void)
+{
+    const float *f = rtty_scope_frame_peek();
+    float    hz = rtty_scope_hz_per_bin();
+    uint32_t k, p1 = 0U, p2 = 0U;
+
+    console_printf("  digi report: rtty %s, mark %u Hz, space %u Hz (shift %u), "
+                   "%u.%02u Bd, station %s%s, auto %s, frames whole %u %%\n",
+                   rtty_get_enabled() ? "on" : "off",
+                   (uint32_t)(rtty_get_mark_hz() + 0.5f),
+                   (uint32_t)(rtty_get_space_hz() + 0.5f),
+                   (uint32_t)(rtty_get_shift_hz() + 0.5f),
+                   (uint32_t)rtty_get_baud(),
+                   (uint32_t)(rtty_get_baud() * 100.0f + 0.5f) % 100U,
+                   rtty_get_station_inverted() ? "INVERTED" : "normal",
+                   rtty_get_vuelta_auto() ? " (flipped by the detector)" : "",
+                   rtty_auto_get() ? "on" : "off", (uint32_t)rtty_salud_pc());
+    if (f == 0) { return; }
+    for (k = 4U; k < RTTY_SCOPE_BINS; k++) { if (f[k] > f[p1]) { p1 = k; } }
+    for (k = 4U; k < RTTY_SCOPE_BINS; k++) {
+        if ((k + 3U < p1 || k > p1 + 3U) && f[k] > f[p2]) { p2 = k; }
+    }
+    console_printf("               scope peaks %u Hz and %u Hz\n",
+                   (uint32_t)((float)p1 * hz + 0.5f), (uint32_t)((float)p2 * hz + 0.5f));
 }

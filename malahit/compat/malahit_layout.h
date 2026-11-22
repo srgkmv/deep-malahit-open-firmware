@@ -546,5 +546,9 @@
 #define DIGI_PANEL_Y        (SPC_WF_Y + SPC_WF_ROWS - DIGI_PANEL_H) /* 152 */
 #define DIGI_SCOPE_GAP        2
 #define DIGI_SCOPE_H        (DIGI_PANEL_Y - DIGI_SCOPE_Y - DIGI_SCOPE_GAP)  /* 97 */
+/* RTTY's header: the bar cut short so the shift button fits after it, as
+ * upstream's 170 of its 300 (digi_sync()) - 100 of 174 here, which leaves
+ * that button 68 px (UDG_BTN3_MIN_W 42). */
+#define DIGI_RTTY_BARRA_W   100
 
 #endif /* MALAHIT_LAYOUT_H */

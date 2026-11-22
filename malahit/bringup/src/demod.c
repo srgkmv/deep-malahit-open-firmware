@@ -11,6 +11,9 @@
 #include "rds.h"          /* ../../User - rds_feed(), wrapped below */
 #include "estereo.h"      /* src/ - FM stereo, this port's */
 #include "cw.h"           /* ../../User - the Morse decoder, demod_cw() */
+#include "rtty.h"         /* ../../User - the RTTY decoder, demod_rtty() */
+#include "rtty_auto.h"    /* ../../User */
+#include "config.h"       /* ../../User - CONFIG_RTTY_MARK_HZ/SPACE_HZ */
 
 /*
  * Upstream's call: 512 frames at 192 kHz in (with rf_doble), 512 stereo
@@ -69,7 +72,8 @@ void demod_init(void)
 
     __asm__ volatile ("" :: "r"(demod_path), "r"(demod_mode),
                             "r"(demod_mix), "r"(demod_report),
-                            "r"(estereo_pon), "r"(demod_cw));
+                            "r"(estereo_pon), "r"(demod_cw),
+                            "r"(demod_rtty));
 }
 
 void demod_block(const int16_t *rx, int16_t *tx, uint32_t frames)
@@ -246,14 +250,47 @@ SWD_ENTRY int demod_mode(int mode)
  * stores and a memset are microseconds; a block that lands then plays
  * silence and is counted, as for a mode.
  */
+void demod_quieto(int on)
+{
+    __DSB();
+    s_cambiando = (uint8_t)(on != 0);
+    __DSB();
+}
+
 SWD_ENTRY void demod_cw(int on)
 {
     if ((uint8_t)(on != 0) == cw_get_enabled()) { return; }
-    s_cambiando = 1U;
-    __DSB();
+    demod_quieto(1);
     cw_set_enabled((uint8_t)(on != 0));
-    __DSB();
-    s_cambiando = 0U;
+    demod_quieto(0);
+}
+
+/*
+ * RTTY, upstream's menu_mode_preset_callback() for its two entries:
+ * RTTY-L (LSB) with config.h's mark and space, RTTY-U (USB) with them
+ * swapped, because USB hears the same two radio tones mirrored. Then the
+ * station's own inversion again on top (rtty_reapply_station_inversion()),
+ * on, and rtty_auto.c from zero. Same flag as a mode: rtty_set_enabled()
+ * restarts the bit sync the block interrupt is in the middle of.
+ */
+SWD_ENTRY void demod_rtty(int variante)
+{
+    demod_quieto(1);
+    if (variante == 1 || variante == 2) {
+        /* The shift the person chose survives the entry, as the speed
+         * does: upstream sets config.h's pair here and so drops it. */
+        float sh = rtty_get_shift_hz();
+
+        if (variante == 1) { rtty_set_mark_space_hz(CONFIG_RTTY_MARK_HZ, CONFIG_RTTY_SPACE_HZ); }
+        else               { rtty_set_mark_space_hz(CONFIG_RTTY_SPACE_HZ, CONFIG_RTTY_MARK_HZ); }
+        rtty_set_shift_hz(sh);
+        rtty_reapply_station_inversion();
+        rtty_set_enabled(1U);
+        rtty_auto_reset();
+    } else {
+        rtty_set_enabled(0U);
+    }
+    demod_quieto(0);
 }
 
 SWD_ENTRY void demod_mix(int hz)

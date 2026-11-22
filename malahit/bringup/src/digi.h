@@ -42,4 +42,13 @@ void    digi_repinta(void);
  * the Borrar button clears the text. */
 uint8_t digi_toque(uint16_t x, uint16_t y, uint8_t nuevo);
 
+/* RTTY's speed as an index into upstream's four (45.45, 50, 75, 100),
+ * the nearest to what rtty.c runs at - for the FRAM - and setting one. */
+uint8_t digi_rtty_baud_idx(void);
+void    digi_rtty_baud_pon(uint8_t idx);
+
+/* The bench's: RTTY's settings now and the scope's two peaks, on the
+ * console (swd-call ... digi_report). */
+void    digi_report(void);
+
 #endif /* MALAHIT_DIGI_H */

@@ -423,6 +423,10 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/cw.c
 # ui_digi.c     upstream's text panel, its geometry in malahit_layout.h
 #               (UDG_*), drawn in the menus' faces (step 42)
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/rtty_scope.c
+# rtty.c, rtty_auto.c  the RTTY decoder (Goertzel pair, bit sync, ITA2)
+#                      and its automatic shift/baud/polarity (step 43)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/rtty.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/rtty_auto.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_digi.c
 #
 # THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]

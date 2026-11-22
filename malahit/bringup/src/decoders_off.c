@@ -74,9 +74,7 @@ OFF_U16(wspr_modo_activo,   wspr_modo_mete)
 
 /* cw_*: the real ones since 22/11/2026 (cw.c, step 42) */
 
-uint8_t rtty_get_enabled(void) { return 0U; }
-void    rtty_init(void) { }
-void    rtty_process(const float *a, uint32_t n) { (void)a; (void)n; }
+/* rtty_*: the real ones since 22/11/2026 (rtty.c, step 43) */
 /* rtty_scope_*: the real ones since 22/11/2026 (rtty_scope.c, step 42) */
 
 uint8_t hfdl_modo_activo(void) { return 0U; }

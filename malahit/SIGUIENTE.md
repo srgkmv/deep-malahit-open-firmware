@@ -4,7 +4,24 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 22/11/2026, day: step 42 (CW) from RAM, committed, NOT in flash
+## START HERE — 22/11/2026, evening: step 43 (RTTY) committed and pushed, NOT in flash
+
+**Step 43** (`PORTING.md` 43): RTTY-L / RTTY-U on the decoders' screen,
+on the air against the HackRF, and **three fixes to upstream's RTTY in
+User/** the owner asked for (config.h's polarity, rtty.c's detector flip
+kept apart from the setting, rtty_auto.c: nothing moves without a tone
+pair, and it now finds 45.45/170). Flash is still `484b36e` - the owner
+chose not to flash yet. Pushed.
+
+**The radio's state**: 14.087,30 kHz, RTTY-L, 45.45 Bd / 170 Hz (what
+Auto found last), from RAM.
+
+**Next, the owner's order**: PSK31, then NAVTEX (HF NAVTEX at 4209.5 kHz
+is in the HackRF's range; 518/490 kHz are not). `tools/hackrf_gen.py`
+gets a subcommand for each; `sim/rtty_auto_aire.c` is the pattern for a
+host bench on its `--audio` files.
+
+## 22/11/2026, day: step 42 (CW) from RAM, committed, NOT in flash
 
 **In git, not in flash**: step 42 (`PORTING.md` 42) - upstream's CW
 decoder, the Digital family on the mode screen, and upstream's text-mode

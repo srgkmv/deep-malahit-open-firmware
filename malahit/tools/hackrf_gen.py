@@ -3,6 +3,7 @@
 Test signals for the decoders, sent by a HackRF into the radio - 22/11/2026.
 
     tools/hackrf_gen.py cw --text "CQ DE R1TEST K" --wpm 20 --snr 12 --out f.iq
+    tools/hackrf_gen.py rtty --text "CQ DE R1TEST K" --baud 50 --shift 450 --out r.iq
     tools/hackrf_gen.py carrier --seconds 10 --out c.iq
     hackrf_transfer -t f.iq -f <carrier Hz - 200000> -s 2000000 -a 0 -x 47
 
@@ -60,6 +61,23 @@ MORSE = {
     '/': '-..-.', '?': '..--..', '.': '.-.-.-', ',': '--..--', '=': '-...-',
 }
 
+# ITU-T S.2 (ITA2), the code's value with the FIRST bit sent as bit 0.
+# Only what ITA2 and the US teletype agree on: letters, digits and
+# - ? : ( ) . , / - the rest differ between the two (' = ; and the bell).
+ITA2_LTRS = {
+    'E': 0x01, 'A': 0x03, 'S': 0x05, 'I': 0x06, 'U': 0x07, 'D': 0x09,
+    'R': 0x0A, 'J': 0x0B, 'N': 0x0C, 'F': 0x0D, 'C': 0x0E, 'K': 0x0F,
+    'T': 0x10, 'Z': 0x11, 'L': 0x12, 'W': 0x13, 'H': 0x14, 'Y': 0x15,
+    'P': 0x16, 'Q': 0x17, 'O': 0x18, 'B': 0x19, 'G': 0x1A, 'M': 0x1C,
+    'X': 0x1D, 'V': 0x1E,
+}
+ITA2_FIGS = {
+    '3': 0x01, '-': 0x03, '8': 0x06, '7': 0x07, '4': 0x0A, ',': 0x0C,
+    ':': 0x0E, '(': 0x0F, '5': 0x10, ')': 0x12, '2': 0x13, '6': 0x15,
+    '0': 0x16, '1': 0x17, '9': 0x18, '?': 0x19, '.': 0x1C, '/': 0x1D,
+}
+ITA2_LF, ITA2_SPACE, ITA2_CR, ITA2_FIGS_SHIFT, ITA2_LTRS_SHIFT = 0x02, 0x04, 0x08, 0x1B, 0x1F
+
 
 def raised_edges(key, rise_ms):
     """Raised-cosine edges: a hard key makes clicks across the band."""
@@ -90,6 +108,67 @@ def cw_baseband(a):
     return raised_edges(key, 5.0).astype(np.complex128), repr(a.text)
 
 
+def ita2_codes(text):
+    """The code stream: LTRS first, a shift when the case changes, \n as
+    CR LF - and after a space or a line end the next character's shift
+    again, whichever it is: decoders that "unshift on space" are back in
+    letters there and the rest are not, and an extra shift is right for
+    both."""
+    out, figs = [ITA2_LTRS_SHIFT, ITA2_LTRS_SHIFT], False
+    for ch in text.upper():
+        if ch == '\n':
+            out += [ITA2_CR, ITA2_LF]
+            figs = None
+        elif ch == ' ':
+            out.append(ITA2_SPACE)
+            figs = None                         # unknown: say it again
+        elif ch in ITA2_LTRS:
+            if figs is not False:
+                out.append(ITA2_LTRS_SHIFT)
+                figs = False
+            out.append(ITA2_LTRS[ch])
+        elif ch in ITA2_FIGS:
+            if figs is not True:
+                out.append(ITA2_FIGS_SHIFT)
+                figs = True
+            out.append(ITA2_FIGS[ch])
+        else:
+            raise SystemExit(f'rtty: {ch!r} is not in this file\'s ITA2 table')
+    return out
+
+
+def rtty_baseband(a):
+    """Continuous-phase FSK round 0 Hz: mark +shift/2, space -shift/2 -
+    mark the HIGHER radio frequency, the usual convention; --reverse
+    swaps them. Each character: a start bit (space), five bits first-
+    bit-first, a stop of `stop` bits (mark). Mark between characters
+    and around the message, as a teletype idles."""
+    bits = []                                   # (level, length in bits)
+    for c in ita2_codes(a.text):
+        bits.append((0, 1.0))
+        bits += [((c >> k) & 1, 1.0) for k in range(5)]
+        bits.append((1, a.stop))
+    t_bit = FS_LO / a.baud
+    lead = int(a.pause * FS_LO)
+    level = []
+    for lvl, nb in bits:
+        level.append(np.full(int(round(nb * t_bit)), lvl, dtype=np.float64))
+    one = np.concatenate(level)
+    idle = np.ones(lead)
+    lvl = np.concatenate([idle] + [np.concatenate([one, idle])] * a.repeat)
+    if a.reverse:
+        lvl = 1.0 - lvl
+    f = (lvl - 0.5) * a.shift                   # +shift/2 mark, -shift/2 space
+    ph = 2 * np.pi * np.cumsum(f) / FS_LO
+    x = np.exp(1j * ph)
+    # silence before and after, keyed in and out softly
+    key = np.concatenate([np.zeros(int(0.5 * FS_LO)), np.ones(len(x)),
+                          np.zeros(int(0.5 * FS_LO))])
+    x = np.concatenate([np.zeros(int(0.5 * FS_LO)), x, np.zeros(int(0.5 * FS_LO))])
+    return x * raised_edges(key, 5.0), (f'{a.text!r}, {a.baud} Bd, {a.shift:.0f} Hz '
+                                        f'{"reversed" if a.reverse else "normal"}')
+
+
 def carrier_baseband(a):
     return np.ones(int(a.seconds * FS_LO), dtype=np.complex128), 'carrier'
 
@@ -110,8 +189,11 @@ def add_noise(x, a):
 
 
 def write_audio(x, a):
-    """What the radio's USB branch hands its decoders: f32, 12 kHz."""
+    """What the radio's sideband branch hands its decoders: f32, 12 kHz,
+    the carrier (or the FSK's centre) at `tone`, mirrored in LSB."""
     n = np.arange(len(x))
+    if a.lsb:
+        x = np.conj(x)                          # LSB hears the spectrum mirrored
     z = x * np.exp(2j * np.pi * a.tone * n / FS_LO)
     Z = np.fft.fft(z)
     f = np.fft.fftfreq(len(z), 1.0 / FS_LO)
@@ -157,7 +239,9 @@ def main():
         p.add_argument('--audio', action='store_true',
                        help='write the 12 kHz f32 audio of the USB branch, not I/Q')
         p.add_argument('--tone', type=float, default=700.0,
-                       help='the carrier\'s audio frequency for --audio')
+                       help='the carrier\'s (FSK: the centre\'s) audio frequency for --audio')
+        p.add_argument('--lsb', action='store_true',
+                       help='--audio as the LSB branch hears it (mirrored)')
 
     p = sub.add_parser('carrier', help='a steady carrier: levels, and the ppm')
     common(p)
@@ -171,6 +255,17 @@ def main():
     p.add_argument('--pause', type=float, default=2.0, help='s of silence around it')
     p.add_argument('--repeat', type=int, default=1)
     p.set_defaults(build=cw_baseband)
+
+    p = sub.add_parser('rtty', help='radioteletype, ITA2 FSK')
+    common(p)
+    p.add_argument('--text', default='RYRYRY CQ CQ DE R1TEST R1TEST K')
+    p.add_argument('--baud', type=float, default=50.0)
+    p.add_argument('--shift', type=float, default=450.0, help='Hz, mark to space')
+    p.add_argument('--stop', type=float, default=1.5, help='stop bits')
+    p.add_argument('--reverse', action='store_true', help='mark the LOWER frequency')
+    p.add_argument('--pause', type=float, default=1.0, help='s of idle mark around it')
+    p.add_argument('--repeat', type=int, default=1)
+    p.set_defaults(build=rtty_baseband)
 
     a = ap.parse_args()
     x, what = a.build(a)
