@@ -4,6 +4,7 @@ Test signals for the decoders, sent by a HackRF into the radio - 22/11/2026.
 
     tools/hackrf_gen.py cw --text "CQ DE R1TEST K" --wpm 20 --snr 12 --out f.iq
     tools/hackrf_gen.py rtty --text "CQ DE R1TEST K" --baud 50 --shift 450 --out r.iq
+    tools/hackrf_gen.py psk31 --text "CQ CQ de R1TEST k" --out p.iq
     tools/hackrf_gen.py carrier --seconds 10 --out c.iq
     hackrf_transfer -t f.iq -f <carrier Hz - 200000> -s 2000000 -a 0 -x 47
 
@@ -77,6 +78,31 @@ ITA2_FIGS = {
     '0': 0x16, '1': 0x17, '9': 0x18, '?': 0x19, '.': 0x1C, '/': 0x1D,
 }
 ITA2_LF, ITA2_SPACE, ITA2_CR, ITA2_FIGS_SHIFT, ITA2_LTRS_SHIFT = 0x02, 0x04, 0x08, 0x1B, 0x1F
+
+# G3PLX's Varicode for PSK31, the printable part and CR/LF, written out
+# here by hand - checked against upstream's two copies (psk31.c and
+# psk31_varicode.txt) only AFTER being written, as a third opinion.
+VARICODE = {
+    ' ': '1', '\n': '11101', '\r': '11111',
+    'a': '1011', 'b': '1011111', 'c': '101111', 'd': '101101', 'e': '11',
+    'f': '111101', 'g': '1011011', 'h': '101011', 'i': '1101', 'j': '111101011',
+    'k': '10111111', 'l': '11011', 'm': '111011', 'n': '1111', 'o': '111',
+    'p': '111111', 'q': '110111111', 'r': '10101', 's': '10111', 't': '101',
+    'u': '110111', 'v': '1111011', 'w': '1101011', 'x': '11011111',
+    'y': '1011101', 'z': '111010101',
+    'A': '1111101', 'B': '11101011', 'C': '10101101', 'D': '10110101',
+    'E': '1110111', 'F': '11011011', 'G': '11111101', 'H': '101010101',
+    'I': '1111111', 'J': '111111101', 'K': '101111101', 'L': '11010111',
+    'M': '10111011', 'N': '11011101', 'O': '10101011', 'P': '11010101',
+    'Q': '111011101', 'R': '10101111', 'S': '1101111', 'T': '1101101',
+    'U': '101010111', 'V': '110110101', 'W': '101011101', 'X': '101110101',
+    'Y': '101111011', 'Z': '1010101101',
+    '0': '10110111', '1': '10111101', '2': '11101101', '3': '11111111',
+    '4': '101110111', '5': '101011011', '6': '101101011', '7': '110101101',
+    '8': '110101011', '9': '110110111',
+    '.': '1010111', ',': '1110101', '?': '1010101111', '/': '110101111',
+    '-': '110101', ':': '11110101', '=': '1010101',
+}
 
 
 def raised_edges(key, rise_ms):
@@ -167,6 +193,38 @@ def rtty_baseband(a):
     x = np.concatenate([np.zeros(int(0.5 * FS_LO)), x, np.zeros(int(0.5 * FS_LO))])
     return x * raised_edges(key, 5.0), (f'{a.text!r}, {a.baud} Bd, {a.shift:.0f} Hz '
                                         f'{"reversed" if a.reverse else "normal"}')
+
+
+def psk31_baseband(a):
+    """BPSK31: 31.25 symbols a second; a 0 is a phase reversal, a 1 none.
+    Each character's Varicode, then 00. A preamble of reversals (idle) and
+    a postamble of unmodulated carrier, as the programs send. Each symbol
+    a cos^2 pulse two symbols long, so the envelope stays flat between
+    equal symbols and goes through zero across a reversal - G3PLX's
+    shaping, 31 Hz wide."""
+    bits = '0' * int(a.preamble * 31.25)
+    for ch in a.text:
+        if ch not in VARICODE:
+            raise SystemExit(f'psk31: {ch!r} is not in this file\'s Varicode table')
+        bits += VARICODE[ch] + '00'
+    bits += '1' * int(a.postamble * 31.25)
+    ph, p = [], 1.0
+    for b in bits:
+        if b == '0':
+            p = -p
+        ph.append(p)
+    T = FS_LO / 31.25                            # 1536 samples
+    n = int(len(ph) * T)
+    x = np.zeros(n + int(2 * T))
+    t = np.arange(int(2 * T)) - T                # the pulse, -T..T
+    pulse = np.cos(np.pi * t / (2 * T)) ** 2
+    for k, v in enumerate(ph):
+        i0 = int(k * T)
+        x[i0:i0 + len(pulse)] += v * pulse
+    x = x[int(T):]                               # the first pulse's lead-in
+    gap = np.zeros(int(a.pause * FS_LO))
+    x = np.concatenate([gap] + [np.concatenate([x, gap])] * a.repeat)
+    return x.astype(np.complex128), f'{a.text!r}, BPSK31'
 
 
 def carrier_baseband(a):
@@ -266,6 +324,15 @@ def main():
     p.add_argument('--pause', type=float, default=1.0, help='s of idle mark around it')
     p.add_argument('--repeat', type=int, default=1)
     p.set_defaults(build=rtty_baseband)
+
+    p = sub.add_parser('psk31', help='BPSK31, Varicode')
+    common(p)
+    p.add_argument('--text', default='CQ CQ de R1TEST R1TEST pse k')
+    p.add_argument('--preamble', type=float, default=2.0, help='s of idle reversals')
+    p.add_argument('--postamble', type=float, default=1.0, help='s of carrier')
+    p.add_argument('--pause', type=float, default=1.0, help='s of silence around it')
+    p.add_argument('--repeat', type=int, default=1)
+    p.set_defaults(build=psk31_baseband)
 
     a = ap.parse_args()
     x, what = a.build(a)

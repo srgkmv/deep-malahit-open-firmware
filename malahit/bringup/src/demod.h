@@ -67,6 +67,12 @@ void demod_cw(int on);
  * RTTY-U's (swapped) - upstream's RTTY_VARIANT_NORMAL / _INVERTED. */
 void demod_rtty(int variante);
 
+/* PSK31 on (1) or off (0), started from zero each time. */
+void demod_psk31(int on);
+
+/* The bench's recorder of what PSK31 is fed: 1 arms it (2.5 s, g_graba). */
+void demod_graba(int on);
+
 /* Hold the block interrupt off (1) while a decoder is reconfigured from
  * the display loop, and let it run again (0): a block that lands plays
  * silence and is counted, as during a mode change. Microseconds. */

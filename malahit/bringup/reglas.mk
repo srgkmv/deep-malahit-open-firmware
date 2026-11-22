@@ -427,6 +427,9 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/rtty_scope.c
 #                      and its automatic shift/baud/polarity (step 43)
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/rtty.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/rtty_auto.c
+# psk31.c  PSK31: a phasor at the tone, differential detection, Varicode
+#          (step 44)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/psk31.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_digi.c
 #
 # THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]
@@ -570,6 +573,9 @@ LDFLAGS += -Wl,--gc-sections
 # __wrap_rds_feed() gives it to the stereo decoder too, then to rds.c.
 # Not one line of demod_am.c changes for it.
 LDFLAGS += -Wl,--wrap=rds_feed
+# And psk31_process(), for demod.c's recorder of the decoder's audio (the
+# bench's: demod_graba).
+LDFLAGS += -Wl,--wrap=psk31_process
 LDFLAGS += -nostdlib -nostartfiles
 LDFLAGS += -Wl,--print-memory-usage
 # A RAM image is by definition both writable and executable, so the linker's

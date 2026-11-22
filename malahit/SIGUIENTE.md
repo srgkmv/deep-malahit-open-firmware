@@ -4,7 +4,21 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 22/11/2026, evening: step 43 (RTTY) committed and pushed, NOT in flash
+## START HERE — 22/11/2026, night: step 44 (PSK31) from RAM, NOT in flash
+
+**Step 44** (`PORTING.md` 44): PSK31 on the decoders' screen, tuned by a
+tap on the scope (this port's), clean to 0 dB on the air. Flash is still
+`484b36e`. Step 43 and the RTTY fixes are pushed (02ed736).
+
+**The radio's state**: 14.070,00 kHz, PSK31, centre 985 Hz, from RAM.
+The HackRF and the radio now differ by ~76 Hz at 14 MHz and it moves:
+measure with a tap or `digi_report` before trusting a compensation.
+
+**Next, the owner's order**: NAVTEX (HF NAVTEX at 4209.5 kHz is in the
+HackRF's range; 518/490 kHz are not) - SITOR-B, 100 Bd FSK 170 Hz, which
+hackrf_gen.py's FSK can be extended to.
+
+## 22/11/2026, evening: step 43 (RTTY) committed and pushed
 
 **Step 43** (`PORTING.md` 43): RTTY-L / RTTY-U on the decoders' screen,
 on the air against the HackRF, and **three fixes to upstream's RTTY in

@@ -18,6 +18,7 @@
  *
  *   CW     Borrar | Aprende                     | "20 ppm 14 dB" + dot
  *   RTTY   Borrar |      | 450 Hz | 50 Bd | Auto
+ *   PSK31  Borrar                               | "+1,2 Hz" + dot
  *
  * and upstream's tap on each (rtty_shift_siguiente(), rtty_baud_
  * siguiente(), the Auto toggle, cw_set_aprende()) - on the press here,
@@ -36,6 +37,7 @@
 #include "cw.h"            /* ../../User - the decoders */
 #include "rtty.h"
 #include "rtty_auto.h"
+#include "psk31.h"
 #include "demod.h"         /* demod_quieto(): a decoder reconfigured, no block through it */
 #include "idioma.h"        /* ../../User - tr() */
 
@@ -210,6 +212,29 @@ static void sincroniza(void)
         return;
     }
 
+    if (psk31_activo()) {
+        /* upstream's: the chip is the FREQUENCY ERROR, "-3,4 Hz" - the
+         * number to tune by - and the dot is the quality (PSK31_CAL_MIN). */
+        uint8_t cal = 0U;
+        int16_t e = 0;
+        int32_t v;
+
+        psk31_diag(&cal, &e);
+        v = (int32_t)e;
+        i = 0U;
+        if (v < 0) { s_chip[i++] = '-'; v = -v; } else { s_chip[i++] = '+'; }
+        if (v > 9999) { v = 9999; }
+        if (v / 1000 != 0) { s_chip[i++] = (char)('0' + v / 1000); }
+        s_chip[i++] = (char)('0' + (v / 100) % 10);
+        s_chip[i++] = ',';
+        s_chip[i++] = (char)('0' + (v / 10) % 10);
+        s_chip[i++] = ' '; s_chip[i++] = 'H'; s_chip[i++] = 'z';
+        s_chip[i] = '\0';
+        s_st.chip = s_chip;
+        s_st.enganchado = (uint8_t)(cal >= PSK31_CAL_MIN);
+        return;
+    }
+
     s_st.btn2       = tr("Aprende", "Learn");
     s_st.btn2_press = cw_get_aprende();
 
@@ -255,7 +280,14 @@ static void osciloscopio(void)
     }
     spectrum_draw(s_db, RTTY_SCOPE_BINS, 0, DIGI_SCOPE_Y, GFX2_W, DIGI_SCOPE_H,
                   DIGI_SCOPE_FLOOR, 0.0f, 0, 0U, 0, 0);
-    if (nyq > 0.0f && rtty_get_enabled()) {
+    if (nyq > 0.0f && psk31_activo()) {
+        /* PSK31: where it listens. Upstream's scope_rayas() has no branch
+         * for it and drew RTTY's two lines; one line at the centre is
+         * what there is to tune to. */
+        uint16_t a = (uint16_t)(psk31_get_centro_hz() / nyq * (float)GFX2_W);
+
+        if (a < GFX2_W) { gfx_vline(a, DIGI_SCOPE_Y, DIGI_SCOPE_H, color_tema(PAL_ACCENT)); }
+    } else if (nyq > 0.0f && rtty_get_enabled()) {
         /* RTTY: mark in the accent, space in the warning colour */
         uint16_t a = (uint16_t)(rtty_get_mark_hz()  / nyq * (float)GFX2_W);
         uint16_t b = (uint16_t)(rtty_get_space_hz() / nyq * (float)GFX2_W);
@@ -313,6 +345,53 @@ uint8_t digi_toque(uint16_t x, uint16_t y, uint8_t nuevo)
     if (!s_on) { return 0U; }
     if (y < DIGI_SCOPE_Y || y >= DIGI_PANEL_Y + DIGI_PANEL_H) { return 0U; }
     if (!nuevo) { return 1U; }
+
+    /*
+     * PSK31: A TAP ON THE SCOPE TUNES - this port's, upstream tunes it with
+     * the dial alone. PSK31 holds +-7.8 Hz and is 31 Hz wide in a 6 kHz
+     * scope, so the finger cannot be exact: the centre goes to the
+     * strongest bin within +-60 Hz of the tap in the last frame, the trace
+     * the finger was aiming at. psk31_set_centro_hz() also drops the
+     * decoder's own tracking, as a manual move should.
+     */
+    if (psk31_activo() && y < DIGI_SCOPE_Y + DIGI_SCOPE_H) {
+        const float *f = rtty_scope_frame_peek();
+        float hz = rtty_scope_hz_per_bin();
+        float tap = (float)x / (float)GFX2_W * hz * (float)RTTY_SCOPE_BINS;
+
+        if (f != 0 && hz > 0.0f) {
+            int32_t k0 = (int32_t)(tap / hz), w = (int32_t)(60.0f / hz), k, best = k0;
+
+            for (k = k0 - w; k <= k0 + w; k++) {
+                if (k < 1 || k >= (int32_t)RTTY_SCOPE_BINS - 1) { continue; }
+                if (best < 1 || best >= (int32_t)RTTY_SCOPE_BINS - 1 || f[k] > f[best]) { best = k; }
+            }
+            if (best >= 2 && best < (int32_t)RTTY_SCOPE_BINS - 2) {
+                /*
+                 * NOT THE PEAK: the CENTRE OF THE POWER round it, two bins
+                 * a side. Idling, PSK31 is two lines at +-15.6 Hz with no
+                 * carrier between - the strongest bin is a sideband, 15 Hz
+                 * off, twice the decoder's +-7.8 Hz - and the centroid of
+                 * the pair is the carrier. Sending text, the power sits on
+                 * the carrier and the centroid is the peak.
+                 */
+                float num = 0.0f, den = 0.0f;
+                int32_t j;
+
+                for (j = best - 2; j <= best + 2; j++) {
+                    num += (float)j * f[j];
+                    den += f[j];
+                }
+                if (den > 0.0f) { tap = (num / den) * hz; }
+            }
+        }
+        demod_quieto(1);
+        psk31_set_centro_hz(tap);
+        demod_quieto(0);
+        console_printf("  digi: PSK31 centre %u Hz (tap at x %u)\n",
+                       (uint32_t)(psk31_get_centro_hz() + 0.5f), (uint32_t)x);
+        return 1U;
+    }
     if (ui_digi_boton_hit(&s_st, x, y)) {
         borra_texto();
         s_st.btn_press = 1U;
@@ -373,6 +452,16 @@ __attribute__((noinline, used)) void digi_report(void)
                    rtty_get_station_inverted() ? "INVERTED" : "normal",
                    rtty_get_vuelta_auto() ? " (flipped by the detector)" : "",
                    rtty_auto_get() ? "on" : "off", (uint32_t)rtty_salud_pc());
+    if (psk31_activo()) {
+        uint8_t cal = 0U;
+        int16_t e = 0;
+
+        psk31_diag(&cal, &e);
+        console_printf("               psk31: centre %u Hz, error %c%u.%02u Hz, quality %u\n",
+                       (uint32_t)(psk31_get_centro_hz() + 0.5f), e < 0 ? '-' : '+',
+                       (uint32_t)(e < 0 ? -e : e) / 100U, (uint32_t)(e < 0 ? -e : e) % 100U,
+                       (uint32_t)cal);
+    }
     if (f == 0) { return; }
     for (k = 4U; k < RTTY_SCOPE_BINS; k++) { if (f[k] > f[p1]) { p1 = k; } }
     for (k = 4U; k < RTTY_SCOPE_BINS; k++) {

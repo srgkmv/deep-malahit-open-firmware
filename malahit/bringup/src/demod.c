@@ -14,6 +14,7 @@
 #include "rtty.h"         /* ../../User - the RTTY decoder, demod_rtty() */
 #include "rtty_auto.h"    /* ../../User */
 #include "config.h"       /* ../../User - CONFIG_RTTY_MARK_HZ/SPACE_HZ */
+#include "psk31.h"        /* ../../User - demod_psk31() */
 
 /*
  * Upstream's call: 512 frames at 192 kHz in (with rf_doble), 512 stereo
@@ -73,7 +74,8 @@ void demod_init(void)
     __asm__ volatile ("" :: "r"(demod_path), "r"(demod_mode),
                             "r"(demod_mix), "r"(demod_report),
                             "r"(estereo_pon), "r"(demod_cw),
-                            "r"(demod_rtty));
+                            "r"(demod_rtty), "r"(demod_psk31),
+                            "r"(demod_graba));
 }
 
 void demod_block(const int16_t *rx, int16_t *tx, uint32_t frames)
@@ -159,6 +161,54 @@ void __wrap_rds_feed(const float *mpx, uint32_t n)
 {
     if (s_wfm) { estereo_mpx(mpx, n); }
     __real_rds_feed(mpx, n);
+}
+
+/*
+ * WHAT A TEXT DECODER IS FED, RECORDED - for the bench, 22/11/2026. PSK31
+ * came out of the radio as clean phase and wrong letters while the same
+ * signal decoded on the host: the question is what reaches psk31_process()
+ * here. `swd-call ... demod_graba 1` arms it; the next GRABA_N samples of
+ * the 12 kHz sideband audio upstream hands PSK31 land in g_graba (D2 SRAM,
+ * float), and `swd.sh -c init -c "dump_image f.f32 <g_graba> 120000"`
+ * takes them out for the host's tools. psk31_process() is wrapped for it,
+ * as rds_feed() is for the stereo.
+ */
+/*
+ * 120 kB of D2 SRAM, so it is built only on request - the decoders still
+ * to come want that memory:
+ *     make BUILD_DIR=/some/scratch OPT="-O2 -g3 -DDEMOD_GRABA=1"
+ * It found that PSK31's "clean phase, wrong letters" was the signal 13 Hz
+ * outside the decoder's +-7.8 Hz, not the radio's chain (PORTING.md 44).
+ */
+#ifndef DEMOD_GRABA
+#define DEMOD_GRABA 0
+#endif
+#if DEMOD_GRABA
+#define GRABA_N  30000U                     /* 2.5 s at 12 kHz */
+__attribute__((section(".d2sram"), aligned(32))) float g_graba[GRABA_N];
+volatile uint32_t g_graba_n = GRABA_N;      /* GRABA_N = not recording */
+#endif
+
+__attribute__((noinline)) void demod_graba(int on)
+{
+#if DEMOD_GRABA
+    g_graba_n = on ? 0U : GRABA_N;
+    console_printf("demod     : recording the decoder's audio %s\n", on ? "armed" : "off");
+#else
+    (void)on;
+    console_printf("demod     : no recorder in this image (DEMOD_GRABA=1)\n");
+#endif
+}
+
+void __real_psk31_process(const float *audio, uint32_t n);
+void __wrap_psk31_process(const float *audio, uint32_t n)
+{
+#if DEMOD_GRABA
+    uint32_t i;
+
+    for (i = 0U; i < n && g_graba_n < GRABA_N; i++) { g_graba[g_graba_n++] = audio[i]; }
+#endif
+    __real_psk31_process(audio, n);
 }
 
 /*
@@ -262,6 +312,16 @@ SWD_ENTRY void demod_cw(int on)
     if ((uint8_t)(on != 0) == cw_get_enabled()) { return; }
     demod_quieto(1);
     cw_set_enabled((uint8_t)(on != 0));
+    demod_quieto(0);
+}
+
+/* PSK31 on or off, upstream's psk31_start(DEMOD_DEC_FS_HZ) / psk31_stop()
+ * - from zero on every start - under the same flag. */
+SWD_ENTRY void demod_psk31(int on)
+{
+    if ((uint8_t)(on != 0) == psk31_activo()) { return; }
+    demod_quieto(1);
+    if (on) { psk31_start(12000.0f); } else { psk31_stop(); }
     demod_quieto(0);
 }
 

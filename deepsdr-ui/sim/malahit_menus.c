@@ -74,6 +74,7 @@ static void modos_fam(uint8_t fam, const char *ppm)
         { 1, "CW",  "Telegrafía Morse",   "Morse telegraphy" },
         { 1, "RTTY-L", "Teletipo en LSB", "Teletype on LSB" },
         { 1, "RTTY-U", "Teletipo en USB", "Teletype on USB" },
+        { 1, "PSK31", "Charla en fase", "Phase-shift chat" },
     };
     ui_cfg_state_t st;
     uint8_t i;

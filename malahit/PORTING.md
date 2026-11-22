@@ -1464,6 +1464,32 @@ Each step should end with something visible on the radio.
    `digi_report` (swd-call) prints RTTY's settings and the scope's two
    peaks - how the 50 Hz left between the two references was measured.
    CW re-checked on the air after the change. AXI 439 of 512 kB.
+44. **PSK31.** *22/11/2026, from RAM, against the HackRF* - upstream's
+   psk31.c (differential BPSK, a Gardner symbol clock, Varicode, a gate
+   at quality 78), stub gone; entry 9 (USB), "Charla en fase" in Digital;
+   `demod_psk31()` under the flag. The panel is upstream's: Borrar and
+   the chip, which for PSK31 is the FREQUENCY ERROR ("+0,7 Hz") with the
+   quality as the dot. Two things are this port's: the scope shows a line
+   at the decoder's centre (upstream's scope_rayas() has no PSK31 branch
+   and drew RTTY's two), and **a tap on the scope tunes**: the centre goes
+   to the power-weighted centre of the two bins either side of the
+   strongest within +-60 Hz of the finger - the CENTROID, because idling
+   PSK31 is two lines at +-15.6 Hz and the strongest bin is a sideband,
+   twice the decoder's +-7.8 Hz away. Upstream tunes PSK31 with the dial
+   only. `tools/hackrf_gen.py psk31` (Varicode written by hand, then found
+   identical to both upstream copies; cos^2 pulses two symbols long; idle
+   preamble, carrier postamble); upstream's psk31.c decodes its `--audio`
+   files on the host down to 0 dB in 500 Hz.
+   **On the air at 14.071 MHz** (dial 14.070 USB, 1000 Hz): the first run
+   printed steady nonsense at quality 96 - the signal was at 987 Hz, the
+   two references having drifted another 13 Hz, and outside +-7.8 Hz
+   PSK31's phase turns pass for data (upstream's own warning). Found with
+   a recorder of what psk31_process() is fed (demod.c, `demod_graba`,
+   `--wrap=psk31_process`, 2.5 s in D2 SRAM, built only with
+   `-DDEMOD_GRABA=1`): the host decoded the radio's audio the same way at
+   1000 Hz and correctly at 987. With a tap: SNR 3 and 0 dB clean, -3 dB
+   but for the last two letters; three repeats in a row; error held at
+   +1 Hz by its tracking. AXI 444.7 of 512 kB.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

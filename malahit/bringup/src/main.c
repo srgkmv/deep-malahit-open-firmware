@@ -61,6 +61,7 @@
 #include "cw.h"           /* ../../User - upstream: the Morse decoder */
 #include "rtty.h"         /* ../../User - upstream: the RTTY decoder */
 #include "rtty_auto.h"    /* ../../User */
+#include "psk31.h"        /* ../../User - upstream: the PSK31 decoder */
 #include "config.h"       /* ../../User - CONFIG_RTTY_SHIFT_MIN/MAX_HZ */
 #include "nb.h"           /* ../../User - upstream: the blanker, cw_report() */
 #include "digi.h"         /* src/ - the decoders' screen: scope and text */
@@ -6242,7 +6243,8 @@ static void cw_linea_suelta(void)
 {
     if (s_cw_n == 0U) { return; }
     s_cw_lin[s_cw_n] = '\0';
-    console_printf("  %s: %s\n", rtty_get_enabled() ? "rtty" : "cw", s_cw_lin);
+    console_printf("  %s: %s\n", rtty_get_enabled() ? "rtty"
+                                 : psk31_activo() ? "psk31" : "cw", s_cw_lin);
     s_cw_n = 0U;
 }
 
@@ -6262,7 +6264,8 @@ static uint8_t s_rtty_var;              /* 0 off, 1 RTTY-L, 2 RTTY-U */
 /* The demodulator under a mode entry (menus.h). */
 static int modo_demod(int mode)
 {
-    if (mode == RADIO_MODE_CW || mode == RADIO_MODE_RTTY_U) { return (int)DEMOD_MODE_USB; }
+    if (mode == RADIO_MODE_CW || mode == RADIO_MODE_RTTY_U
+        || mode == RADIO_MODE_PSK31)                        { return (int)DEMOD_MODE_USB; }
     if (mode == RADIO_MODE_RTTY_L)                          { return (int)DEMOD_MODE_LSB; }
     return mode;
 }
@@ -6280,14 +6283,20 @@ static void texto_modo(int mode)
     uint8_t cw = (uint8_t)(mode == RADIO_MODE_CW);
     uint8_t rv = (uint8_t)((mode == RADIO_MODE_RTTY_L) ? 1U
                          : (mode == RADIO_MODE_RTTY_U) ? 2U : 0U);
-    uint8_t era_cw = cw_get_enabled(), era_rv = s_rtty_var;
+    uint8_t pk = (uint8_t)(mode == RADIO_MODE_PSK31);
+    uint8_t era_cw = cw_get_enabled(), era_rv = s_rtty_var, era_pk = psk31_activo();
 
-    if (cw == era_cw && rv == era_rv) { return; }
+    if (cw == era_cw && rv == era_rv && pk == era_pk) { return; }
     cw_linea_suelta();
     demod_cw(cw);
     demod_rtty(rv);
+    demod_psk31(pk);
     s_rtty_var = rv;
-    digi_pon((uint8_t)(cw || rv));
+    digi_pon((uint8_t)(cw || rv || pk));
+    if (pk != era_pk) {
+        console_printf("  PSK31 %s - centre %u Hz\n", pk ? "on" : "off",
+                       (uint32_t)(psk31_get_centro_hz() + 0.5f));
+    }
     if (menu_open_id() == MENU_NONE) { radio_screen_restore(); }
     if (cw != era_cw) {
         console_printf("  CW %s - tone %u Hz, band-pass %u Hz\n", cw ? "on" : "off",
@@ -6369,6 +6378,9 @@ static void cw_poll(void)
         rtty_auto_poll();               /* upstream's: shift, baud and polarity by itself */
         rtty_auto_log();
     }
+    if (psk31_activo()) {
+        while (psk31_get_char(&c)) { hay = 1U; texto_char(c); }
+    }
     (void)hay;
     if (s_cw_n > 0U && (board_millis() - s_cw_t) >= CW_LINEA_MS) {
         cw_linea_suelta();
@@ -6377,6 +6389,15 @@ static void cw_poll(void)
                            (uint32_t)(cw_get_wpm() + 0.5f),
                            (uint32_t)(cw_get_detect_hz() + 0.5f),
                            (uint32_t)(100.0f * cw_get_quality() + 0.5f));
+        } else if (psk31_activo()) {
+            uint8_t cal = 0U;
+            int16_t e = 0;
+
+            psk31_diag(&cal, &e);
+            console_printf("  psk31: -- centre %u Hz, error %c%u.%02u Hz, quality %u\n",
+                           (uint32_t)(psk31_get_centro_hz() + 0.5f), e < 0 ? '-' : '+',
+                           (uint32_t)(e < 0 ? -e : e) / 100U,
+                           (uint32_t)(e < 0 ? -e : e) % 100U, (uint32_t)cal);
         } else {
             console_printf("  rtty: -- %u Hz shift, %u Bd, %u %% of frames whole\n",
                            (uint32_t)(rtty_get_shift_hz() + 0.5f),
@@ -6929,7 +6950,7 @@ static void ui_wf_push(const float *db, uint32_t bins)
  */
 static const char *const k_mode_names[] = { "AM", "USB", "LSB", "NFM",
                                             "WFM", "SAM", "CW", "RTTY-L",
-                                            "RTTY-U" };
+                                            "RTTY-U", "PSK31" };
 _Static_assert(sizeof k_mode_names / sizeof k_mode_names[0]
                == (size_t)RADIO_MODE_LAST + 1U,
                "a name for every mode, upstream's and the decoders' (menus.h)");
@@ -7121,6 +7142,7 @@ int radio_mode_get(void)
     if (m == (int)DEMOD_MODE_USB && cw_get_enabled()) { return RADIO_MODE_CW; }
     if (m == (int)DEMOD_MODE_LSB && s_rtty_var == 1U) { return RADIO_MODE_RTTY_L; }
     if (m == (int)DEMOD_MODE_USB && s_rtty_var == 2U) { return RADIO_MODE_RTTY_U; }
+    if (m == (int)DEMOD_MODE_USB && psk31_activo())   { return RADIO_MODE_PSK31; }
     return m;
 }
 
