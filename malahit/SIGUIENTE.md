@@ -4,7 +4,23 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 22/11/2026, ~01:00: steps 37-39 IN FLASH, pushed
+## START HERE — 22/11/2026: step 40 (RDS) IN FLASH, pushed
+
+**In flash: `88aafb2`** (step 40 - RDS, and the header rearranged to
+make room for it - on top of `e71764d` below) - `build_flash/
+bringup.bin`, 194 880 bytes, sha256 `d5bb3a55…`, SELFTEST 0, clean
+build; written over DFU without `:leave`, read back identical byte for
+byte, left with the 4-byte `:leave` upload. **Cold boot**: record v4
+(slot 0, seq 211), WFM from the FRAM, "RDS on" and the station's name
+within seconds, the memories from the FRAM, screen and audio 2108 ms
+after SysTick, SAI DMA err 0. **Pushed** through this commit.
+
+**Next: the owner picks.** On the list: the other decoders one by one
+(each: delete its stubs in decoders_off.c, add its .c, let the linker
+speak - PORTING.md step 8), the memory screen's SCAN cell, the clock
+from RDS (needs a settable clock first).
+
+## 22/11/2026, ~01:00: steps 37-39 in flash (e71764d), pushed
 
 **In flash: `e71764d`** (steps 37-39 - touch-tuning on the spectrum,
 the memory channels in the FRAM, brightness - on top of `22c50fe`
