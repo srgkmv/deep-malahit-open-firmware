@@ -4,9 +4,15 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 22/11/2026, late night: step 50 (JTTY) committed, flashing over SWD
+## START HERE — 22/11/2026, late night: step 50 (JTTY) IN FLASH (10c2ece), over SWD
 
-**In flash: `3274486`** (below). **Committed, checked from RAM**: step 50
+**In flash: `10c2ece`** - `build_flash/bringup.bin`, 282 288 bytes,
+sha256 `0830e502…`, SELFTEST 0, clean build - **the first image written
+over SWD, not DFU**: `swd.sh flashsrst`, connecting under reset while a
+RAM image was running, 8.3 s, verified; the radio slept, the owner's
+press started it: "last reset: NRST pin", record v4 (slot 0, seq 267),
+JTTY at 14.090 MHz from the FRAM, screen and audio 2352 ms after SysTick,
+SAI DMA err 0; and from flash, JTTY's messages read on the air. Step 50
 (`PORTING.md` 50) - WSJT-X's JTTY with upstream's table panel (columns
 for 480 px through a new `#ifndef UDG_COLS_JTTY` in User/ui_digi.c, the
 DEEPSDR byte-identical), the borrowed RAM at 56 kB, an uptime clock for
