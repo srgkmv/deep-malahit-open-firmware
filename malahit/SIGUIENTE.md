@@ -4,18 +4,22 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 23/11/2026: step 51 (ALE, with an AFC) committed, flashing over SWD
+## START HERE — 23/11/2026: step 51 (ALE, with an AFC) IN FLASH (14c6796), over SWD
 
-**In flash: still `10c2ece`** (step 50, below). **Step 51** (`PORTING.md`
+**In flash: `14c6796`** - `build_flash/bringup.bin`, 292 752 bytes, sha256
+`3fc4e261…`, SELFTEST 0, written with `swd.sh flashsrst` and verified;
+the owner's press started it: "last reset: NRST pin", record v4 (slot 0,
+seq 275), ALE at 14.109 MHz from the FRAM, screen and audio 2355 ms after
+SysTick, SAI DMA err 0; and from flash, on the air, 22 words of 24 at
+quality 48, the AFC finding -84 Hz by itself after the boot. **Step 51** (`PORTING.md`
 51) - upstream's ALE 2G (ale_rx.c, ale_golay.c, ale_modo.c) on the
 decoders' screen, entry 17 "Sondeos de HF" in Digital, upstream's table
 of stations with its quality bar and "last one N min" clock - **and, the
 owner's word ("without AFC it will most likely not work in practice"),
 an AFC** in User/ale_rx.c under `ALE_CAF` (off by default: the DEEPSDR's
 flash has no room; on in this port's reglas.mk; its own commit, `4703ae0`).
-Checked on the radio FROM RAM (AXI 518.2 of 524.3 kB, 6.1 kB left);
-committed and pushed, the owner's word, and going into flash over SWD:
-`build_flash/bringup.bin`, 292 752 bytes, sha256 `3fc4e261…`.
+Checked on the radio from RAM first (AXI 518.2 of 524.3 kB in a RAM
+image, 6.1 kB left - STANAG will not fit one: flash over SWD from now).
 
 On the air against the HackRF at 14109 kHz: the AFC finds the ~-81 Hz
 between the two references by itself, every word at quality 48; with the
@@ -23,8 +27,7 @@ HackRF moved a further -250..+150 Hz, 30-36 words of 36, the AFC moving
 up to 400 Hz; SNR 4 from zero, 24 of 36. Host: +-400 Hz at SNR 10 and 4;
 30 min of noise, strong carriers, RTTY, PSK31, CW, JTTY leave it at 0.
 
-**The radio's state**: 14.109 MHz, ALE, from RAM; the FRAM holds mode 17,
-which the flash image does not know (it boots AM, allowed).
+**The radio's state**: 14.109 MHz, ALE, from flash.
 
 **Open**: a REAL station - the one independent check of the Golay's
 bit conventions, shared by upstream's decoder and this file's generator
