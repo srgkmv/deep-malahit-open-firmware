@@ -66,7 +66,7 @@ OFF_U16(ident_modo_activo,  ident_modo_mete)
 /* psk31_activo, psk31_process: the real ones since 22/11/2026 (psk31.c, step 44) */
 /* rds_activo, rds_feed: the real ones since 22/11/2026 (rds.c, step 40) */
 /* sstv_activo, sstv_process: the real ones since 22/11/2026 (sstv.c, step 48) */
-OFF_U16(stanag_modo_activo, stanag_modo_mete)
+/* stanag_modo_activo, stanag_modo_mete: the real ones since 23/11/2026 (stanag_*.c, s4415.c, step 52) */
 /* wefax_activo, wefax_process: the real ones since 22/11/2026 (wefax.c, step 47) */
 OFF_U16(wspr_modo_activo,   wspr_modo_mete)
 

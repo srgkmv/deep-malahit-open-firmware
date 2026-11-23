@@ -22,6 +22,7 @@
 #include "hell.h"         /* ../../User - demod_hell() */
 #include "jtty_modo.h"    /* ../../User - demod_jtty() */
 #include "ale_modo.h"     /* ../../User - demod_ale() */
+#include "stanag_modo.h"  /* ../../User - demod_stanag() */
 
 /*
  * Upstream's call: 512 frames at 192 kHz in (with rf_doble), 512 stereo
@@ -86,7 +87,7 @@ void demod_init(void)
                             "r"(demod_rtty), "r"(demod_graba));
     __asm__ volatile ("" :: "r"(demod_psk31), "r"(demod_navtex), "r"(demod_dsc),
                             "r"(demod_wefax), "r"(demod_sstv), "r"(demod_hell),
-                            "r"(demod_jtty), "r"(demod_ale));
+                            "r"(demod_jtty), "r"(demod_ale), "r"(demod_stanag));
 }
 
 void demod_block(const int16_t *rx, int16_t *tx, uint32_t frames)
@@ -195,7 +196,9 @@ void __wrap_rds_feed(const float *mpx, uint32_t n)
 #define DEMOD_GRABA 0
 #endif
 #if DEMOD_GRABA
-#define GRABA_N  30000U                     /* 2.5 s at 12 kHz */
+/* 2 s at 12 kHz: 96 kB, what D2 has left beside STANAG's 56 kB pool
+ * (2.5 s, 120 kB, until step 52) */
+#define GRABA_N  24000U
 __attribute__((section(".d2sram"), aligned(32))) float g_graba[GRABA_N];
 volatile uint32_t g_graba_n = GRABA_N;      /* GRABA_N = not recording */
 #endif
@@ -220,6 +223,19 @@ void __wrap_psk31_process(const float *audio, uint32_t n)
     for (i = 0U; i < n && g_graba_n < GRABA_N; i++) { g_graba[g_graba_n++] = audio[i]; }
 #endif
     __real_psk31_process(audio, n);
+}
+
+/* And what STANAG is fed (step 52): the 4285 read on the host and not from
+ * the radio - the same recorder, the same dump. */
+void __real_stanag_modo_mete(const float *audio, uint16_t n);
+void __wrap_stanag_modo_mete(const float *audio, uint16_t n)
+{
+#if DEMOD_GRABA
+    uint32_t i;
+
+    for (i = 0U; i < n && g_graba_n < GRABA_N; i++) { g_graba[g_graba_n++] = audio[i]; }
+#endif
+    __real_stanag_modo_mete(audio, n);
 }
 
 /*
@@ -429,6 +445,22 @@ SWD_ENTRY void demod_ale(int on)
     demod_quieto(0);
     if (on && !ok) {
         console_printf("  *** ALE did not start: the borrowed RAM is too small or taken (src/prestamo.c) ***\n");
+    }
+}
+
+/* STANAG on or off - upstream's stanag_modo_start() takes the borrowed RAM
+ * (32 kB for the detector or the 4285, 39 for the 4415) for whichever of
+ * its three jobs the waveform button names, and says 0 if it cannot. */
+SWD_ENTRY void demod_stanag(int on)
+{
+    uint8_t ok = 1U;
+
+    if ((uint8_t)(on != 0) == stanag_modo_activo()) { return; }
+    demod_quieto(1);
+    if (on) { ok = stanag_modo_start(); } else { stanag_modo_stop(); }
+    demod_quieto(0);
+    if (on && !ok) {
+        console_printf("  *** STANAG did not start: the borrowed RAM is too small or taken (src/prestamo.c) ***\n");
     }
 }
 

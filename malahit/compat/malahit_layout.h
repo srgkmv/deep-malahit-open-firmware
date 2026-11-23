@@ -564,4 +564,11 @@
  * in the reserve of 36. */
 #define UDG_COLS_ALE { 4, 168, 240, 312, -476 }
 
+/* STANAG's identifier table (step 52) - and IDENT's, which shares it:
+ * Period, Signal, Quality. Upstream's { 8, 120, 680 } are for 800 px.
+ * Measured in font_ui_10b: "106,67 ms" 50 px in 68, "STANAG 4538 (ALE 3G)"
+ * 114 in 268, and the loop instrument's third field, "999 ms polls, 999
+ * drawing", 127 in 136. */
+#define UDG_COLS_IDENT { 4, 72, 340 }
+
 #endif /* MALAHIT_LAYOUT_H */

@@ -3136,6 +3136,21 @@ jttycadena: out/jttycadena ; ./out/jttycadena
 
 comprueba: jttycadena
 
+# UNA EMISION DE STANAG 4285 A UN FICHERO (23/11/2026, port del Malahit), para
+# mandarla a la radio con malahit/tools/hackrf_gen.py audio. Ver
+# sim/stanag_genera.c. Herramienta, no banco: fuera de "comprueba".
+out/stanaggenera: sim/stanag_genera.c sim/stanag_tx.h
+	@mkdir -p out
+	$(CC) $(CFLAGS) -Isim -o $@ sim/stanag_genera.c $(LDLIBS)
+
+# STANAG COMO LO LLEVA LA RADIO, CONTRA CUALQUIER FICHERO (23/11/2026, port del
+# Malahit). Ver sim/stanag_radio.c. Pide un fichero: fuera de "comprueba".
+out/stanagradio: sim/stanag_radio.c $(FIRMWARE)/User/stanag_modo.c \
+                 $(FIRMWARE)/User/stanag_det.c $(FIRMWARE)/User/stanag_rx.c \
+                 $(FIRMWARE)/User/s4415.c $(FIRMWARE)/User/hfdl_viterbi.c
+	@mkdir -p out
+	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -Ihostinc -Isim -o $@ $^ $(LDLIBS)
+
 # ALE COMO LO LLEVA LA RADIO, CONTRA CUALQUIER FICHERO (22/11/2026, port del
 # Malahit). Ver sim/ale_radio.c. Pide un fichero: fuera de "comprueba".
 out/aleradio: sim/ale_radio.c $(FIRMWARE)/User/ale_modo.c \

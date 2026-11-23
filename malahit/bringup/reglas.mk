@@ -467,6 +467,18 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/dxcc.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ale_rx.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ale_golay.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ale_modo.c
+# stanag_*.c STANAG: the detector that names a waveform by the period it
+#            repeats at (stanag_det.c), the 4285/4481 demodulator that
+#            reads text (stanag_rx.c), the 4415 at 75 bps (s4415.c), and
+#            the mode behind one button (stanag_modo.c); 32-39 kB of the
+#            borrowed RAM, never two at once (step 52)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/stanag_det.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/stanag_rx.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/s4415.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/stanag_modo.c
+# hfdl_viterbi.c  HFDL's K=7 rate-1/2 Viterbi, the same code the 4285 and
+#            the 4415 use; HFDL itself is not grafted yet (step 52)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_viterbi.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_digi.c
 #
 # THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]
@@ -613,6 +625,8 @@ LDFLAGS += -Wl,--wrap=rds_feed
 # And psk31_process(), for demod.c's recorder of the decoder's audio (the
 # bench's: demod_graba).
 LDFLAGS += -Wl,--wrap=psk31_process
+# and STANAG's, for the same recorder (step 52)
+LDFLAGS += -Wl,--wrap=stanag_modo_mete
 LDFLAGS += -nostdlib -nostartfiles
 LDFLAGS += -Wl,--print-memory-usage
 # A RAM image is by definition both writable and executable, so the linker's

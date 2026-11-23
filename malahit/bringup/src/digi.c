@@ -33,6 +33,9 @@
  *          table over the whole area: Time Offset Qual. Message Country
  *   ALE    Borrar | quality bar / "last one N min" | words count + dot,
  *          a table over the whole area: Callsign Type kHz Qual. N
+ *   STANAG Borrar | Auto/S4285/... | speed | interleave | format | state,
+ *          over the whole area: the identifier's table (Period Signal
+ *          Quality), or the 4285's or the 4415's text
  *
  * and upstream's tap on each (rtty_shift_siguiente(), rtty_baud_
  * siguiente(), the Auto toggle, cw_set_aprende()) - on the press here,
@@ -59,6 +62,7 @@
 #include "hell.h"
 #include "jtty_modo.h"
 #include "ale_modo.h"
+#include "stanag_modo.h"
 #include "board.h"         /* board_millis() - ALE's poll and its clock */
 #include "demod.h"         /* demod_quieto(): a decoder reconfigured, no block through it */
 #include "idioma.h"        /* ../../User - tr() */
@@ -705,6 +709,123 @@ static void ale_sync(void)
     s_chip[sizeof s_chip - 1U] = '\0';
 }
 
+/*
+ * STANAG - step 52, 23/11/2026. Upstream's digi_sync() STANAG branch, over
+ * the whole area as JTTY's and ALE's, in its three jobs behind the waveform
+ * button (btn2: Auto -> S4285 -> S4529 -> S4481 -> S4538 -> S4415):
+ *
+ *   Auto, S4529, S4538  the identifier: a zebra table, Period / Signal /
+ *                       Quality, its first row upstream's loop instrument
+ *   S4285, S4481        the 4285's text, one column; speed (btn3, with
+ *                       AUTO), interleave (btn4), output format (btn5);
+ *                       upstream's bar of the interleaver's filling is
+ *                       left out - see below
+ *   S4415               the 4415's text; only the format (btn5)
+ *
+ * The chip is stanag_modo_estado_txt(), the dot "a period is measured".
+ *
+ * NOT REPAINTED WHOLE: upstream repaints the panel at each beat of
+ * stanag_modo_latido(), four times a second, which on the DEEPSDR's
+ * parallel bus is cheap and on this SPI panel is ~90 ms each. Here each
+ * beat goes through ui_digi_draw_cambios() - the rows, chip and buttons
+ * that changed - with the bar left out of it (its every move would repaint
+ * everything: firma_caja() holds it) and drawn on its own, and buttons 4
+ * and 5, which cambios() does not watch, compared by hand.
+ */
+static uint32_t    s_sg_latido = 0xFFFFFFFFUL;
+static uint16_t    s_sg_barra_v;
+static const char *s_sg_b4;
+static const char *s_sg_b5;
+static uint32_t    s_sg_hash[STANAG_MODO_LINEAS];
+static uint32_t    s_sg_log_t;
+
+static void stanag_sync(void)
+{
+    uint8_t n = JTTY_FILAS, k, hay = 0U;
+
+    if (n > (uint8_t)STANAG_MODO_LINEAS) { n = (uint8_t)STANAG_MODO_LINEAS; }
+    memset(&s_st, 0, sizeof s_st);
+    s_st.y     = (int16_t)DIGI_SCOPE_Y;
+    s_st.h     = (int16_t)(FAX_Y + FAX_ALTO - DIGI_SCOPE_Y);
+    s_st.filas = n;
+    s_st.btn   = tr("Borrar", "Clear");
+    s_st.btn2  = stanag_modo_forma_txt(stanag_modo_forma());
+    s_st.cebra = 1U;
+    if (stanag_modo_4415()) {
+        s_st.btn5 = stanag_modo_fmt_txt();
+    } else if (stanag_modo_demod()) {
+        uint16_t hechos = 0U, hacen = 0U;
+
+        stanag_modo_llenado(&hechos, &hacen);
+        s_st.btn3      = stanag_modo_vel_txt();
+        s_st.btn4      = stanag_modo_entre_txt();
+        s_st.btn5      = stanag_modo_fmt_txt();
+        /* The bar's width kept, so buttons 3-5 stand where they should,
+         * but the bar NOT drawn: upstream shows the interleaver filling in
+         * it, but it shares its slot with the waveform button (UDG_BAR_X is
+         * UDG_BTN2_X), which on 800 px leaves some of it and on 480 hides
+         * it; the filling is in the chip and in the last row anyway. */
+        (void)hechos;
+        s_st.barra_w   = (int16_t)DIGI_RTTY_BARRA_W;
+        s_st.barra_on  = 0U;
+    } else {
+        s_st.cols    = ui_digi_cols_ident;
+        s_st.ncols   = UI_DIGI_COLS_IDENT_N;
+        s_st.titulos = tr("Periodo\tSeñal\tCalidad", "Period\tSignal\tQuality");
+    }
+    while ((hay < n) && (hay < stanag_modo_lineas())) { hay++; }
+    for (k = 0U; k < hay; k++) { s_st.fila[k] = stanag_modo_linea(k); }
+    s_st.chip = stanag_modo_estado_txt();
+    s_st.enganchado = (uint8_t)(stanag_modo_periodo() != 0U);
+    strncpy(s_chip, s_st.chip ? s_st.chip : "", sizeof s_chip - 1U);
+    s_chip[sizeof s_chip - 1U] = '\0';
+}
+
+/* The panel through cambios(), the bar as it was last drawn; then the bar
+ * and buttons 4 and 5 if they moved. Returns 0 if nothing could be drawn. */
+static uint8_t stanag_pinta(void)
+{
+    ui_digi_state_t c = s_st;
+
+    c.barra_v = s_sg_barra_v;
+    if (!ui_digi_draw_cambios(&c)) { return 0U; }
+    if (s_st.barra_on && s_st.barra_v != s_sg_barra_v) {
+        ui_digi_draw_barra(&s_st);
+        s_sg_barra_v = s_st.barra_v;
+    }
+    if (s_st.btn4 != s_sg_b4) { ui_digi_draw_boton4(&s_st); s_sg_b4 = s_st.btn4; }
+    if (s_st.btn5 != s_sg_b5) { ui_digi_draw_boton5(&s_st); s_sg_b5 = s_st.btn5; }
+    return 1U;
+}
+
+/* From the main loop, STANAG on: each row that changed to the console, at
+ * most once a second - the 4285's text grows a character at a time. */
+void digi_stanag_poll(void)
+{
+    uint32_t now = board_millis();
+    uint8_t  k, n;
+
+    if ((now - s_sg_log_t) < 1000U) { return; }
+    s_sg_log_t = now;
+    n = stanag_modo_lineas();
+    if (n > (uint8_t)STANAG_MODO_LINEAS) { n = (uint8_t)STANAG_MODO_LINEAS; }
+    for (k = 0U; k < n; k++) {
+        const char *l = stanag_modo_linea(k), *p;
+        uint32_t h = 2166136261UL;
+
+        for (p = l; *p != '\0'; p++) { h = (h ^ (uint8_t)*p) * 16777619UL; }
+        if (h != s_sg_hash[k]) {
+            char t[STANAG_MODO_LARGO + 8U];
+            uint8_t i;
+
+            s_sg_hash[k] = h;
+            for (i = 0U; l[i] != '\0' && i < sizeof t - 1U; i++) { t[i] = (l[i] == '\t') ? '|' : l[i]; }
+            t[i] = '\0';
+            console_printf("  stanag: %u %s\n", (uint32_t)k, t);
+        }
+    }
+}
+
 void digi_pon(uint8_t on)
 {
     s_on = (uint8_t)(on != 0U);
@@ -980,6 +1101,18 @@ static void osciloscopio(void)
 void digi_repinta(void)
 {
     if (!s_on) { return; }
+    if (stanag_modo_activo()) {
+        stanag_sync();
+        ui_digi_olvida();
+        s_sg_barra_v = s_st.barra_v;
+        if (stanag_pinta()) {
+            s_sg_b4 = s_st.btn4;
+            s_sg_b5 = s_st.btn5;
+            s_sg_latido = stanag_modo_latido();
+            s_todo = 0U;
+        }
+        return;
+    }
     if (ale_modo_activo()) {
         ale_sync();
         ui_digi_olvida();
@@ -1041,6 +1174,18 @@ void digi_repinta(void)
 void digi_dibuja(void)
 {
     if (!s_on) { return; }
+    if (stanag_modo_activo()) {
+        /* upstream's: at each beat of the latido (four a second, and at
+         * every new row); here only what changed (above) */
+        uint32_t t;
+
+        if (s_todo) { digi_repinta(); return; }
+        t = stanag_modo_latido();
+        if (t == s_sg_latido) { return; }
+        stanag_sync();
+        if (stanag_pinta()) { s_sg_latido = t; }
+        return;
+    }
     if (ale_modo_activo()) {
         /* the whole panel when a row of the table moves; the bar and the
          * chip when their text or the dot do - upstream repaints the panel
@@ -1180,6 +1325,48 @@ uint8_t digi_toque(uint16_t x, uint16_t y, uint8_t nuevo)
      * if it finds none - the same search that moves the centre by itself,
      * so a tap only matters where that one cannot decide.
      */
+    if (stanag_modo_activo()) {
+        /* upstream's five: Borrar; the waveform round (which may change the
+         * job and the whole layout); and, by job, speed, interleave and
+         * format - each turned as upstream does */
+        uint8_t hit = 1U;
+
+        stanag_sync();
+        demod_quieto(1);
+        if (ui_digi_boton_hit(&s_st, x, y)) {
+            stanag_modo_borra();
+            memset(s_sg_hash, 0, sizeof s_sg_hash);
+            console_printf("  digi: STANAG cleared\n");
+        } else if (ui_digi_boton2_hit(&s_st, x, y)) {
+            stanag_modo_forma_pon((uint8_t)((stanag_modo_forma() + 1U) % STANAG_FORMAS));
+            console_printf("  digi: STANAG waveform %s%s\n",
+                           stanag_modo_forma_txt(stanag_modo_forma()),
+                           stanag_modo_activo() ? "" : " - REFUSED, the mode is off");
+        } else if (stanag_modo_demod() && ui_digi_boton3_hit(&s_st, x, y)) {
+            /* upstream's round, but past what does not fit: 2400 bps with
+             * the long interleave asks more than the 32 kB, and upstream's
+             * stanag_modo_vel_pon() then keeps the speed it had - so the
+             * round stuck at 1200 for good. Here the next one that takes. */
+            uint8_t n = stanag_modo_vel_n(), v0 = stanag_modo_vel(), k;
+
+            for (k = 1U; k < n; k++) {
+                stanag_modo_vel_pon((uint8_t)((v0 + k) % n));
+                if (stanag_modo_vel() != v0) { break; }
+            }
+            console_printf("  digi: STANAG speed %s\n", stanag_modo_vel_txt());
+        } else if (stanag_modo_demod() && ui_digi_boton4_hit(&s_st, x, y)) {
+            stanag_modo_entre_pon((uint8_t)(stanag_modo_entre() ? 0U : 1U));
+            console_printf("  digi: STANAG interleave %s\n", stanag_modo_entre_txt());
+        } else if ((stanag_modo_demod() || stanag_modo_4415()) && ui_digi_boton5_hit(&s_st, x, y)) {
+            stanag_modo_fmt_pon((uint8_t)((stanag_modo_fmt() + 1U) % stanag_modo_fmt_n()));
+            console_printf("  digi: STANAG format %s\n", stanag_modo_fmt_txt());
+        } else {
+            hit = 0U;
+        }
+        demod_quieto(0);
+        if (hit) { s_todo = 1U; }
+        return 1U;
+    }
     if (ale_modo_activo()) {
         ale_sync();
         if (ui_digi_boton_hit(&s_st, x, y)) {

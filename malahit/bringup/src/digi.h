@@ -67,4 +67,8 @@ void digi_hell_poll(uint8_t pinta);
 void digi_ale_poll(void);
 void digi_ale_borra(void);
 
+/* STANAG (step 52): its rows to the console when they change, once a
+ * second at most - from the main loop, STANAG on. */
+void digi_stanag_poll(void);
+
 #endif /* MALAHIT_DIGI_H */

@@ -78,6 +78,8 @@ static void modos_fam(uint8_t fam, const char *ppm)
         { 1, "NAVTEX", "Avisos marítimos", "Marine warnings" },
         { 1, "DSC", "Llamada marítima", "Maritime DSC" },
         { 1, "JTTY", "Teletipo digital", "Digital teletype" },
+        { 1, "ALE", "Sondeos de HF", "HF soundings" },
+        { 1, "STANAG", "Módem OTAN", "NATO modem" },
         { 2, "WEFAX", "Mapas del tiempo", "Weather charts" },
         { 2, "SSTV", "Fotos por radio", "Pictures over radio" },
         { 2, "SSTV-FM", "Fotos en FM", "Pictures on FM" },
@@ -755,9 +757,92 @@ static void digi_ale(const char *nombre, uint8_t eng, uint8_t en)
     escribe(nombre);
 }
 
+/*
+ * STANAG - paso 52 del port, 23/11/2026: la tabla del identificador
+ * (UDG_COLS_IDENT) y el texto del 4285 con sus cinco botones y la barra del
+ * entrelazador, como los arma src/digi.c. Se mide la tabla y que los
+ * botones tengan sitio.
+ */
+static void digi_stanag(const char *nombre, uint8_t demod, uint8_t en)
+{
+    static const char *const k_ident[] = {
+        "BUCLE\t180 ms the loop\t999 ms polls, 999 drawing",
+        "106,67 ms\tS4285 / S4481 PSK\t100%",
+        "211,69 ms\tSTANAG 4529\t98%",
+        "13,33 ms\tSTANAG 4538 (ALE 3G)\t31%",
+    };
+    static const char *const k_texto[] = {
+        "ZCZC 241015 FROM R1TEST TO ALL STATIONS",
+        "THIS IS A STANAG 4285 TEST AT 600 BPS SHORT",
+        "THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG 0123456789",
+        "NNNN",
+        "pre 12/12  rec 0,3%  fill 372/372",
+    };
+    ui_digi_state_t st;
+    uint8_t i, k;
+    int16_t h = (int16_t)(DIGI_PANEL_Y + DIGI_PANEL_H - DIGI_SCOPE_Y);
+
+    fondo_principal();
+    memset(&st, 0, sizeof st);
+    st.y = DIGI_SCOPE_Y;
+    st.h = h;
+    st.filas = (uint8_t)((h - UDG_HDR_H) / UDG_LINE_H - 1);
+    st.btn = en ? "Clear" : "Borrar";
+    st.btn2 = demod ? "S4285" : "Auto";
+    st.cebra = 1U;
+    st.chip = demod ? "600 c 2/3 b" : (en ? "ident. only" : "solo ident.");
+    st.enganchado = 1U;
+    if (demod) {
+        st.btn3 = "A1200";
+        st.btn4 = en ? "Short" : "Corto";
+        st.btn5 = "ASCII";
+        st.barra_w = DIGI_RTTY_BARRA_W;      /* src/digi.c: the width, not the bar */
+        for (i = 0; i < sizeof k_texto / sizeof k_texto[0]; i++) {
+            st.fila[i] = k_texto[i];
+            cabe("stanag", k_texto[i], &font_ui_10b, GFX2_W - 2 * UDG_PAD_X);
+        }
+        printf("  digi stanag: barra x %d w %d, btn3 x %d w %d, btn4 x %d w %d, btn5 x %d w %d\n",
+               ui_digi_barra_x_dbg(&st), ui_digi_barra_w_dbg(&st),
+               ui_digi_btn3_x_dbg(&st), ui_digi_btn3_w_dbg(&st),
+               ui_digi_btn4_x_dbg(&st), ui_digi_btn4_w_dbg(&st),
+               ui_digi_btn5_x_dbg(&st), ui_digi_btn5_w_dbg(&st));
+        cabe("boton3", st.btn3, &font_ui_10b, ui_digi_btn3_w_dbg(&st) - 8);
+        cabe("boton4", st.btn4, &font_ui_10b, ui_digi_btn4_w_dbg(&st) - 8);
+        cabe("boton5", st.btn5, &font_ui_10b, ui_digi_btn5_w_dbg(&st) - 8);
+    } else {
+        st.cols = ui_digi_cols_ident;
+        st.ncols = UI_DIGI_COLS_IDENT_N;
+        st.titulos = en ? "Period\tSignal\tQuality" : "Periodo\tSeñal\tCalidad";
+        for (i = 0; i < sizeof k_ident / sizeof k_ident[0]; i++) {
+            const char *p = k_ident[i];
+
+            st.fila[i] = k_ident[i];
+            for (k = 0; k < UI_DIGI_COLS_IDENT_N && *p; k++) {
+                char campo[40];
+                uint8_t n = 0;
+                int16_t x = ui_digi_cols_ident[k];
+                int16_t hasta = (k + 1U < UI_DIGI_COLS_IDENT_N)
+                                ? (int16_t)(ui_digi_cols_ident[k + 1U] - x - 4)
+                                : (int16_t)(GFX2_W - UDG_PAD_X - x);
+
+                while (*p && *p != '\t' && n < sizeof campo - 1U) { campo[n++] = *p++; }
+                campo[n] = '\0';
+                if (*p == '\t') { p++; }
+                cabe("ident", campo, &font_ui_10b, hasta);
+            }
+        }
+    }
+    cabe("boton2", st.btn2, &font_ui_10b, UDG_BTN2_W - 8);
+    ui_digi_draw_texto(&st);
+    escribe(nombre);
+}
+
 int main(void)
 {
     printf("menus del Malahit, 480 x 320\n");
+    digi_stanag("stanag", 0U, 0U);
+    digi_stanag("stanag_en", 0U, 1U);
+    digi_stanag("stanag_rx", 1U, 1U);
     digi_ale("ale", 1U, 0U);
     digi_ale("ale_en", 0U, 1U);
     digi_cw("cw", "20 ppm 14 dB", "Borrar", "Aprende", 0U);

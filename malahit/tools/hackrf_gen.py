@@ -11,6 +11,7 @@ Test signals for the decoders, sent by a HackRF into the radio - 22/11/2026.
     tools/hackrf_gen.py sstv --sstv-mode scottie1 --snr 20 --out s.iq
     tools/hackrf_gen.py hell --snr 15 --out h.iq
     tools/hackrf_gen.py ale --call R1TEST --snr 10 --out a.iq
+    tools/hackrf_gen.py audio --in s.f32 --tone 1800 --snr 15 --out s.iq
     tools/hackrf_gen.py carrier --seconds 10 --out c.iq
     hackrf_transfer -t f.iq -f <carrier Hz - 200000> -s 2000000 -a 0 -x 47
 
@@ -725,6 +726,25 @@ def ale_baseband(a):
                                         f'{a.offset_hz:+.0f} Hz')
 
 
+def audio_baseband(a):
+    """Any 12 kHz f32 audio file - what a sideband receiver should hand its
+    decoders, written by a host tool (deepsdr-ui/out/stanaggenera, ...) -
+    sent as USB: the file's positive frequencies, --tone of them at the
+    centre (0 Hz here, so the dial is the HackRF's centre + 200 kHz -
+    --tone). Its power where it is not silent is 1, the carrier's of the
+    other modes, so --snr means the same thing."""
+    x = np.fromfile(a.input, dtype=np.float32).astype(np.float64)
+    x = resample_poly(x, FS_LO // 12000, 1)
+    X = np.fft.fft(x)
+    f = np.fft.fftfreq(len(x), 1.0 / FS_LO)
+    X[f < 0] = 0
+    X[f > 0] *= 2
+    z = np.fft.ifft(X) * np.exp(-2j * np.pi * a.tone * np.arange(len(x)) / FS_LO)
+    vivo = np.abs(z) > 1e-4 * np.max(np.abs(z))
+    z = z / np.sqrt(np.mean(np.abs(z[vivo]) ** 2))
+    return z, f'audio {a.input}, {len(x) / FS_LO:.1f} s, {a.tone:.0f} Hz at the centre'
+
+
 def carrier_baseband(a):
     return np.ones(int(a.seconds * FS_LO), dtype=np.complex128), 'carrier'
 
@@ -906,6 +926,11 @@ def main():
     p.add_argument('--offset-hz', type=float, default=0.0, help='Hz of mistuning')
     p.add_argument('--lead', type=float, default=1.0)
     p.set_defaults(build=ale_baseband, tone=1625.0)
+
+    p = sub.add_parser('audio', help='any 12 kHz f32 audio file, sent as USB')
+    common(p)
+    p.add_argument('--in', dest='input', required=True, help='the f32 file at 12 kHz')
+    p.set_defaults(build=audio_baseband, tone=1800.0)
 
     a = ap.parse_args()
     x, what = a.build(a)

@@ -1855,6 +1855,87 @@ Each step should end with something visible on the radio.
    word, quality 45 and 37. Borrar, a menu over the screen during a
    sounding, JTTY <-> ALE <-> USB: as they should. AXI 518.2 of 524.3 kB
    in the RAM image (6.1 kB left); the flash image 292 752 bytes.
+52. **STANAG, and four fixes to upstream's 4285 acquisition.**
+   *23/11/2026, from flash, against the HackRF at 14109 kHz* - upstream's
+   stanag_det.c, stanag_rx.c, s4415.c and stanag_modo.c, with HFDL's
+   hfdl_viterbi.c (the same K=7 code), stub gone; entry 18 (USB), "Módem
+   OTAN" / "NATO modem" in Digital (upstream's "Módem naval OTAN" is 92 px
+   in a 90 px cell). Its three jobs behind one waveform button share 32-39
+   kB of the borrowed RAM. **The screen is upstream's** over the whole
+   area: Borrar; the waveform round (Auto / S4285 / S4529 / S4481 / S4538 /
+   S4415); with the detector, its zebra table Period / Signal / Quality
+   (columns through a new `#ifndef UDG_COLS_IDENT` in User/ui_digi.c, {
+   4, 72, 340 } here; IDENT shares them) whose first row is upstream's loop
+   instrument; with the 4285, its text and speed / interleave / format;
+   with the 4415, text and format. The loop instrument's three numbers
+   (`ui_bucle_peor_us()` and its two sisters) are measured in this port's
+   main.c - the worst pass, cw_poll() and the decoders' drawing - and
+   cleared on entering the mode. Three things of this port's: upstream
+   repaints the panel four times a second, ~90 ms each on this SPI panel,
+   so here each beat goes through `ui_digi_draw_cambios()` (only what
+   changed); upstream's bar of the interleaver's filling shares its slot
+   with the waveform button and is left out (the filling is in the chip
+   and the last row); and the speed button skips what does not fit -
+   upstream's round stuck at 1200 for good with the long interleave,
+   because 2400/long does not fit the 32 kB and stanag_modo_vel_pon()
+   keeps the speed it had.
+   **The bench**: `deepsdr-ui/out/stanaggenera` writes a 4285 emission
+   from upstream's own sim/stanag_tx.h (the inverse of stanag_rx.c,
+   validated round trip against the air recording, which this clone does
+   not have), `tools/hackrf_gen.py audio --in f.f32 --tone 1800` sends any
+   12 kHz audio file as USB, and `deepsdr-ui/out/stanagradio f.f32 S4285
+   600 S` runs the mode the radio's way (`STANAG_TRAZA=1`: its state each
+   second). The identifier named the 4285 on the air at once - "106,67 ms
+   S4285 / S4481 PSK 100%".
+   **The 4285 read nothing on the air** - 18 % of frames good, probes at
+   50 %, the text never - though the decoder's input, recorded on the
+   radio (`DEMOD_GRABA=1`, now also wrapping stanag_modo_mete()), matched
+   the transmitted waveform at 0.996 shifted -84 Hz. The difference was
+   the decoder's own state: started with the signal, upstream's demod read
+   266 frames of 266; started after some seconds of noise, as a radio
+   always is, it was a lottery - 3 s of noise, 95 of 259; 20 s, 39 of 238;
+   25 s, none. Four causes in upstream's stanag_rx.c, each found by
+   tracing on the host, all four fixed there (the owner's yes, 23/11/2026):
+   1. **The preamble's echo.** Its 80 symbols are a period-31 m-sequence
+      repeated, so the template 31 symbols off matches 49 of 80: 0.56 when
+      the true peak is 0.91, almost twice the 0.30 threshold. The sweep
+      could win the echo, the +-4-sample refinement cannot leave it, and
+      tracking holds it forever (0.56 passes). `quita_alias()` checks the
+      positions 155 samples either way after every acquisition, climbing
+      while it improves (the sweep sometimes stops two echoes away), and
+      refines time and carrier again where it lands.
+   2. **Half the frame was never searched.** Acquisition starts with 1744
+      samples ahead of the reading point, and each position had to have a
+      whole frame written behind it (cabe_barrer()): only the first
+      460-700 positions of the 1280, and always the same frame phases,
+      since the reading point moves a frame at a time; the "other half"
+      the sweep alternated to was almost never searchable. Now
+      `cabe_correlar()` lets every position whose 400 correlation samples
+      are written be searched - a whole frame - with two carriers a turn
+      instead of four (the same cost), the halves gone; a winner without
+      its whole frame yet waits, as upstream already handles.
+   3. **A lock that gives no probes was kept.** Eight frames in a row with
+      the probes under SONDEOS_MIN (0.85 s) now drop the lock and the
+      carrier.
+   4. **The fast relock believed the old carrier.** A weak lock made on
+      noise or across the emission's start could leave the carrier 50 Hz
+      off, and the fine residual (atan2/31, univocal to +-38.7 Hz) reads
+      50 as -27 and pushes further out; the fast relock kept finding that
+      carrier. `busca_rapida()` now refines the carrier +-50 Hz as the full
+      sweep does.
+   After the four, on the host: noise 0-50 s before the signal, offsets
+   -82 / 0 / +60 Hz - 30 cases of 30 locking, 90-100 % of frames good
+   (most 98-100 %); text at 600 S down to SNR 6, at 1200 S and 300 L.
+   Upstream's benches that can run here (stanagdet, stanagmodo,
+   stanaglatido, stanagaire, stanagfft, stanagfase, stanagtabla) green;
+   the ones that want the air recordings (stanagrx, stanagbusca, s4415,
+   stanagmulti) cannot run in this clone - so the fixes are proven on
+   synthetic signals and the HackRF only. The DEEPSDR builds (+520 bytes)
+   and its 29 checks are green; its screens byte-identical.
+   **On the air, from flash**, the radio listening 20 s first: 600 S - the
+   text, 227 frames good of 234, offset -81 Hz; 1200 S - 255 of 256 and
+   the text; 300 L - 342 of 342 and the text. The 4415 has no generator
+   here and is untested on the radio. Flash image 333 472 bytes.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

@@ -4,6 +4,36 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
+## START HERE — 23/11/2026, evening: step 52 (STANAG) IN FLASH, committed with it
+
+**In flash: this commit's code** (step 52) - `build_flash/bringup.bin`,
+333 472 bytes, sha256 `69a23526…`, written with `swd.sh flashsrst` and
+verified; the owner's press started it (STANAG from the FRAM, 2355 ms).
+**Step 52** (`PORTING.md` 52) - upstream's STANAG on the decoders'
+screen, and FOUR FIXES TO UPSTREAM'S User/stanag_rx.c, the owner's yes
+(23/11/2026), in their own commit: the 4285 read nothing on the
+air when it had listened to noise first (always, on a radio) - the
+preamble's 31-symbol echo, half the frame never searched, a lock without
+probes kept, the fast relock trusting a wrong carrier. After them, from
+flash on the air: 600 S, 1200 S, 300 L read, 97-100 % of frames.
+
+**The radio's state**: 14.109 MHz, STANAG, S4285 300 bps long, from flash.
+
+**Next, the owner's order**: IDENT (it shares STANAG's detector and
+table), then APRS, PKT300, AIS, FT8, WSPR, HFDL. **Open**: (1) the 4415
+has no generator here and is untested on the radio; (2) a real 4285 station (the French Navy, NATO shore stations: 4-16 MHz,
+mostly encrypted; the 4481 test message is in clear); (3) still open
+from step 51: a real ALE station.
+
+**The bench for STANAG**: `deepsdr-ui/out/stanaggenera f.f32 600 S 30
+["text"]` (75..2400, S/L), `tools/hackrf_gen.py audio --in f.f32 --tone
+1800 [--snr N] --out f.iq`, `hackrf_transfer -t f.iq -f <dial + 1800 -
+200000> -s 2000000 -a 0 -x 47` with the radio on the dial in STANAG;
+host: `deepsdr-ui/out/stanagradio f.f32 S4285 600 S` (`STANAG_TRAZA=1`),
+and `-DSTANAG_RX_TRAZA` on stanag_rx.c prints every lock with its
+correlation around. Console: `stanag: <row> <text>` once a second when a
+row changes; `digi: STANAG ...` for each button.
+
 ## START HERE — 23/11/2026: step 51 (ALE, with an AFC) IN FLASH (14c6796), over SWD
 
 **In flash: `14c6796`** - `build_flash/bringup.bin`, 292 752 bytes, sha256

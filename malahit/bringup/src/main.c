@@ -69,6 +69,7 @@
 #include "hell.h"         /* ../../User - upstream: the Feld-Hell decoder */
 #include "jtty_modo.h"    /* ../../User - upstream: WSJT-X's JTTY */
 #include "ale_modo.h"     /* ../../User - upstream: ALE 2G soundings */
+#include "stanag_modo.h"  /* ../../User - upstream: STANAG, identified or read */
 #include "rtty_scope.h"   /* ../../User - its spectrum, for navtex_espectro() */
 #include "config.h"       /* ../../User - CONFIG_RTTY_SHIFT_MIN/MAX_HZ */
 #include "nb.h"           /* ../../User - upstream: the blanker, cw_report() */
@@ -6271,6 +6272,24 @@ static void texto_char(char c)
     if (s_cw_n >= (uint8_t)(sizeof s_cw_lin - 1U)) { cw_linea_suelta(); }
 }
 
+/*
+ * THE LOOP'S WORST TIMES, under upstream's names - step 52, 23/11/2026.
+ * stanag_modo.c shows them on its first row ("BUCLE 180 ms the loop, 95 ms
+ * polls, 12 drawing"), upstream's instrument for a radio that chokes: the
+ * worst pass of the main loop, of the decoders' poll (cw_poll() here) and
+ * of the decoders' drawing, since boot, in microseconds.
+ */
+static uint32_t s_bucle_max_us, s_polls_max_us, s_dibujo_max_us;
+
+uint32_t ui_bucle_peor_us(void)  { return s_bucle_max_us; }
+uint32_t ui_polls_peor_us(void)  { return s_polls_max_us; }
+uint32_t ui_dibujo_peor_us(void) { return s_dibujo_max_us; }
+
+static uint32_t us_desde(uint64_t c0)
+{
+    return (uint32_t)(((board_cycles() - c0) * 1000000U) / clock_sysclk_hz);
+}
+
 static uint8_t s_rtty_var;              /* 0 off, 1 RTTY-L, 2 RTTY-U */
 
 /* The demodulator under a mode entry (menus.h). */
@@ -6280,7 +6299,8 @@ static int modo_demod(int mode)
         || mode == RADIO_MODE_PSK31 || mode == RADIO_MODE_NAVTEX
         || mode == RADIO_MODE_DSC || mode == RADIO_MODE_WEFAX
         || mode == RADIO_MODE_SSTV || mode == RADIO_MODE_HELL
-        || mode == RADIO_MODE_JTTY || mode == RADIO_MODE_ALE) { return (int)DEMOD_MODE_USB; }
+        || mode == RADIO_MODE_JTTY || mode == RADIO_MODE_ALE
+        || mode == RADIO_MODE_STANAG)                       { return (int)DEMOD_MODE_USB; }
     if (mode == RADIO_MODE_SSTV_FM)                         { return (int)DEMOD_MODE_NFM; }
     if (mode == RADIO_MODE_RTTY_L)                          { return (int)DEMOD_MODE_LSB; }
     return mode;
@@ -6307,14 +6327,15 @@ static void texto_modo(int mode)
     uint8_t hl = (uint8_t)(mode == RADIO_MODE_HELL);
     uint8_t jt = (uint8_t)(mode == RADIO_MODE_JTTY);
     uint8_t al = (uint8_t)(mode == RADIO_MODE_ALE);
+    uint8_t sg = (uint8_t)(mode == RADIO_MODE_STANAG);
     uint8_t era_cw = cw_get_enabled(), era_rv = s_rtty_var, era_pk = psk31_activo();
     uint8_t era_nx = navtex_activo(), era_ds = dsc_activo(), era_fx = wefax_activo();
     uint8_t era_sv = sstv_activo(), era_hl = hell_activo(), era_jt = jtty_modo_activo();
-    uint8_t era_al = ale_modo_activo();
+    uint8_t era_al = ale_modo_activo(), era_sg = stanag_modo_activo();
 
     if (cw == era_cw && rv == era_rv && pk == era_pk && nx == era_nx
         && ds == era_ds && fx == era_fx && sv == era_sv && hl == era_hl
-        && jt == era_jt && al == era_al) { return; }
+        && jt == era_jt && al == era_al && sg == era_sg) { return; }
     cw_linea_suelta();
     /* Every decoder off first, then the one wanted on: DSC and WEFAX borrow
      * the same RAM (src/prestamo.c), and the one leaving has to give it
@@ -6330,6 +6351,7 @@ static void texto_modo(int mode)
     if (!hl) { demod_hell(0); }
     if (!jt) { demod_jtty(0); }
     if (!al) { demod_ale(0); }
+    if (!sg) { demod_stanag(0); }
     if (cw)  { demod_cw(1); }
     if (rv)  { demod_rtty(rv); }
     if (pk)  { demod_psk31(1); }
@@ -6340,8 +6362,16 @@ static void texto_modo(int mode)
     if (hl)  { demod_hell(1); }
     if (jt)  { demod_jtty(1); }
     if (al)  { demod_ale(1); digi_ale_borra(); }
+    if (sg)  {
+        demod_stanag(1);
+        /* its first row shows the loop's worst times: from now, not the boot's */
+        s_bucle_max_us = 0U; s_polls_max_us = 0U; s_dibujo_max_us = 0U;
+    }
     s_rtty_var = rv;
-    digi_pon((uint8_t)(cw || rv || pk || nx || ds || fx || sv || hl || jt || al));
+    digi_pon((uint8_t)(cw || rv || pk || nx || ds || fx || sv || hl || jt || al || sg));
+    if (sg != era_sg) {
+        console_printf("  STANAG %s\n", sg ? (stanag_modo_activo() ? "on" : "REFUSED") : "off");
+    }
     if (al != era_al) {
         console_printf("  ALE %s\n", al ? (ale_modo_activo() ? "on" : "REFUSED") : "off");
     }
@@ -6596,6 +6626,14 @@ static void cw_poll(void)
             }
             vistas = n;
         }
+    }
+    if (stanag_modo_activo()) {
+        /* step 52: upstream's stanag_modo_poll() - the detector's two
+         * transforms, or the 4285's or the 4415's demodulator, run here and
+         * not in the block interrupt - and each row that changes to the
+         * console (src/digi.c) */
+        stanag_modo_poll();
+        digi_stanag_poll();
     }
     if (ale_modo_activo()) {
         /* step 51: the dial given each turn, as upstream does, so a station
@@ -7202,7 +7240,7 @@ static const char *const k_mode_names[] = { "AM", "USB", "LSB", "NFM",
                                             "WFM", "SAM", "CW", "RTTY-L",
                                             "RTTY-U", "PSK31", "NAVTEX", "DSC",
                                             "WEFAX", "SSTV", "SSTV-FM", "HELL",
-                                            "JTTY", "ALE" };
+                                            "JTTY", "ALE", "STANAG" };
 _Static_assert(sizeof k_mode_names / sizeof k_mode_names[0]
                == (size_t)RADIO_MODE_LAST + 1U,
                "a name for every mode, upstream's and the decoders' (menus.h)");
@@ -7403,6 +7441,7 @@ int radio_mode_get(void)
     if (m == (int)DEMOD_MODE_USB && hell_activo())    { return RADIO_MODE_HELL; }
     if (m == (int)DEMOD_MODE_USB && jtty_modo_activo()) { return RADIO_MODE_JTTY; }
     if (m == (int)DEMOD_MODE_USB && ale_modo_activo())  { return RADIO_MODE_ALE; }
+    if (m == (int)DEMOD_MODE_USB && stanag_modo_activo()) { return RADIO_MODE_STANAG; }
     return m;
 }
 
@@ -9393,7 +9432,14 @@ int main(void)
 
     for (;;) {
         iq_peak_t pk;
+        static uint64_t s_vuelta0;
 
+        if (s_vuelta0 != 0U) {
+            uint32_t vu = us_desde(s_vuelta0);
+
+            if (vu > s_bucle_max_us) { s_bucle_max_us = vu; }
+        }
+        s_vuelta0 = board_cycles();
         board_loop_alive();
 
         /*
@@ -9446,7 +9492,14 @@ int main(void)
         retune_test_step();
         rds_marq_poll();                /* the header's RDS strip, in WFM */
         estereo_ui_poll();              /* and "WFM ST" in the mode chip */
-        cw_poll();                      /* the text decoders' text, CW and RTTY */
+        {
+            uint64_t p0 = board_cycles();
+            uint32_t pu;
+
+            cw_poll();                  /* the text decoders' text, CW and RTTY */
+            pu = us_desde(p0);
+            if (pu > s_polls_max_us) { s_polls_max_us = pu; }
+        }
 
         /*
          * THE PRESS, which is upstream's gesture and upstream's
@@ -9646,6 +9699,7 @@ int main(void)
         }
         uint32_t draw_us = (uint32_t)(((board_cycles() - d0) * 1000000U)
                                       / clock_sysclk_hz);
+        if (digi_en_pantalla() && draw_us > s_dibujo_max_us) { s_dibujo_max_us = draw_us; }
 
         /*
          * THE WATERFALL. One new row per capture, then the whole
