@@ -3143,6 +3143,12 @@ out/stanaggenera: sim/stanag_genera.c sim/stanag_tx.h
 	@mkdir -p out
 	$(CC) $(CFLAGS) -Isim -o $@ sim/stanag_genera.c $(LDLIBS)
 
+# IDENT COMO LO LLEVA LA RADIO, CONTRA CUALQUIER FICHERO (23/11/2026, port del
+# Malahit). Ver sim/ident_radio.c. Pide un fichero: fuera de "comprueba".
+out/identradio: sim/ident_radio.c $(FIRMWARE)/User/ident.c $(FIRMWARE)/User/stanag_det.c
+	@mkdir -p out
+	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -Ihostinc -Isim -o $@ $^ $(LDLIBS)
+
 # STANAG COMO LO LLEVA LA RADIO, CONTRA CUALQUIER FICHERO (23/11/2026, port del
 # Malahit). Ver sim/stanag_radio.c. Pide un fichero: fuera de "comprueba".
 out/stanagradio: sim/stanag_radio.c $(FIRMWARE)/User/stanag_modo.c \

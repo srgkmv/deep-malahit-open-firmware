@@ -80,6 +80,7 @@ static void modos_fam(uint8_t fam, const char *ppm)
         { 1, "JTTY", "Teletipo digital", "Digital teletype" },
         { 1, "ALE", "Sondeos de HF", "HF soundings" },
         { 1, "STANAG", "Módem OTAN", "NATO modem" },
+        { 1, "IDENT", "¿Qué señal es?", "What signal is this?" },
         { 2, "WEFAX", "Mapas del tiempo", "Weather charts" },
         { 2, "SSTV", "Fotos por radio", "Pictures over radio" },
         { 2, "SSTV-FM", "Fotos en FM", "Pictures on FM" },
@@ -837,9 +838,57 @@ static void digi_stanag(const char *nombre, uint8_t demod, uint8_t en)
     escribe(nombre);
 }
 
+/*
+ * IDENT - paso 53 del port, 23/11/2026: renglones sobre toda la zona, sin
+ * columnas, como los arma src/digi.c. Lo que ident.c pone en pantalla: el
+ * nombre, su nota, y los numeros medidos.
+ */
+static void digi_ident(const char *nombre, uint8_t en)
+{
+    static const char *const k_es[] = {
+        "RTTY de aficionado 65% (?)",
+        "45,45 baudios. Ponlo en RTTY-L o RTTY-U.",
+        "ancho 245  centro 1500  pico 31%",
+        "tonos 1415 y 1585  salto 170 Hz",
+        "45,5 Bd   activo 98%",
+        "sin ciclo (llevo 66 s; WSPR pide 360)",
+    };
+    static const char *const k_en[] = {
+        "Amateur RTTY 65% (?)",
+        "45.45 baud. Put it in RTTY-L or RTTY-U.",
+        "width 245  centre 1500  peak 31%",
+        "tones 1415 and 1585  shift 170 Hz",
+        "45.5 Bd   active 98%",
+        "no cycle (66 s so far; WSPR needs 360)",
+    };
+    ui_digi_state_t st;
+    uint8_t i;
+    int16_t h = (int16_t)(DIGI_PANEL_Y + DIGI_PANEL_H - DIGI_SCOPE_Y);
+
+    fondo_principal();
+    memset(&st, 0, sizeof st);
+    st.y = DIGI_SCOPE_Y;
+    st.h = h;
+    st.filas = (uint8_t)((h - UDG_HDR_H) / UDG_LINE_H - 1);
+    st.btn = en ? "Clear" : "Borrar";
+    st.chip = en ? "measuring" : "midiendo";
+    st.enganchado = 1U;
+    for (i = 0; i < 6; i++) {
+        st.fila[i] = en ? k_en[i] : k_es[i];
+        cabe("ident", st.fila[i], &font_ui_10b, GFX2_W - 2 * UDG_PAD_X);
+    }
+    ui_digi_draw_texto(&st);
+    if (strcmp(ui_digi_chip_visible(&st), st.chip) != 0) {
+        printf("  SE CORTA la chapa \"%s\"\n", st.chip);
+        s_fallos++;
+    }
+    escribe(nombre);
+}
+
 int main(void)
 {
     printf("menus del Malahit, 480 x 320\n");
+    digi_ident("ident", 0U);
     digi_stanag("stanag", 0U, 0U);
     digi_stanag("stanag_en", 0U, 1U);
     digi_stanag("stanag_rx", 1U, 1U);

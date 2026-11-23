@@ -4,6 +4,29 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
+## START HERE — 23/11/2026, night: step 53 (IDENT) IN FLASH, committed with it
+
+**In flash: this commit's code** (step 53) - `build_flash/bringup.bin`, 348 600
+bytes, sha256 `b6c9429e…`, written with `swd.sh flashsrst` and verified;
+the owner's press started it ("last reset: NRST pin", STANAG from the
+FRAM, 2355 ms). Pushed through `324c8d7` (step 52). **Step 53**
+(`PORTING.md` 53) - upstream's IDENT, nothing of upstream changed; the
+port's own `src/snprintf.c` for ident.c. On the air it names RTTY, ALE
+and STANAG 4285; NAVTEX half the time.
+
+**The radio's state**: 14.109 MHz, IDENT, from flash.
+
+**Next, the owner's order**: APRS, PKT300, AIS, FT8, WSPR, HFDL.
+
+**The bench for IDENT**: any of `tools/hackrf_gen.py`'s signals (the
+dial + the signal's centre - 200 kHz for the HackRF); host
+`deepsdr-ui/out/identradio f.f32 [kHz]` (`IDENT_TRAZA=1`: rows every 5 s
+- the last rows alone are of whatever followed the signal). Console:
+`ident: <row> <text>` when a row changes.
+
+**Console reader**: `timeout N cat` ends after N seconds - a 2-hour one
+ended mid-session and a boot went unlogged; restart it with a longer N.
+
 ## START HERE — 23/11/2026, evening: step 52 (STANAG) IN FLASH, committed with it
 
 **In flash: this commit's code** (step 52) - `build_flash/bringup.bin`,

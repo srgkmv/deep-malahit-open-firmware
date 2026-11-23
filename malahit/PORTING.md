@@ -1936,6 +1936,33 @@ Each step should end with something visible on the radio.
    text, 227 frames good of 234, offset -81 Hz; 1200 S - 255 of 256 and
    the text; 300 L - 342 of 342 and the text. The 4415 has no generator
    here and is untested on the radio. Flash image 333 472 bytes.
+53. **IDENT, "what signal is this?".** *23/11/2026, from flash, against the
+   HackRF at 14109 kHz* - upstream's ident.c on STANAG's detector (already
+   grafted), stub gone; entry 19 (USB), "¿Qué señal es?" / "What signal
+   is this?" in Digital (90 px of the 90). Nothing of upstream changed.
+   The screen is upstream's: rows over the whole area without columns -
+   the names that fit, their notes, the five numbers measured, the
+   cadence - Borrar, the chip "measuring" / "listening", the dot when a
+   width is measured; repainted through cambios() four times a second.
+   Every signature's name and note measured in font_ui_10b: the widest
+   371 px of 472. ident.c is the first grafted file that formats with
+   snprintf(), and newlib's would drag its stdio and the system calls
+   this firmware has not: `src/snprintf.c` has the conversions ident.c
+   uses (%d %u %s %% and a zero-padded width), checked against glibc on
+   all of them, truncation included - its first version looped for ever
+   when a string was cut (a macro that took its argument only when there
+   was room), found on the host. `deepsdr-ui/sim/ident_radio.c` (`make
+   out/identradio`, `IDENT_TRAZA=1`) runs the mode on a file.
+   **Host, hackrf_gen.py's signals**: amateur RTTY 170/45.45, FSK 850/50
+   (naval), NAVTEX or SITOR-B, ALE 2G, STANAG 4285, a lone carrier - each
+   named; PSK31 read as a carrier or CW, CW as "nothing I know" (upstream's
+   table and measures, left as they are); JTTY has no signature.
+   Upstream's identtest and identancho green (detvel wants recordings).
+   **On the air**: RTTY "Amateur RTTY", ALE "ALE 2G", STANAG "STANAG 4285
+   or 4481 PSK ... put it in STANAG"; NAVTEX between "NAVTEX or SITOR-B
+   (tones unclear)" and "matches no signature". The empty band after:
+   "no measurable structure ... could be HFDL" - upstream's answer to
+   wideband noise. Flash image 348 600 bytes.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

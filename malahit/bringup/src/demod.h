@@ -94,6 +94,9 @@ void demod_ale(int on);
 /* STANAG on (1) or off (0): its waveform button says which job. */
 void demod_stanag(int on);
 
+/* IDENT on (1) or off (0). */
+void demod_ident(int on);
+
 /* The bench's recorder of what PSK31 is fed: 1 arms it (2.5 s, g_graba). */
 void demod_graba(int on);
 

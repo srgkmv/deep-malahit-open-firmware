@@ -33,6 +33,9 @@
  *          table over the whole area: Time Offset Qual. Message Country
  *   ALE    Borrar | quality bar / "last one N min" | words count + dot,
  *          a table over the whole area: Callsign Type kHz Qual. N
+ *   IDENT  Borrar                               | "measuring" /
+ *          "listening" + dot, the names that fit, their notes and the
+ *          five numbers measured, over the whole area
  *   STANAG Borrar | Auto/S4285/... | speed | interleave | format | state,
  *          over the whole area: the identifier's table (Period Signal
  *          Quality), or the 4285's or the 4415's text
@@ -63,6 +66,7 @@
 #include "jtty_modo.h"
 #include "ale_modo.h"
 #include "stanag_modo.h"
+#include "ident.h"
 #include "board.h"         /* board_millis() - ALE's poll and its clock */
 #include "demod.h"         /* demod_quieto(): a decoder reconfigured, no block through it */
 #include "idioma.h"        /* ../../User - tr() */
@@ -826,6 +830,61 @@ void digi_stanag_poll(void)
     }
 }
 
+/*
+ * IDENT - step 53, 23/11/2026. Upstream's digi_sync() IDENT branch: rows
+ * over the whole area, no columns (a name, its note, the five numbers -
+ * phrases, not fields), Borrar, no waveform button (here nothing is
+ * chosen, it is asked); the chip "measuring" or "listening", the dot when
+ * a width has been measured. Repainted through cambios(), as STANAG's.
+ */
+static uint32_t s_id_t;
+static uint32_t s_id_hash[IDENT_LINEAS];
+static uint32_t s_id_log_t;
+
+static void ident_sync(void)
+{
+    uint8_t n = JTTY_FILAS, k, hay = 0U;
+    stanag_det_t m;
+
+    if (n > (uint8_t)IDENT_LINEAS) { n = (uint8_t)IDENT_LINEAS; }
+    memset(&s_st, 0, sizeof s_st);
+    s_st.y     = (int16_t)DIGI_SCOPE_Y;
+    s_st.h     = (int16_t)(FAX_Y + FAX_ALTO - DIGI_SCOPE_Y);
+    s_st.filas = n;
+    s_st.btn   = tr("Borrar", "Clear");
+    while ((hay < n) && (hay < ident_modo_lineas())) { hay++; }
+    for (k = 0U; k < hay; k++) { s_st.fila[k] = ident_modo_linea(k); }
+    ident_medidas(&m);
+    s_st.chip = (m.hay_esp || m.vale) ? tr("midiendo", "measuring")
+                                      : tr("escuchando", "listening");
+    s_st.enganchado = (uint8_t)(m.hay_esp && (m.ancho10_hz != 0U));
+    strncpy(s_chip, s_st.chip, sizeof s_chip - 1U);
+    s_chip[sizeof s_chip - 1U] = '\0';
+}
+
+/* From the main loop, IDENT on: each row that changed to the console, at
+ * most once a second. */
+void digi_ident_poll(void)
+{
+    uint32_t now = board_millis();
+    uint8_t  k, n;
+
+    if ((now - s_id_log_t) < 1000U) { return; }
+    s_id_log_t = now;
+    n = ident_modo_lineas();
+    if (n > (uint8_t)IDENT_LINEAS) { n = (uint8_t)IDENT_LINEAS; }
+    for (k = 0U; k < n; k++) {
+        const char *l = ident_modo_linea(k), *p;
+        uint32_t h = 2166136261UL;
+
+        for (p = l; *p != '\0'; p++) { h = (h ^ (uint8_t)*p) * 16777619UL; }
+        if (h != s_id_hash[k]) {
+            s_id_hash[k] = h;
+            console_printf("  ident: %u %s\n", (uint32_t)k, l);
+        }
+    }
+}
+
 void digi_pon(uint8_t on)
 {
     s_on = (uint8_t)(on != 0U);
@@ -1101,6 +1160,15 @@ static void osciloscopio(void)
 void digi_repinta(void)
 {
     if (!s_on) { return; }
+    if (ident_modo_activo()) {
+        ident_sync();
+        ui_digi_olvida();
+        if (ui_digi_draw_cambios(&s_st)) {
+            s_id_t = board_millis();
+            s_todo = 0U;
+        }
+        return;
+    }
     if (stanag_modo_activo()) {
         stanag_sync();
         ui_digi_olvida();
@@ -1174,6 +1242,16 @@ void digi_repinta(void)
 void digi_dibuja(void)
 {
     if (!s_on) { return; }
+    if (ident_modo_activo()) {
+        /* four times a second, only what changed - upstream repaints the
+         * panel when the rows or the first row's name change, and its
+         * counters are in the rows */
+        if (s_todo) { digi_repinta(); return; }
+        if ((board_millis() - s_id_t) < 250U) { return; }
+        ident_sync();
+        if (ui_digi_draw_cambios(&s_st)) { s_id_t = board_millis(); }
+        return;
+    }
     if (stanag_modo_activo()) {
         /* upstream's: at each beat of the latido (four a second, and at
          * every new row); here only what changed (above) */
@@ -1325,6 +1403,18 @@ uint8_t digi_toque(uint16_t x, uint16_t y, uint8_t nuevo)
      * if it finds none - the same search that moves the centre by itself,
      * so a tap only matters where that one cannot decide.
      */
+    if (ident_modo_activo()) {
+        ident_sync();
+        if (ui_digi_boton_hit(&s_st, x, y)) {
+            demod_quieto(1);
+            ident_modo_borra();         /* upstream's: when the dial moved */
+            demod_quieto(0);
+            memset(s_id_hash, 0, sizeof s_id_hash);
+            s_todo = 1U;
+            console_printf("  digi: IDENT cleared\n");
+        }
+        return 1U;
+    }
     if (stanag_modo_activo()) {
         /* upstream's five: Borrar; the waveform round (which may change the
          * job and the whole layout); and, by job, speed, interleave and

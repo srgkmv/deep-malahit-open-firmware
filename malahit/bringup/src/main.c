@@ -70,6 +70,7 @@
 #include "jtty_modo.h"    /* ../../User - upstream: WSJT-X's JTTY */
 #include "ale_modo.h"     /* ../../User - upstream: ALE 2G soundings */
 #include "stanag_modo.h"  /* ../../User - upstream: STANAG, identified or read */
+#include "ident.h"        /* ../../User - upstream: IDENT, what signal is this */
 #include "rtty_scope.h"   /* ../../User - its spectrum, for navtex_espectro() */
 #include "config.h"       /* ../../User - CONFIG_RTTY_SHIFT_MIN/MAX_HZ */
 #include "nb.h"           /* ../../User - upstream: the blanker, cw_report() */
@@ -6300,7 +6301,7 @@ static int modo_demod(int mode)
         || mode == RADIO_MODE_DSC || mode == RADIO_MODE_WEFAX
         || mode == RADIO_MODE_SSTV || mode == RADIO_MODE_HELL
         || mode == RADIO_MODE_JTTY || mode == RADIO_MODE_ALE
-        || mode == RADIO_MODE_STANAG)                       { return (int)DEMOD_MODE_USB; }
+        || mode == RADIO_MODE_STANAG || mode == RADIO_MODE_IDENT) { return (int)DEMOD_MODE_USB; }
     if (mode == RADIO_MODE_SSTV_FM)                         { return (int)DEMOD_MODE_NFM; }
     if (mode == RADIO_MODE_RTTY_L)                          { return (int)DEMOD_MODE_LSB; }
     return mode;
@@ -6328,14 +6329,16 @@ static void texto_modo(int mode)
     uint8_t jt = (uint8_t)(mode == RADIO_MODE_JTTY);
     uint8_t al = (uint8_t)(mode == RADIO_MODE_ALE);
     uint8_t sg = (uint8_t)(mode == RADIO_MODE_STANAG);
+    uint8_t id = (uint8_t)(mode == RADIO_MODE_IDENT);
     uint8_t era_cw = cw_get_enabled(), era_rv = s_rtty_var, era_pk = psk31_activo();
     uint8_t era_nx = navtex_activo(), era_ds = dsc_activo(), era_fx = wefax_activo();
     uint8_t era_sv = sstv_activo(), era_hl = hell_activo(), era_jt = jtty_modo_activo();
     uint8_t era_al = ale_modo_activo(), era_sg = stanag_modo_activo();
+    uint8_t era_id = ident_modo_activo();
 
     if (cw == era_cw && rv == era_rv && pk == era_pk && nx == era_nx
         && ds == era_ds && fx == era_fx && sv == era_sv && hl == era_hl
-        && jt == era_jt && al == era_al && sg == era_sg) { return; }
+        && jt == era_jt && al == era_al && sg == era_sg && id == era_id) { return; }
     cw_linea_suelta();
     /* Every decoder off first, then the one wanted on: DSC and WEFAX borrow
      * the same RAM (src/prestamo.c), and the one leaving has to give it
@@ -6352,6 +6355,7 @@ static void texto_modo(int mode)
     if (!jt) { demod_jtty(0); }
     if (!al) { demod_ale(0); }
     if (!sg) { demod_stanag(0); }
+    if (!id) { demod_ident(0); }
     if (cw)  { demod_cw(1); }
     if (rv)  { demod_rtty(rv); }
     if (pk)  { demod_psk31(1); }
@@ -6367,8 +6371,12 @@ static void texto_modo(int mode)
         /* its first row shows the loop's worst times: from now, not the boot's */
         s_bucle_max_us = 0U; s_polls_max_us = 0U; s_dibujo_max_us = 0U;
     }
+    if (id)  { demod_ident(1); }
     s_rtty_var = rv;
-    digi_pon((uint8_t)(cw || rv || pk || nx || ds || fx || sv || hl || jt || al || sg));
+    digi_pon((uint8_t)(cw || rv || pk || nx || ds || fx || sv || hl || jt || al || sg || id));
+    if (id != era_id) {
+        console_printf("  IDENT %s\n", id ? (ident_modo_activo() ? "on" : "REFUSED") : "off");
+    }
     if (sg != era_sg) {
         console_printf("  STANAG %s\n", sg ? (stanag_modo_activo() ? "on" : "REFUSED") : "off");
     }
@@ -6626,6 +6634,15 @@ static void cw_poll(void)
             }
             vistas = n;
         }
+    }
+    if (ident_modo_activo()) {
+        /* step 53: upstream's ident_modo_poll() - the detector's
+         * transforms and the table, from here - with the dial each turn,
+         * as upstream does (some signals are known by where they are),
+         * and each row that changes to the console (src/digi.c) */
+        ident_modo_frec_pon(radio_dial_hz() / 1000UL);
+        ident_modo_poll();
+        digi_ident_poll();
     }
     if (stanag_modo_activo()) {
         /* step 52: upstream's stanag_modo_poll() - the detector's two
@@ -7240,7 +7257,7 @@ static const char *const k_mode_names[] = { "AM", "USB", "LSB", "NFM",
                                             "WFM", "SAM", "CW", "RTTY-L",
                                             "RTTY-U", "PSK31", "NAVTEX", "DSC",
                                             "WEFAX", "SSTV", "SSTV-FM", "HELL",
-                                            "JTTY", "ALE", "STANAG" };
+                                            "JTTY", "ALE", "STANAG", "IDENT" };
 _Static_assert(sizeof k_mode_names / sizeof k_mode_names[0]
                == (size_t)RADIO_MODE_LAST + 1U,
                "a name for every mode, upstream's and the decoders' (menus.h)");
@@ -7442,6 +7459,7 @@ int radio_mode_get(void)
     if (m == (int)DEMOD_MODE_USB && jtty_modo_activo()) { return RADIO_MODE_JTTY; }
     if (m == (int)DEMOD_MODE_USB && ale_modo_activo())  { return RADIO_MODE_ALE; }
     if (m == (int)DEMOD_MODE_USB && stanag_modo_activo()) { return RADIO_MODE_STANAG; }
+    if (m == (int)DEMOD_MODE_USB && ident_modo_activo())  { return RADIO_MODE_IDENT; }
     return m;
 }
 

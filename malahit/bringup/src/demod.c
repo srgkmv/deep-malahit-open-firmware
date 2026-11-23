@@ -23,6 +23,7 @@
 #include "jtty_modo.h"    /* ../../User - demod_jtty() */
 #include "ale_modo.h"     /* ../../User - demod_ale() */
 #include "stanag_modo.h"  /* ../../User - demod_stanag() */
+#include "ident.h"        /* ../../User - demod_ident() */
 
 /*
  * Upstream's call: 512 frames at 192 kHz in (with rf_doble), 512 stereo
@@ -87,7 +88,8 @@ void demod_init(void)
                             "r"(demod_rtty), "r"(demod_graba));
     __asm__ volatile ("" :: "r"(demod_psk31), "r"(demod_navtex), "r"(demod_dsc),
                             "r"(demod_wefax), "r"(demod_sstv), "r"(demod_hell),
-                            "r"(demod_jtty), "r"(demod_ale), "r"(demod_stanag));
+                            "r"(demod_jtty), "r"(demod_ale), "r"(demod_stanag),
+                            "r"(demod_ident));
 }
 
 void demod_block(const int16_t *rx, int16_t *tx, uint32_t frames)
@@ -461,6 +463,21 @@ SWD_ENTRY void demod_stanag(int on)
     demod_quieto(0);
     if (on && !ok) {
         console_printf("  *** STANAG did not start: the borrowed RAM is too small or taken (src/prestamo.c) ***\n");
+    }
+}
+
+/* IDENT on or off - upstream's ident_modo_start() takes the borrowed RAM
+ * for STANAG's detector, its engine, and says 0 if it cannot. */
+SWD_ENTRY void demod_ident(int on)
+{
+    uint8_t ok = 1U;
+
+    if ((uint8_t)(on != 0) == ident_modo_activo()) { return; }
+    demod_quieto(1);
+    if (on) { ok = ident_modo_start(); } else { ident_modo_stop(); }
+    demod_quieto(0);
+    if (on && !ok) {
+        console_printf("  *** IDENT did not start: the borrowed RAM is too small or taken (src/prestamo.c) ***\n");
     }
 }
 

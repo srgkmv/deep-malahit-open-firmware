@@ -71,4 +71,8 @@ void digi_ale_borra(void);
  * second at most - from the main loop, STANAG on. */
 void digi_stanag_poll(void);
 
+/* IDENT (step 53): its rows to the console when they change, once a
+ * second at most - from the main loop, IDENT on. */
+void digi_ident_poll(void);
+
 #endif /* MALAHIT_DIGI_H */

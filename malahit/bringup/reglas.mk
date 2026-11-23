@@ -479,6 +479,12 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/stanag_modo.c
 # hfdl_viterbi.c  HFDL's K=7 rate-1/2 Viterbi, the same code the 4285 and
 #            the 4415 use; HFDL itself is not grafted yet (step 52)
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_viterbi.c
+# ident.c   IDENT, "what signal is this?": STANAG's detector's five
+#            measures (width, a lone carrier, two tones and their shift,
+#            baud, the frame period) plus the on/off cadence, against a
+#            table of signatures; the detector's 32 kB in the borrowed RAM
+#            (step 53)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ident.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_digi.c
 #
 # THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]
