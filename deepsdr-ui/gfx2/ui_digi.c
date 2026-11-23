@@ -870,8 +870,13 @@ const int16_t ui_digi_cols_wspr[UI_DIGI_COLS_WSPR_N] = { 8, 110, 260, 380, 500, 
 #endif
 const int16_t ui_digi_cols_jtty[UI_DIGI_COLS_JTTY_N] = UDG_COLS_JTTY;
 
-/* Ver el comentario de UI_DIGI_COLS_IDENT_N en ui_digi.h. */
-const int16_t ui_digi_cols_ident[UI_DIGI_COLS_IDENT_N] = { 8, 120, 680 };
+/* Ver el comentario de UI_DIGI_COLS_IDENT_N en ui_digi.h. #ifndef desde el
+ * 23/11/2026, como las de JTTY y ALE: el port del Malahit pone las suyas en
+ * malahit/compat/malahit_layout.h. Aqui, las de siempre. */
+#ifndef UDG_COLS_IDENT
+#define UDG_COLS_IDENT { 8, 120, 680 }
+#endif
+const int16_t ui_digi_cols_ident[UI_DIGI_COLS_IDENT_N] = UDG_COLS_IDENT;
 
 /*
  * AIS: quien es el barco, como se llama, donde esta y a que va.

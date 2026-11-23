@@ -2,6 +2,9 @@
 #include "pump.h"   /* pump(): ver su cabecera */
 #include "hfdl_ram.h"
 #include "hfdl_viterbi.h"
+#ifdef STANAG_RX_TRAZA
+#include <stdio.h>
+#endif
 #include <math.h>
 #include <string.h>
 
@@ -230,6 +233,7 @@ static uint8_t  s_sondeos_max;
 static uint16_t s_tramas_bien;
 static uint16_t s_tramas;
 static uint8_t  s_sondeos;
+static uint8_t  s_malas_seguidas;  /* tramas seguidas con los sondeos mal */
 
 /* desentrelazador */
 static uint16_t s_dein_ini[FILAS];
@@ -631,7 +635,7 @@ uint8_t stanag_rx_init(float *trabajo, uint32_t n_floats)
     s_sw_k = 0U; s_sw_v = -1.0f; s_sw_m = 0U; s_sw_dw = 0.0f;
     s_fondo_s = 0.0f; s_fondo_n = 0U;
     s_trama = 0U; s_corr_max = 0U; s_sondeos_max = 0U; s_tramas_bien = 0U;
-    s_tramas = 0U; s_sondeos = 0U; s_grupos = 0U;
+    s_tramas = 0U; s_sondeos = 0U; s_grupos = 0U; s_malas_seguidas = 0U;
     s_nblandos = 0U; s_nlin = 0U; s_col = 0U; s_ber = 0U; s_ber_vale = 0U; s_ber_equi = 0U; s_ber_mudo = 0U;
     s_bitacum = 0U; s_nbitacum = 0U; s_nresto = 0U;
     s_fase = 0U; s_cnt = 0UL; s_marca = 0UL; s_marca_cnt = 0xFFFFFFFFUL;
@@ -997,6 +1001,65 @@ static void anota(float v, float dw)
     s_corr_hz = (int16_t)((dw * BD) / 6.28318531f);
 }
 
+/*
+ * EL PREAMBULO SE PARECE A SI MISMO 31 SIMBOLOS MAS ALLA - 23/11/2026, port
+ * del Malahit.
+ *
+ * Sus 80 simbolos son una secuencia m de periodo 31 repetida, asi que el
+ * molde corrido 31 simbolos coincide en 49 de los 80: la correlacion ahi
+ * vale 49/80 de la buena, 0,56 si la buena es 0,91 - casi el doble del
+ * umbral de 0,30. Y el barrido va a trozos: cada vuelta mira MEDIA trama
+ * de posiciones, alternando, con cuatro portadoras, asi que la portadora
+ * buena puede caer en la mitad donde el preambulo no esta entero y ganar
+ * su eco a 31 simbolos. El afinado de +-4 muestras no lo arregla y el
+ * seguimiento de +-3 lo sostiene para siempre, porque 0,56 sigue por
+ * encima del umbral: enganchado, los sondeos a la mitad, un tercio de
+ * tramas buenas, y ni una letra.
+ *
+ * Medido con sim/stanag_radio.c: un 4285 a 600 bps que empieza despues de
+ * 3 s de ruido sacaba 95 tramas buenas de 259 con la correlacion clavada
+ * en 56; despues de 20 s, 39 de 238; despues de 25, ninguna. En la radio,
+ * 18 %. Empezando con la señal, 266 de 266.
+ *
+ * Asi que al enganchar se miran las dos posiciones a 31 simbolos, si estan
+ * en el anillo y ya escritas, y se queda la mejor - y desde ella otra vez,
+ * mientras mejore: el barrido tambien se queda a veces DOS ecos mas alla
+ * (con la portadora mal puesta un eco lejano llega a 0,35), y un solo paso
+ * lo dejaba en el de en medio, 0,61. Devuelve si se ha movido, para que
+ * quien llama vuelva a afinar alli el instante y la portadora.
+ */
+#define ALIAS_MUE  (31U * SPS)            /* 155 */
+
+static uint8_t quita_alias_uno(uint32_t *m, float dw, float *v)
+{
+    uint8_t k, movido = 0U;
+
+    for (k = 0U; k < 2U; k++) {
+        uint32_t p, d;
+        float c;
+
+        if (k == 0U) {
+            if (*m < ALIAS_MUE) { continue; }
+            p = *m - ALIAS_MUE;
+        } else {
+            p = *m + ALIAS_MUE;
+        }
+        d = s_escrito - p;              /* p por delante de lo escrito: se da la vuelta */
+        if ((d > ANILLO) || (d < ((SIM_PRE * SPS) + 8U))) { continue; }
+        c = correla(p, -dw);
+        if (c > *v) { *v = c; *m = p; movido = 1U; }
+    }
+    return movido;
+}
+
+static uint8_t quita_alias(uint32_t *m, float dw, float *v)
+{
+    uint8_t n, movido = 0U;
+
+    for (n = 0U; n < 4U && quita_alias_uno(m, dw, v); n++) { movido = 1U; }
+    return movido;
+}
+
 static uint8_t busca_rapida(uint32_t desde, uint32_t cuantos,
                             uint32_t *mejor, float *q)
 {
@@ -1009,11 +1072,36 @@ static uint8_t busca_rapida(uint32_t desde, uint32_t cuantos,
     }
     if (v <= (UMBRAL * 0.8f)) { *mejor = m; *q = v; anota(v, s_dw_gruesa); return 0U; }
     {
-        uint32_t base = (m > 4U) ? (m - 4U) : 0U;
-        for (i = 0U; i < 9U; i++) {
-            float c = correla(base + i, -s_dw_gruesa);
-            if (c > v) { v = c; m = base + i; }
+        /*
+         * Y LA PORTADORA TAMBIEN, NO SOLO EL INSTANTE - 23/11/2026, port del
+         * Malahit. Este reenganche cree en la portadora de antes, y la de
+         * antes puede venir de un enganche flojo hecho sobre ruido o a
+         * caballo del principio de la emision: a 50 Hz de la buena. Y ahi
+         * no se arregla sola, porque el residuo de trama_saca() (atan2/31)
+         * solo es univoco a +-38,7 Hz y 50 los lee como -27: empuja hacia
+         * fuera. En sim/stanag_radio.c, un 4285 limpio enganchado a -50 Hz
+         * en vez de 0, 16 tramas buenas de 36. Asi que aqui se afina la
+         * portadora como en busca_todo(), +-50 Hz de 10 en 10.
+         */
+        uint32_t base = (m > 4U) ? (m - 4U) : 0U, k;
+        float    dw0 = s_dw_gruesa, bdw = s_dw_gruesa;
+
+        for (k = 0U; k < 11U; k++) {
+            float dw = dw0 + ((((float)(int32_t)k) - 5.0f) * 10.0f * 6.28318531f / BD);
+            for (i = 0U; i < 9U; i++) {
+                float c = correla(base + i, -dw);
+                if (c > v) { v = c; m = base + i; bdw = dw; }
+            }
         }
+        if (bdw != dw0) { s_dw_gruesa = bdw; s_dw = 0.0f; }
+    }
+    if (quita_alias(&m, s_dw_gruesa, &v)) {
+        uint32_t base = (m > 2U) ? (m - 2U) : 0U, m0 = m;
+        for (i = 0U; i < 5U; i++) {
+            float c = correla(base + i, -s_dw_gruesa);
+            if (c > v) { v = c; m0 = base + i; }
+        }
+        m = m0;
     }
     *mejor = m; *q = v;
     anota(v, s_dw_gruesa);
@@ -1073,7 +1161,9 @@ static uint8_t busca_rapida(uint32_t desde, uint32_t cuantos,
  * mismo. Las portadoras se miran sobre datos distintos y da igual: el
  * preambulo esta ahi todo el rato.
  */
-#define PASOS_VUELTA  4U
+/* Cuatro hasta el 23/11/2026, sobre media trama de posiciones; dos sobre la
+ * trama entera cuestan lo mismo (ver cabe_correlar()). */
+#define PASOS_VUELTA  2U
 
 static uint8_t busca_todo(uint32_t desde, uint32_t cuantos,
                           uint32_t *mejor, float *mejor_dw, float *q)
@@ -1163,6 +1253,20 @@ static uint8_t busca_todo(uint32_t desde, uint32_t cuantos,
             }
         }
     }
+    if (quita_alias(&m, bdw, &v)) {
+        /* la portadora se afino sobre el eco: otra vez, en el sitio bueno */
+        uint32_t base = (m > 2U) ? (m - 2U) : 0U, m0 = m;
+        float    bdw0 = bdw, b1 = bdw;
+        for (k = 0U; k < 9U; k++) {
+            float dw = bdw0 + ((((float)(int32_t)k) - 4.0f) * 5.0f
+                               * 6.28318531f / BD);
+            for (i = 0U; i < 5U; i++) {
+                float c = correla(base + i, -dw);
+                if (c > v) { v = c; m0 = base + i; b1 = dw; }
+            }
+        }
+        m = m0; bdw = b1;
+    }
     *mejor = m; *mejor_dw = bdw; *q = v;
     anota(v, bdw);
     if (v > UMBRAL) { s_ancho = 2U; return 1U; }
@@ -1196,9 +1300,36 @@ static uint8_t busca_todo(uint32_t desde, uint32_t cuantos,
  * preambulo se repite cada trama-, que es exactamente lo que lleva
  * haciendo el reparto por mitades desde que existe.
  */
-static uint32_t cabe_barrer(uint32_t desde, uint32_t cuantos)
+/* cabe_barrer() pedia la trama entera escrita detras de cada posicion;
+ * desde el 23/11/2026 se barre con cabe_correlar(), mas abajo. */
+
+/*
+ * Y LO QUE DE VERDAD SE PUEDE BARRER - 23/11/2026, port del Malahit.
+ *
+ * cabe_barrer() pide, detras de cada posicion, la trama ENTERA ya escrita,
+ * porque detras del enganche va trama_saca(). Pero la adquisicion empieza
+ * cuando hay 1744 muestras por delante de s_leido, y el bucle llega con
+ * entre 1744 y 1984: con esa exigencia solo se pueden mirar las primeras
+ * 460-700 posiciones de la trama. Y s_leido avanza de trama en trama, asi
+ * que son SIEMPRE las mismas fases de la trama: un preambulo que empiece
+ * en la otra media no se encuentra nunca - salvo por su eco a 31 simbolos,
+ * o cuando el bucle se retrasa tanto que el anillo empuja s_leido y la
+ * fase cambia por azar. La "otra mitad" que alterna el barrido no cabia
+ * casi nunca: cabe_barrer() la dejaba en cero y la vuelta se perdia.
+ *
+ * Medido con sim/stanag_radio.c: tras 25 s de ruido, ni una trama; tras 20,
+ * la mitad de las veces. Y en la radio igual, a ratos si y a ratos no.
+ *
+ * La correlacion solo necesita SUS 400 muestras (mas las cuatro del
+ * afinado, mas las 155 de un eco: ver quita_alias(), que mira sus propios
+ * limites). Si el ganador no tiene todavia la trama entera detras, eso ya
+ * esta resuelto despues de "enganchado:" - se queda enganchado y se espera
+ * a la vuelta siguiente. Asi que se barre todo lo que la correlacion puede
+ * leer, hasta una trama.
+ */
+static uint32_t cabe_correlar(uint32_t desde, uint32_t cuantos)
 {
-    uint32_t tope = MUE_TRAMA + 4U;
+    uint32_t tope = (SIM_PRE * SPS) + 8U;
     uint32_t sitio = (s_escrito > (desde + tope)) ? ((s_escrito - tope) - desde)
                                                   : 0U;
     return (cuantos > sitio) ? sitio : cuantos;
@@ -2113,7 +2244,7 @@ uint8_t stanag_rx_paso(void)
              * Si ya se tuvo portadora, el reenganche barato primero.
              */
             if (s_hay_portadora) {
-                if (busca_rapida(s_leido, cabe_barrer(s_leido, MUE_TRAMA),
+                if (busca_rapida(s_leido, cabe_correlar(s_leido, MUE_TRAMA),
                                 &ini, &q)) {
                     s_engancha = 1U;
                     s_fallos_rapidos = 0U;
@@ -2162,12 +2293,19 @@ uint8_t stanag_rx_paso(void)
              */
             s_ult_busca = s_escrito;
                 mide_trama();
-                s_mitad = (uint8_t)(s_mitad ? 0U : 1U);
+                /*
+                 * UNA TRAMA ENTERA DE POSICIONES, NO MEDIA - 23/11/2026,
+                 * port del Malahit. Ver cabe_correlar(). Las mitades ya no
+                 * hacen falta: de cada vuelta se mira la trama entera de
+                 * desplazamientos, con dos portadoras en vez de cuatro, que
+                 * cuesta lo mismo.
+                 */
             {
                 float dwg = 0.0f;
-                uint32_t desde = s_leido + (s_mitad ? (MUE_TRAMA / 2U) : 0U);
-                /* y solo donde se va a poder demodular: ver cabe_barrer() */
-                uint32_t cuantos = cabe_barrer(desde, MUE_TRAMA / 2U);
+                uint32_t desde = s_leido;
+                /* y solo donde la correlacion tiene sus 400 muestras ya
+                 * escritas: ver cabe_correlar() */
+                uint32_t cuantos = cabe_correlar(desde, MUE_TRAMA);
                 if (cuantos == 0U) {
                     s_leido += MUE_TRAMA;
                     continue;
@@ -2178,6 +2316,29 @@ uint8_t stanag_rx_paso(void)
                 }
                 s_dw_gruesa = dwg;
                 s_dw = 0.0f;      /* el fino arranca de cero sobre el grueso */
+#ifdef STANAG_RX_TRAZA
+                {
+                    int32_t o;
+                    printf("ENGANCHE ini %u (escrito %u) q %.3f a %+.1f Hz | ", (unsigned)ini,
+                           (unsigned)s_escrito, (double)q, (double)(dwg * BD / 6.28318531f));
+                    for (o = -6; o <= 6; o++) { printf("%+d:%.2f ", (int)o, (double)correla((uint32_t)((int32_t)ini + o), -dwg)); }
+                    printf("\n   hz:");
+                    for (o = -3; o <= 3; o++) {
+                        float dw2 = dwg + (float)o * 5.0f * 6.28318531f / BD;
+                        printf(" %+d:%.2f", (int)(o * 5), (double)correla(ini, -dw2));
+                    }
+                    printf("\n   picos:");
+                    for (o = -1300; o <= 400; o++) {
+                        uint32_t pp = (uint32_t)((int32_t)ini + o);
+                        uint32_t dd = s_escrito - pp;
+                        float c0, cm, cp;
+                        if (dd > ANILLO || dd < 410U) { continue; }
+                        c0 = correla(pp, -dwg); cm = correla(pp - 1U, -dwg); cp = correla(pp + 1U, -dwg);
+                        if (c0 > 0.25f && c0 >= cm && c0 >= cp) { printf(" %+d:%.2f", (int)o, (double)c0); }
+                    }
+                    printf("\n");
+                }
+#endif
                 s_hay_portadora = 1U;
                 s_fallos_rapidos = 0U;
             }
@@ -2260,6 +2421,27 @@ enganchado:
          * enteros. Una trama mala es un hueco, y un hueco invalida el
          * relleno igual que perder audio.
          */
+        /*
+         * Y UN ENGANCHE QUE NO DA SONDEOS NO ES UN ENGANCHE - 23/11/2026,
+         * port del Malahit. El seguimiento solo pide que el preambulo pase
+         * el umbral de 0,30, y un enganche en el sitio equivocado -un eco,
+         * o uno flojo hecho a caballo del principio de la emision con la
+         * portadora a 50 Hz- lo pasa trama tras trama sin que salga nada:
+         * en sim/stanag_radio.c, 54 tramas buenas de 280 hasta el final.
+         * Ocho tramas seguidas con los sondeos mal (0,85 s) y se suelta,
+         * portadora incluida: el barrido, con quita_alias() y la trama
+         * entera de posiciones, encuentra el bueno.
+         */
+        if (s_sondeos < SONDEOS_MIN) {
+            if (++s_malas_seguidas >= 8U) {
+                s_malas_seguidas = 0U;
+                s_engancha = 0U;
+                s_hay_portadora = 0U;
+                s_fallos_rapidos = 0U;
+            }
+        } else {
+            s_malas_seguidas = 0U;
+        }
         if (s_sondeos < SONDEOS_MIN) {
             uint32_t z;
             s_grupos = 0U;
