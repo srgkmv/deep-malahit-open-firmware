@@ -4,6 +4,9 @@
 #include "ax25.h"
 #include "nco.h"
 #include <string.h>
+#ifdef AX25_TRAZA
+#include <stdio.h>
+#endif
 
 #ifdef __GNUC__
 #define TCMRAM_BSS __attribute__((section(".tcmram")))
@@ -112,11 +115,200 @@ static uint16_t s_cab, s_col;
 static ax25_info_t s_info;
 
 /* ==========================================================================
+ * EL CAF DEL PAQUETE DE HF - 24/11/2026, port del Malahit
+ * ==========================================================================
+ *
+ * SOLO CON AX25_CAF=1, y por defecto no: el DEEPSDR va justo de flash. El
+ * port del Malahit lo enciende en su reglas.mk.
+ *
+ * POR QUE. En PKT300 los dos tonos estan a 200 Hz y cada correlador mira
+ * una ventana de un bit, 3,3 ms: su lobulo mide +-300 Hz. Con el tono 80
+ * Hz corrido uno de los dos sale casi igual en los dos correladores y la
+ * decision se tuerce: medido en sim/ax25_radio.c, +-40 Hz sale todo, +-60
+ * a medias, +-80 nada. Y en la radio, contra el HackRF, las dos
+ * referencias estan a 81 Hz en 14 MHz: ni una trama hasta corregirlo a
+ * mano. En APRS no hace falta: va por el discriminador de FM, que se come
+ * el error de sintonia.
+ *
+ * COMO MIDE. Cuando un tono manda -cuatro veces la potencia del otro- su
+ * correlador, que es el tono bajado a cero y promediado un bit, gira a la
+ * velocidad del error: lo que lleva de mas el tono sobre el oscilador. El
+ * giro de una muestra a la siguiente sale del producto cruzado de las dos
+ * sumas, sin atan2: Im(z[n] conj(z[n-1])) / |z|^2 es el seno del angulo, y
+ * el angulo es pequeño (80 Hz son 0,04 rad por muestra). Se suma, por
+ * separado, para cada tono; con el tono muy corrido el que se acerca al
+ * otro deja de mandar, pero el que se aleja manda mas: siempre queda uno.
+ *
+ * CUANDO SE CREE. Lo sumado solo vale si era señal, y eso lo dicen dos:
+ *
+ *   EL HDLC: tres banderas seguidas -el TXDELAY de delante de cada trama,
+ *   decenas de ellas- o una trama que pasa la comprobacion. Tres banderas
+ *   seguidas por azar en el ruido son una vez cada (256^3)/300 s, dias.
+ *   Pero con el tono a 80 Hz o mas el HDLC ya no ve banderas: el CAF que
+ *   lo arreglaria no arranca nunca. Medido: +-40/60 Hz los corrige; a 80,
+ *   ni se mueve.
+ *
+ *   EL ESPECTRO: ax25_espectro(), desde el bucle, con los cuadros del
+ *   osciloscopio de sintonia. Lo que hay en +-400 Hz del centro de ahora
+ *   contra lo que hay a 600-1100 Hz de el: con estacion, el FSK llena el
+ *   de dentro; sin ella, los dos son el mismo ruido. La media de unos 16
+ *   cuadros (0,7 s) por encima de 1,6, el cuadro por encima de 1,2, Y
+ *   ANCHO -300 Hz por lo menos de casillas al doble de lo de fuera, en la
+ *   misma media- y la joroba del centro (+-150 Hz) tambien por encima de
+ *   1,6: lo sumado vale; si no, se tira. Un cuadro solo no dice
+ *   nada: en ruido blanco el cociente de un cuadro pasa de 1,5 una vez de
+ *   cada diez (medido, 14.062 cuadros), y con una media de cuatro el ruido
+ *   de diez minutos paseaba el CAF 41 Hz. Y lo ancho, porque un PSK31 en el
+ *   centro abria la puerta y se lo llevaba 107 Hz: el FSK de 300 baudios
+ *   ocupa unos 600 Hz; una portadora, un CW, un PSK31 o un RTTY, rayas; y
+ *   un FSK de 850 Hz, ancho pero hueco por el medio (se lo llevaba 211). El centro NO
+ *   se saca del espectro -con el TXDELAY un tono va siete octavos del
+ *   tiempo y el centro de masas se corre 75 Hz-: el espectro solo dice
+ *   "hay señal", y el cuanto lo sigue diciendo el giro de los correladores.
+ *   La decision es del bucle, pero lo sumado lo toca la interrupcion: el
+ *   bucle pide (s_caf_pide) y ax25_process() lo hace.
+ *
+ * Cualquier otra bandera tira lo sumado. Asi el CAF no se mueve sin
+ * estacion, y con ella se va a donde esta: la mitad del error en cada
+ * paso, a 30 Hz como mucho por paso y a 250 Hz como mucho del sitio.
+ */
+#ifndef AX25_CAF
+#define AX25_CAF 0
+#endif
+#if AX25_CAF
+#define CAF_DOMINA   4.0f
+#define CAF_PASO_MAX 30.0f
+#define CAF_MAX      250.0f
+static uint8_t  s_caf_on;          /* solo el FSK de HF, no el APRS */
+static float    s_caf;             /* Hz que se han movido los dos tonos */
+static float    s_marca0, s_espacio0;
+static float    s_pmi, s_pmq, s_pei, s_peq;   /* las sumas de la muestra anterior */
+static float    s_cm, s_em, s_ce, s_ee;       /* giro y energia sumados, por tono */
+static uint16_t s_bits_bandera;    /* bits desde la ultima bandera */
+static uint8_t  s_banderas_seguidas;
+static volatile uint8_t s_caf_pide; /* 1 = aplica lo sumado, 2 = tiralo */
+static float    s_esp_r;            /* dentro / fuera, media de cuadros */
+static float    s_esp_w;            /* Hz de casillas altas, media de cuadros */
+static float    s_esp_c;            /* +-150 Hz del centro / fuera: el FSK de
+                                     * 300 Bd tiene ahi su joroba; un FSK de
+                                     * 850 Hz (RTTY, FUG), un hueco */
+static uint32_t s_esp_visto;
+static uint8_t  s_esp_visto_ok;
+#define CAF_SENAL    1.6f      /* la media de cuadros */
+#define CAF_CUADRO   1.2f      /* y el de ahora */
+#define CAF_ANCHO_HZ 300.0f
+#define CAF_MEDIA    (1.0f / 16.0f)
+
+static void caf_suma_cero(void)
+{
+    s_cm = 0.0f; s_em = 0.0f; s_ce = 0.0f; s_ee = 0.0f;
+}
+
+/* Lo sumado desde la ultima bandera, a los dos osciladores. */
+static void caf_aplica(void)
+{
+    float d = 0.0f, w = 0.0f;
+
+    /* Y con energia de verdad: al apagarse la emision las sumas se quedan
+     * en casi nada y su cociente es basura (+156 Hz con 1e-7 de energia,
+     * medido), asi que cada tono cuenta solo si junta lo de 50 muestras al
+     * nivel de ahora. */
+    if (s_em > 50.0f * s_nivel) { d += s_cm; w += s_em; }
+    if (s_ee > 50.0f * s_nivel) { d += s_ce; w += s_ee; }
+#ifdef AX25_TRAZA
+    printf("caf: marca %+.1f Hz (e %.3g)  espacio %+.1f Hz (e %.3g)  caf %+.1f\n",
+           (double)((s_em > 1e-20f) ? s_cm / s_em * s_fs / 6.28318531f : 0.0f), (double)s_em,
+           (double)((s_ee > 1e-20f) ? s_ce / s_ee * s_fs / 6.28318531f : 0.0f), (double)s_ee, (double)s_caf);
+#endif
+    caf_suma_cero();
+    if (w <= 0.0f) { return; }
+    d = (d / w) * s_fs / 6.28318531f;       /* Hz: el giro medio */
+    d *= 0.5f;
+    if (d >  CAF_PASO_MAX) { d =  CAF_PASO_MAX; }
+    if (d < -CAF_PASO_MAX) { d = -CAF_PASO_MAX; }
+    s_caf += d;
+    if (s_caf >  CAF_MAX) { s_caf =  CAF_MAX; }
+    if (s_caf < -CAF_MAX) { s_caf = -CAF_MAX; }
+    s_marca_hz   = s_marca0 + s_caf;
+    s_espacio_hz = s_espacio0 + s_caf;
+    nco_freq(&s_nco_m, s_marca_hz, s_fs);
+    nco_freq(&s_nco_e, s_espacio_hz, s_fs);
+}
+
+/*
+ * Desde el bucle principal, con el cuadro del osciloscopio (rtty_scope: la
+ * magnitud por casilla, lineal). Ver "EL ESPECTRO" arriba.
+ */
+void ax25_espectro(const float *pot, uint16_t n, float hz_casilla, uint32_t cuadro)
+{
+    float    c, din = 0.0f, dfu = 0.0f, dce = 0.0f, r, rc, fuera;
+    uint16_t k, nin = 0U, nfu = 0U, nce = 0U, altas = 0U;
+
+    if (!s_on || !s_caf_on || !pot || n < 16U || hz_casilla <= 0.0f) { return; }
+    if (s_esp_visto_ok && cuadro == s_esp_visto) { return; }
+    if (!s_esp_visto_ok) {          /* el primero es de antes: ver navtex.c */
+        s_esp_visto = cuadro;
+        s_esp_visto_ok = 1U;
+        return;
+    }
+    s_esp_visto = cuadro;
+    c = 0.5f * (s_marca_hz + s_espacio_hz);
+    for (k = 1U; k < n; k++) {
+        float f = (float)k * hz_casilla, d = (f > c) ? (f - c) : (c - f);
+
+        if (d <= 400.0f) { din += pot[k]; nin++; }
+        if (d <= 150.0f) { dce += pot[k]; nce++; }
+        else if (d >= 600.0f && d <= 1100.0f && f > 300.0f && f < 3800.0f) { dfu += pot[k]; nfu++; }
+    }
+    if (nin < 4U || nfu < 4U || nce < 2U || dfu <= 0.0f) { return; }
+    fuera = dfu / (float)nfu;
+    for (k = 1U; k < n; k++) {
+        float f = (float)k * hz_casilla, d = (f > c) ? (f - c) : (c - f);
+
+        if (d <= 400.0f && pot[k] > 2.0f * fuera) { altas++; }
+    }
+    r  = (din / (float)nin) / fuera;
+    rc = (dce / (float)nce) / fuera;
+    s_esp_r += CAF_MEDIA * (r - s_esp_r);
+    s_esp_c += CAF_MEDIA * (rc - s_esp_c);
+    s_esp_w += CAF_MEDIA * (((float)altas * hz_casilla) - s_esp_w);
+    s_caf_pide = (uint8_t)(((r > CAF_CUADRO) && (s_esp_r > CAF_SENAL)
+                            && (s_esp_c > CAF_SENAL)
+                            && (s_esp_w >= CAF_ANCHO_HZ)) ? 1U : 2U);
+#ifdef AX25_TRAZA
+    if (s_caf_pide == 1U) {
+        printf("esp: r %.2f media %.2f altas %u (%.0f Hz) caf %+.0f\n", (double)r, (double)s_esp_r,
+               (unsigned)altas, (double)((float)altas * hz_casilla), (double)s_caf);
+    }
+#endif
+}
+#endif /* AX25_CAF */
+
+#if !AX25_CAF
+void ax25_espectro(const float *pot, uint16_t n, float hz_casilla, uint32_t cuadro)
+{
+    (void)pot; (void)n; (void)hz_casilla; (void)cuadro;
+}
+#endif
+
+float ax25_caf_hz(void)
+{
+#if AX25_CAF
+    return s_caf;
+#else
+    return 0.0f;
+#endif
+}
+
+/* ==========================================================================
  * ARRANQUE
  * ========================================================================== */
 void ax25_start(float fs_hz)
 {
     ax25_start_fsk(fs_hz, AX25_BAUD, AX25_MARCA_HZ, AX25_ESPACIO_HZ);
+#if AX25_CAF
+    s_caf_on = 0U;        /* el APRS va por FM: el discriminador ya lo hace */
+#endif
 }
 
 void ax25_start_fsk(float fs_hz, float baud, float marca_hz, float espacio_hz)
@@ -155,6 +347,15 @@ void ax25_start_fsk(float fs_hz, float baud, float marca_hz, float espacio_hz)
 
     s_cab = s_col = 0U;
     memset(&s_info, 0, sizeof s_info);
+#if AX25_CAF
+    s_caf_on = 1U;
+    s_caf = 0.0f;
+    s_marca0 = marca_hz; s_espacio0 = espacio_hz;
+    s_pmi = s_pmq = s_pei = s_peq = 0.0f;
+    caf_suma_cero();
+    s_bits_bandera = 0U; s_banderas_seguidas = 0U;
+    s_caf_pide = 0U; s_esp_r = 1.0f; s_esp_w = 0.0f; s_esp_c = 1.0f; s_esp_visto_ok = 0U;
+#endif
     s_on = 1U;
 }
 
@@ -305,6 +506,9 @@ static void trama_fin(void)
     if (s_n >= AX25_TRAMA_MIN) {
         if (ax25_fcs(s_trama, s_n) == FCS_BUENO) {
             s_info.tramas_ok++;
+#if AX25_CAF
+            if (s_caf_on) { caf_aplica(); }   /* una trama buena: era señal */
+#endif
             trama_texto(s_trama, s_n);
         } else {
             s_info.tramas_mal++;
@@ -319,8 +523,24 @@ static void hdlc_bit(uint8_t bit)
      * llena por arriba y se desplaza hacia abajo. */
     s_reg = (uint8_t)((s_reg >> 1) | (bit ? 0x80U : 0U));
 
+#if AX25_CAF
+    if (s_bits_bandera < 0xFFFFU) { s_bits_bandera++; }
+#endif
     if (s_reg == 0x7EU) {
         /* Bandera. Cierra lo que hubiera y abre lo siguiente. */
+#if AX25_CAF
+        if (s_caf_on) {
+            /* Tres seguidas -a ocho bits una de otra- es señal: lo sumado
+             * vale. Una suelta no dice nada: se tira. trama_fin(), justo
+             * debajo, aplica lo de una trama que pase la comprobacion. */
+            s_banderas_seguidas = (s_bits_bandera == 8U)
+                                ? (uint8_t)((s_banderas_seguidas < 255U) ? s_banderas_seguidas + 1U : 255U)
+                                : 1U;
+            s_bits_bandera = 0U;
+            if (s_banderas_seguidas >= 3U) { caf_aplica(); }
+            else if (!(s_en_trama && s_n >= AX25_TRAMA_MIN)) { caf_suma_cero(); }
+        }
+#endif
         s_info.banderas++;
         s_ult_bandera = s_muestra;
         trama_fin();
@@ -463,6 +683,12 @@ void ax25_process(const float *audio, uint32_t n)
 
     if (!s_on || !audio) { return; }
 
+#if AX25_CAF
+    if (s_caf_pide != 0U) {
+        if (s_caf_pide == 1U) { caf_aplica(); } else { caf_suma_cero(); }
+        s_caf_pide = 0U;
+    }
+#endif
     for (k = 0U; k < n; k++) {
         float x = audio[k];
         float sn, cs, mi, mq, ei, eq, pm, pe;
@@ -485,6 +711,22 @@ void ax25_process(const float *audio, uint32_t n)
 
         pm = s_smi * s_smi + s_smq * s_smq;
         pe = s_sei * s_sei + s_seq * s_seq;
+
+#if AX25_CAF
+        if (s_caf_on) {
+            /* el giro del correlador del tono que manda: ver la cabecera */
+            if ((pm + pe) < 0.1f * s_nivel) {
+                /* apagandose o en un hueco: no hay tono que mire */
+            } else if (pm > CAF_DOMINA * pe) {
+                s_cm += (s_smq * s_pmi) - (s_smi * s_pmq);
+                s_em += pm;
+            } else if (pe > CAF_DOMINA * pm) {
+                s_ce += (s_seq * s_pei) - (s_sei * s_peq);
+                s_ee += pe;
+            }
+            s_pmi = s_smi; s_pmq = s_smq; s_pei = s_sei; s_peq = s_seq;
+        }
+#endif
 
         s_nivel += 0.0005f * ((pm + pe) - s_nivel);
         if (s_nivel < 1e-12f) { s_nivel = 1e-12f; }

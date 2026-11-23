@@ -111,6 +111,15 @@ uint8_t ax25_activo(void);
 float ax25_marca_hz(void);
 float ax25_espacio_hz(void);
 
+/* Lo que el CAF del paquete de HF ha movido los dos tonos, en Hz; 0 en
+ * APRS, o compilado sin AX25_CAF. Ver la cabecera del CAF en ax25.c. */
+float ax25_caf_hz(void);
+
+/* El cuadro del osciloscopio de sintonia (magnitudes lineales por casilla),
+ * desde el bucle principal: le dice al CAF si hay señal. Vacia sin
+ * AX25_CAF. Ver "EL ESPECTRO" en ax25.c. */
+void ax25_espectro(const float *pot, uint16_t n, float hz_casilla, uint32_t cuadro);
+
 /* Audio del discriminador de FM, crudo. Se llama desde la interrupcion. */
 void ax25_process(const float *audio, uint32_t n);
 
