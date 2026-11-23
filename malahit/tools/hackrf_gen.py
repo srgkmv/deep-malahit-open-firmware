@@ -12,6 +12,8 @@ Test signals for the decoders, sent by a HackRF into the radio - 22/11/2026.
     tools/hackrf_gen.py hell --snr 15 --out h.iq
     tools/hackrf_gen.py ale --call R1TEST --snr 10 --out a.iq
     tools/hackrf_gen.py audio --in s.f32 --tone 1800 --snr 15 --out s.iq
+    tools/hackrf_gen.py ax25 --fm 3000 --out a.iq            (APRS, NFM)
+    tools/hackrf_gen.py ax25 --hf --lsb --snr 15 --out p.iq  (PKT300, LSB)
     tools/hackrf_gen.py carrier --seconds 10 --out c.iq
     hackrf_transfer -t f.iq -f <carrier Hz - 200000> -s 2000000 -a 0 -x 47
 
@@ -726,6 +728,91 @@ def ale_baseband(a):
                                         f'{a.offset_hz:+.0f} Hz')
 
 
+# AX.25 (the AX.25 2.2 specification) over Bell 202 AFSK, written from the
+# specifications and not from upstream's ax25.c:
+#   - a UI frame: destination, source and path addresses, each six
+#     characters shifted left one bit and space-padded, then the SSID byte
+#     0b011SSSSx with x = 1 on the last address; control 0x03, PID 0xF0, the
+#     information field;
+#   - the FCS, CRC-16/X.25 (polynomial 0x1021 reflected, initial 0xFFFF,
+#     complemented), sent low byte first; every byte least significant bit
+#     first;
+#   - bit stuffing: a 0 after five 1s in a row, never inside a flag;
+#   - flags 0x7E before (the TXDELAY) and after;
+#   - NRZI: a 0 changes the tone, a 1 keeps it - so which tone is which
+#     does not matter, and an LSB receiver's mirror does not either;
+#   - AFSK with continuous phase: 1200/2200 Hz at 1200 Bd (APRS, Bell 202),
+#     or 1600/1800 Hz at 300 Bd with --hf (HF packet, PKT300).
+def ax25_crc(data):
+    crc = 0xFFFF
+    for b in data:
+        crc ^= b
+        for _ in range(8):
+            crc = (crc >> 1) ^ 0x8408 if crc & 1 else crc >> 1
+    return crc ^ 0xFFFF
+
+
+def ax25_address(call, last):
+    name, _, ssid = call.upper().partition('-')
+    name = (name + '      ')[:6]
+    out = [ord(c) << 1 for c in name]
+    out.append(0x60 | ((int(ssid or 0) & 15) << 1) | (1 if last else 0))
+    return out
+
+
+def ax25_frame(dest, src, path, info):
+    calls = [dest, src] + [p for p in path.split(',') if p]
+    body = []
+    for i, c in enumerate(calls):
+        body += ax25_address(c, i == len(calls) - 1)
+    body += [0x03, 0xF0] + list(info.encode('ascii'))
+    crc = ax25_crc(body)
+    return body + [crc & 0xFF, crc >> 8]
+
+
+def ax25_bits(frame, flags_before, flags_after):
+    flag = [0, 1, 1, 1, 1, 1, 1, 0]            # 0x7E, LSB first
+    bits = flag * flags_before
+    ones = 0
+    for b in frame:
+        for k in range(8):
+            v = (b >> k) & 1
+            bits.append(v)
+            ones = ones + 1 if v else 0
+            if ones == 5:
+                bits.append(0)
+                ones = 0
+    return bits + flag * flags_after
+
+
+def ax25_baseband(a):
+    """AX.25 UI frames as AFSK: --frames of them, --pause s apart, each
+    with --txdelay flags before. The tones round 0 Hz, --tone (their middle)
+    being the centre; with --fm the audio goes out as narrow FM (APRS),
+    with --lsb as LSB (PKT300)."""
+    baud, f0, f1 = (300.0, 1600.0, 1800.0) if a.hf else (1200.0, 1200.0, 2200.0)
+    info = a.info
+    out = [np.full(int(a.lead * FS_LO), np.nan)]
+    sps = FS_LO / baud
+    for k in range(a.frames):
+        fr = ax25_frame(a.dest, a.src, a.path, info.replace('#', str(k + 1)))
+        bits = ax25_bits(fr, a.txdelay, 3)
+        tone, seq = 0, []
+        for v in bits:
+            if v == 0:
+                tone ^= 1                       # NRZI
+            seq.append(f1 if tone else f0)
+        n = int(len(seq) * sps)
+        f = np.array(seq)[(np.arange(n) / sps).astype(int)] - a.tone
+        out += [f, np.full(int(a.pause * FS_LO), np.nan)]
+    f = np.concatenate(out)
+    key = (~np.isnan(f)).astype(np.float64)
+    f = np.nan_to_num(f, nan=0.0)
+    x = np.exp(1j * 2 * np.pi * np.cumsum(f) / FS_LO)
+    return x * raised_edges(key, 2.0), (f'AX.25 {"PKT300" if a.hf else "APRS"} {a.src}>{a.dest} '
+                                        f'x{a.frames}: {info!r}')
+
+
 def audio_baseband(a):
     """Any 12 kHz f32 audio file - what a sideband receiver should hand its
     decoders, written by a host tool (deepsdr-ui/out/stanaggenera, ...) -
@@ -927,6 +1014,19 @@ def main():
     p.add_argument('--lead', type=float, default=1.0)
     p.set_defaults(build=ale_baseband, tone=1625.0)
 
+    p = sub.add_parser('ax25', help='AX.25 UI frames: APRS (1200 Bd AFSK), or PKT300 with --hf')
+    common(p)
+    p.add_argument('--hf', action='store_true', help='300 Bd, 1600/1800 Hz (HF packet)')
+    p.add_argument('--src', default='R1TEST-9')
+    p.add_argument('--dest', default='APRS')
+    p.add_argument('--path', default='WIDE1-1')
+    p.add_argument('--info', default='!5545.00N/03737.00E-Malahit test #')
+    p.add_argument('--frames', type=int, default=4)
+    p.add_argument('--txdelay', type=int, default=40, help='flags before each frame')
+    p.add_argument('--pause', type=float, default=2.0)
+    p.add_argument('--lead', type=float, default=1.0)
+    p.set_defaults(build=ax25_baseband, tone=1700.0)
+
     p = sub.add_parser('audio', help='any 12 kHz f32 audio file, sent as USB')
     common(p)
     p.add_argument('--in', dest='input', required=True, help='the f32 file at 12 kHz')
@@ -942,6 +1042,12 @@ def main():
         aud = aud / max(1e-9, np.max(np.abs(aud)))
         x = np.exp(1j * 2 * np.pi * a.fm * np.cumsum(aud) / FS_LO)
         what += f', NFM +-{a.fm:.0f} Hz'
+    if a.lsb and not a.audio and a.fm <= 0.0:
+        # sent as LSB: the receiver hears the spectrum mirrored, so the
+        # baseband goes out mirrored, and the dial is the HackRF's centre +
+        # offset + --tone
+        x = np.conj(x)
+        what += ', LSB'
     x = add_noise(x, a)
     if a.audio:
         write_audio(x, a)

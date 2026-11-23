@@ -4,6 +4,31 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
+## START HERE — 24/11/2026: step 54 (APRS, PKT300 with an AFC) IN FLASH, committed with it
+
+**In flash: this commit's code** (step 54) - `build_flash/bringup.bin`,
+353 904 bytes, sha256 `871e2c97…`, written with `swd.sh flashsrst` and
+verified; the owner's press started it ("last reset: NRST pin", PKT300
+from the FRAM, 2355 ms). **Step 54** (`PORTING.md` 54) - upstream's
+ax25.c as APRS (NFM) and PKT300 (LSB), and, the owner's word, an AFC for
+PKT300 in User/ax25.c under `AX25_CAF` (off by default, on here; its own
+commit). On the air: APRS 4 frames of 4; PKT300 4 of 4 with the HackRF
+where the dial says and 100 Hz either side, the AFC finding the offset.
+
+**The radio's state**: 14.109 MHz, PKT300, from flash.
+
+**Next, the owner's order**: AIS, FT8, WSPR, HFDL. Open: an 850 Hz FSK
+on a PKT300 channel still moves the AFC (it comes back on real packet).
+
+**The bench for AX.25**: `tools/hackrf_gen.py ax25 --fm 3000 --out a.iq`
+then `hackrf_transfer -t a.iq -f 144600000 -s 2000000 -a 0 -x 20` with
+the radio on 144.800 APRS (give the mode a few seconds after a change);
+`ax25 --hf --lsb --snr 20 --out p.iq` then `-f <dial - 1700 - 200000>` on
+PKT300; host `deepsdr-ui/out/ax25radio f.f32 [aprs|pkt300]` (with the
+scope and ax25_espectro() as the radio; `-DAX25_TRAZA` on ax25.c prints
+each AFC step and each spectral pass). Console: `ax25: <frame>`,
+`ax25: AFC <n> Hz`.
+
 ## START HERE — 23/11/2026, night: step 53 (IDENT) IN FLASH, committed with it
 
 **In flash: this commit's code** (step 53) - `build_flash/bringup.bin`, 348 600

@@ -3143,6 +3143,14 @@ out/stanaggenera: sim/stanag_genera.c sim/stanag_tx.h
 	@mkdir -p out
 	$(CC) $(CFLAGS) -Isim -o $@ sim/stanag_genera.c $(LDLIBS)
 
+# AX.25 COMO LO LLEVA LA RADIO, CONTRA CUALQUIER FICHERO (23/11/2026, port del
+# Malahit). Ver sim/ax25_radio.c. Pide un fichero: fuera de "comprueba".
+out/ax25radio: sim/ax25_radio.c $(FIRMWARE)/User/ax25.c $(FIRMWARE)/User/nco.c \
+               $(FIRMWARE)/User/nco_tabla.c $(FIRMWARE)/User/rtty_scope.c \
+               $(FIRMWARE)/User/fft.c
+	@mkdir -p out
+	$(CC) $(CFLAGS) -DAX25_CAF=1 -I$(FIRMWARE)/User -Ihostinc -Isim -o $@ $^ $(LDLIBS)
+
 # IDENT COMO LO LLEVA LA RADIO, CONTRA CUALQUIER FICHERO (23/11/2026, port del
 # Malahit). Ver sim/ident_radio.c. Pide un fichero: fuera de "comprueba".
 out/identradio: sim/ident_radio.c $(FIRMWARE)/User/ident.c $(FIRMWARE)/User/stanag_det.c
@@ -4190,7 +4198,8 @@ out/rttyautoaire: sim/rtty_auto_aire.c $(FIRMWARE)/User/rtty.c $(FIRMWARE)/User/
 # la señal de hackrf_gen.py, con su propia tabla. Tampoco entra en
 # "comprueba": hace falta un fichero.
 out/navtexaire: sim/navtex_aire.c $(FIRMWARE)/User/navtex.c $(FIRMWARE)/User/nco.c \
-                $(FIRMWARE)/User/nco_tabla.c $(FIRMWARE)/User/rtty_scope.c $(FIRMWARE)/User/fft.c
+                $(FIRMWARE)/User/nco_tabla.c $(FIRMWARE)/User/rtty_scope.c \
+               $(FIRMWARE)/User/fft.c $(FIRMWARE)/User/fft.c
 	@mkdir -p out
 	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -I$(FIRMWARE)/Ft8Lib -Ihostinc -Isim \
 	      -o $@ $(filter %.c,$^) $(LDLIBS)

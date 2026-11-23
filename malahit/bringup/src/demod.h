@@ -97,6 +97,9 @@ void demod_stanag(int on);
 /* IDENT on (1) or off (0). */
 void demod_ident(int on);
 
+/* AX.25: 1 APRS (from the FM discriminator), 2 PKT300 (LSB), 0 off. */
+void demod_ax25(int which);
+
 /* The bench's recorder of what PSK31 is fed: 1 arms it (2.5 s, g_graba). */
 void demod_graba(int on);
 

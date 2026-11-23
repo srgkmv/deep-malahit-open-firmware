@@ -81,6 +81,8 @@ static void modos_fam(uint8_t fam, const char *ppm)
         { 1, "ALE", "Sondeos de HF", "HF soundings" },
         { 1, "STANAG", "Módem OTAN", "NATO modem" },
         { 1, "IDENT", "¿Qué señal es?", "What signal is this?" },
+        { 1, "APRS", "Paquete AX.25", "AX.25 packet" },
+        { 1, "PKT300", "Paquete de HF", "HF packet" },
         { 2, "WEFAX", "Mapas del tiempo", "Weather charts" },
         { 2, "SSTV", "Fotos por radio", "Pictures over radio" },
         { 2, "SSTV-FM", "Fotos en FM", "Pictures on FM" },

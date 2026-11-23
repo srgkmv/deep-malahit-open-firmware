@@ -485,6 +485,11 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_viterbi.c
 #            table of signatures; the detector's 32 kB in the borrowed RAM
 #            (step 53)
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ident.c
+# ax25.c    AX.25 packet: APRS (1200 Bd AFSK 1200/2200 Hz, from the FM
+#            discriminator at the RF path's rate) and PKT300 (300 Bd FSK
+#            1600/1800 Hz, from the 12 kHz sideband); one decoder, its text
+#            to the decoders' screen (step 54)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ax25.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_digi.c
 #
 # THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]
@@ -708,6 +713,8 @@ $(BUILD_DIR)/up_ale_modo.o: CFLAGS_EXTRA_UPSTREAM += -I$(UPSTREAM_DIR)/../Ft8Lib
 # ALE's AFC (User/ale_rx.c, 23/11/2026): off by default there, because the
 # DEEPSDR's flash has no room for it; on here.
 $(BUILD_DIR)/up_ale_rx.o: CFLAGS_EXTRA_UPSTREAM += -DALE_CAF=1
+# And PKT300's (User/ax25.c, 24/11/2026), off there for the same reason.
+$(BUILD_DIR)/up_ax25.o: CFLAGS_EXTRA_UPSTREAM += -DAX25_CAF=1
 
 $(BUILD_DIR)/up_%.o: $(UPSTREAM_DIR)/%.c $(BUILD_RULES) | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $(CFLAGS_EXTRA_UPSTREAM) $(CFLAGS_FONTS) $< -o $@

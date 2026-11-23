@@ -1963,6 +1963,72 @@ Each step should end with something visible on the radio.
    (tones unclear)" and "matches no signature". The empty band after:
    "no measurable structure ... could be HFDL" - upstream's answer to
    wideband noise. Flash image 348 600 bytes.
+54. **APRS and PKT300 - AX.25 packet.** *23/11/2026, from flash, against
+   the HackRF at 144.800 MHz and 14.109 MHz* - upstream's ax25.c, stub
+   gone; one decoder, two entries in Digital as upstream: 20 APRS
+   ("Paquete AX.25", NFM, 1200 Bd AFSK 1200/2200 Hz from the FM
+   discriminator at the RF path's rate, demod_am_get_active_fs_hz()) and
+   21 PKT300 ("Paquete de HF", LSB, 300 Bd FSK 1600/1800 Hz from the 12
+   kHz sideband). Nothing of upstream changed. `demod_ax25(1|2|0)`. The
+   frames go to the decoders' text panel as upstream's ax25_poll() does
+   (and to the console as "ax25: ..."); the scope's two lines are the
+   decoder's own mark and space (upstream's scope_rayas() branch); the
+   chip, which upstream has none of here, the frames with their check
+   right ("4 ok"), the dot ax25.c's "flags seen lately". The Digital
+   family holds twelve now; AIS, FT8, WSPR and HFDL make it sixteen, its
+   ceiling.
+   `tools/hackrf_gen.py ax25` writes UI frames from the AX.25 2.2 and
+   Bell 202 texts, not from ax25.c: addresses shifted and SSID-terminated,
+   control 0x03 / PID 0xF0, the FCS (CRC-16/X.25: "123456789" gives
+   0x906E), bit stuffing, NRZI, continuous-phase AFSK; `--hf` for PKT300,
+   `--fm DEV` for APRS on NFM, and `--lsb` now also mirrors the I/Q for an
+   LSB dial (the HackRF at dial - tone - 200 kHz).
+   `deepsdr-ui/sim/ax25_radio.c` (`make out/ax25radio`) runs ax25.c on a
+   file. Upstream's ax25test green. Host: both clean 4 of 4, the mirrored
+   PKT300 too; PKT300 holds +-40 Hz of mistuning at SNR 20, some frames at
+   +-60, none at +-80.
+   **On the air**: APRS at 144.800 MHz, NFM +-3 kHz - 4 frames of 4,
+   "R1TEST-9>APRS,WIDE1-1:!5545.00N/03737.00E-Malahit test 1..4". PKT300
+   at 14.109 MHz LSB, SNR 20 - nothing with the HackRF where the dial
+   says (the two references ~81 Hz apart there, past the +-40), 4 of 4
+   with it 81 Hz up. Upstream has no AFC for it: the scope's lines are
+   for tuning by hand.
+   **So, the owner's word (24/11/2026), an AFC for PKT300 - in User/
+   ax25.c under `AX25_CAF`, off by default** (the DEEPSDR builds the same
+   size without it, its 29 checks and ax25test green), on in this port's
+   reglas.mk; not for APRS, whose FM discriminator already takes the
+   tuning error. It moves the two NCOs, not the radio:
+   - **the measure**: when one tone dominates (four times the other's
+     power, and the pair not faded under a tenth of the level), its
+     correlator - the tone brought to zero and averaged a bit - turns at
+     the error's rate; the cross product of two successive sums gives the
+     turn without atan2. Far off, the tone moving towards the other stops
+     dominating, the one moving away dominates more: one is always there;
+   - **when it is believed**: three HDLC flags in a row (the TXDELAY) or a
+     frame that passes its check - but past ~80 Hz the HDLC sees no flags,
+     so also the scope's spectrum, `ax25_espectro()` from the main loop as
+     navtex_espectro(): the mean level within +-400 Hz of the centre
+     against 600-1100 Hz from it, averaged ~16 frames, over 1.6, the frame
+     itself over 1.2, the centre's +-150 Hz hump too, and 300 Hz at least
+     of bins over twice the outside. Each condition came from a failure:
+     one frame alone passes 1.5 one time in ten in white noise (14 062
+     frames measured) and ten minutes of noise walked the AFC 41 Hz; a
+     PSK31 at the centre took it 107 Hz; a fading emission's last sums
+     read +156 Hz from 1e-7 of energy. The spectrum only says "there is
+     signal" - with the TXDELAY one tone is on seven eighths of the time
+     and the spectrum's centre of mass sits 75 Hz off. The loop decides,
+     the block interrupt applies (s_caf_pide): no race on the sums.
+   Half the error a step, 30 Hz a step at most, 250 Hz from the tones at
+   most; it holds without signal. The chip says it ("4 ok -81 Hz"), the
+   scope's lines move with it, the console logs each 10 Hz.
+   **Host**: offsets -200..+200 Hz - every frame at SNR 20, the decoder's
+   own 2-4 of 6 at SNR 10, the AFC within ~10 Hz of the truth; ten
+   minutes of noise, a carrier, PSK31, CW - 0 Hz; RTTY 170 and NAVTEX
+   ~15 Hz; an 850 Hz FSK still drags it (+143), and it comes back from
+   there (capture +-200). **On the air**: the HackRF where the dial says
+   - 4 of 4, the AFC at +85 (the references' 81); 100 Hz up - 4 of 4,
+   -25; 100 Hz down - 4 of 4, +169..+193. APRS after it: 4 of 4, twice.
+   Flash image 353 904 bytes.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

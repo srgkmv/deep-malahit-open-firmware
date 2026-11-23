@@ -71,6 +71,7 @@
 #include "ale_modo.h"     /* ../../User - upstream: ALE 2G soundings */
 #include "stanag_modo.h"  /* ../../User - upstream: STANAG, identified or read */
 #include "ident.h"        /* ../../User - upstream: IDENT, what signal is this */
+#include "ax25.h"         /* ../../User - upstream: AX.25, APRS and PKT300 */
 #include "rtty_scope.h"   /* ../../User - its spectrum, for navtex_espectro() */
 #include "config.h"       /* ../../User - CONFIG_RTTY_SHIFT_MIN/MAX_HZ */
 #include "nb.h"           /* ../../User - upstream: the blanker, cw_report() */
@@ -6256,6 +6257,7 @@ static void cw_linea_suelta(void)
     if (s_cw_n == 0U) { return; }
     s_cw_lin[s_cw_n] = '\0';
     console_printf("  %s: %s\n", rtty_get_enabled() ? "rtty"
+                                 : ax25_activo() ? "ax25"
                                  : psk31_activo() ? "psk31"
                                  : navtex_activo() ? "navtex"
                                  : dsc_activo() ? "dsc" : "cw", s_cw_lin);
@@ -6292,6 +6294,7 @@ static uint32_t us_desde(uint64_t c0)
 }
 
 static uint8_t s_rtty_var;              /* 0 off, 1 RTTY-L, 2 RTTY-U */
+static uint8_t s_ax25_var;              /* 0 off, 1 APRS, 2 PKT300 */
 
 /* The demodulator under a mode entry (menus.h). */
 static int modo_demod(int mode)
@@ -6302,8 +6305,8 @@ static int modo_demod(int mode)
         || mode == RADIO_MODE_SSTV || mode == RADIO_MODE_HELL
         || mode == RADIO_MODE_JTTY || mode == RADIO_MODE_ALE
         || mode == RADIO_MODE_STANAG || mode == RADIO_MODE_IDENT) { return (int)DEMOD_MODE_USB; }
-    if (mode == RADIO_MODE_SSTV_FM)                         { return (int)DEMOD_MODE_NFM; }
-    if (mode == RADIO_MODE_RTTY_L)                          { return (int)DEMOD_MODE_LSB; }
+    if (mode == RADIO_MODE_SSTV_FM || mode == RADIO_MODE_APRS) { return (int)DEMOD_MODE_NFM; }
+    if (mode == RADIO_MODE_RTTY_L || mode == RADIO_MODE_PKT300) { return (int)DEMOD_MODE_LSB; }
     return mode;
 }
 
@@ -6330,15 +6333,18 @@ static void texto_modo(int mode)
     uint8_t al = (uint8_t)(mode == RADIO_MODE_ALE);
     uint8_t sg = (uint8_t)(mode == RADIO_MODE_STANAG);
     uint8_t id = (uint8_t)(mode == RADIO_MODE_IDENT);
+    uint8_t ax = (uint8_t)((mode == RADIO_MODE_APRS) ? 1U
+                         : (mode == RADIO_MODE_PKT300) ? 2U : 0U);
     uint8_t era_cw = cw_get_enabled(), era_rv = s_rtty_var, era_pk = psk31_activo();
     uint8_t era_nx = navtex_activo(), era_ds = dsc_activo(), era_fx = wefax_activo();
     uint8_t era_sv = sstv_activo(), era_hl = hell_activo(), era_jt = jtty_modo_activo();
     uint8_t era_al = ale_modo_activo(), era_sg = stanag_modo_activo();
-    uint8_t era_id = ident_modo_activo();
+    uint8_t era_id = ident_modo_activo(), era_ax = s_ax25_var;
 
     if (cw == era_cw && rv == era_rv && pk == era_pk && nx == era_nx
         && ds == era_ds && fx == era_fx && sv == era_sv && hl == era_hl
-        && jt == era_jt && al == era_al && sg == era_sg && id == era_id) { return; }
+        && jt == era_jt && al == era_al && sg == era_sg && id == era_id
+        && ax == era_ax) { return; }
     cw_linea_suelta();
     /* Every decoder off first, then the one wanted on: DSC and WEFAX borrow
      * the same RAM (src/prestamo.c), and the one leaving has to give it
@@ -6356,6 +6362,7 @@ static void texto_modo(int mode)
     if (!al) { demod_ale(0); }
     if (!sg) { demod_stanag(0); }
     if (!id) { demod_ident(0); }
+    if (!ax) { demod_ax25(0); }
     if (cw)  { demod_cw(1); }
     if (rv)  { demod_rtty(rv); }
     if (pk)  { demod_psk31(1); }
@@ -6372,8 +6379,14 @@ static void texto_modo(int mode)
         s_bucle_max_us = 0U; s_polls_max_us = 0U; s_dibujo_max_us = 0U;
     }
     if (id)  { demod_ident(1); }
+    if (ax)  { demod_ax25(ax); }
+    s_ax25_var = ax;
     s_rtty_var = rv;
-    digi_pon((uint8_t)(cw || rv || pk || nx || ds || fx || sv || hl || jt || al || sg || id));
+    digi_pon((uint8_t)(cw || rv || pk || nx || ds || fx || sv || hl || jt || al || sg || id || ax));
+    if (ax != era_ax) {
+        console_printf("  %s %s\n", (ax == 2U || era_ax == 2U) ? "PKT300" : "APRS",
+                       ax ? (ax25_activo() ? "on" : "REFUSED") : "off");
+    }
     if (id != era_id) {
         console_printf("  IDENT %s\n", id ? (ident_modo_activo() ? "on" : "REFUSED") : "off");
     }
@@ -6615,6 +6628,27 @@ static void cw_poll(void)
     }
     if (psk31_activo()) {
         while (psk31_get_char(&c)) { hay = 1U; texto_char(c); }
+    }
+    if (ax25_activo()) {
+        /* step 54: upstream's ax25_poll() - each frame that passes its
+         * check, as text, into the decoders' panel */
+        while (ax25_get_char(&c)) { hay = 1U; texto_char(c); }
+        if (s_ax25_var == 2U) {
+            /* and PKT300's AFC (User/ax25.c, AX25_CAF): the scope's frame
+             * tells it whether there is signal, as navtex_espectro() is
+             * told, made here too so a menu does not stop it */
+            static int16_t caf_dicho;
+            int16_t caf;
+
+            rtty_scope_poll();
+            ax25_espectro(rtty_scope_frame_peek(), (uint16_t)RTTY_SCOPE_BINS,
+                          rtty_scope_hz_per_bin(), rtty_scope_frame_n());
+            caf = (int16_t)ax25_caf_hz();
+            if (caf > caf_dicho + 9 || caf < caf_dicho - 9) {
+                caf_dicho = caf;
+                console_printf("  ax25: AFC %d Hz\n", (int)caf);
+            }
+        }
     }
     if (dsc_activo()) {
         dsc_poll_radio();
@@ -7257,7 +7291,8 @@ static const char *const k_mode_names[] = { "AM", "USB", "LSB", "NFM",
                                             "WFM", "SAM", "CW", "RTTY-L",
                                             "RTTY-U", "PSK31", "NAVTEX", "DSC",
                                             "WEFAX", "SSTV", "SSTV-FM", "HELL",
-                                            "JTTY", "ALE", "STANAG", "IDENT" };
+                                            "JTTY", "ALE", "STANAG", "IDENT",
+                                            "APRS", "PKT300" };
 _Static_assert(sizeof k_mode_names / sizeof k_mode_names[0]
                == (size_t)RADIO_MODE_LAST + 1U,
                "a name for every mode, upstream's and the decoders' (menus.h)");
@@ -7460,6 +7495,8 @@ int radio_mode_get(void)
     if (m == (int)DEMOD_MODE_USB && ale_modo_activo())  { return RADIO_MODE_ALE; }
     if (m == (int)DEMOD_MODE_USB && stanag_modo_activo()) { return RADIO_MODE_STANAG; }
     if (m == (int)DEMOD_MODE_USB && ident_modo_activo())  { return RADIO_MODE_IDENT; }
+    if (m == (int)DEMOD_MODE_NFM && ax25_activo())        { return RADIO_MODE_APRS; }
+    if (m == (int)DEMOD_MODE_LSB && ax25_activo())        { return RADIO_MODE_PKT300; }
     return m;
 }
 

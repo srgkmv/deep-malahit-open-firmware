@@ -56,7 +56,7 @@
 OFF_U16(ais_modo_activo,    ais_modo_mete)
 /* ale_modo_activo, ale_modo_mete: the real ones since 22/11/2026 (ale_*.c, step 51) */
 OFF_U32(analiz_activo,      analiz_feed)
-OFF_U32(ax25_activo,        ax25_process)
+/* ax25_activo, ax25_process: the real ones since 23/11/2026 (ax25.c, step 54) */
 /* dsc_activo, dsc_process: the real ones since 22/11/2026 (dsc.c, step 46) */
 OFF_U16(ft8_modo_activo,    ft8_modo_come)
 /* hell_activo, hell_process: the real ones since 22/11/2026 (hell.c, step 49) */

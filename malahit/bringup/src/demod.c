@@ -24,6 +24,7 @@
 #include "ale_modo.h"     /* ../../User - demod_ale() */
 #include "stanag_modo.h"  /* ../../User - demod_stanag() */
 #include "ident.h"        /* ../../User - demod_ident() */
+#include "ax25.h"         /* ../../User - demod_ax25() */
 
 /*
  * Upstream's call: 512 frames at 192 kHz in (with rf_doble), 512 stereo
@@ -89,7 +90,7 @@ void demod_init(void)
     __asm__ volatile ("" :: "r"(demod_psk31), "r"(demod_navtex), "r"(demod_dsc),
                             "r"(demod_wefax), "r"(demod_sstv), "r"(demod_hell),
                             "r"(demod_jtty), "r"(demod_ale), "r"(demod_stanag),
-                            "r"(demod_ident));
+                            "r"(demod_ident), "r"(demod_ax25));
 }
 
 void demod_block(const int16_t *rx, int16_t *tx, uint32_t frames)
@@ -479,6 +480,25 @@ SWD_ENTRY void demod_ident(int on)
     if (on && !ok) {
         console_printf("  *** IDENT did not start: the borrowed RAM is too small or taken (src/prestamo.c) ***\n");
     }
+}
+
+/*
+ * AX.25 - step 54. Upstream's mode change: APRS (1) from the FM
+ * discriminator, so at the RF path's rate, asked and not assumed
+ * (demod_am_get_active_fs_hz()); PKT300 (2) from the sideband, always
+ * 12 kHz, 300 Bd FSK 1600/1800 Hz (ax25.h's PKT_HF_*). 0 stops it.
+ */
+SWD_ENTRY void demod_ax25(int which)
+{
+    demod_quieto(1);
+    if (which == 1) {
+        ax25_start(demod_am_get_active_fs_hz());
+    } else if (which == 2) {
+        ax25_start_fsk(PKT_HF_FS_HZ, PKT_HF_BAUD, PKT_HF_MARCA_HZ, PKT_HF_ESPACIO_HZ);
+    } else {
+        ax25_stop();
+    }
+    demod_quieto(0);
 }
 
 /*

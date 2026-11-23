@@ -33,6 +33,9 @@
  *          table over the whole area: Time Offset Qual. Message Country
  *   ALE    Borrar | quality bar / "last one N min" | words count + dot,
  *          a table over the whole area: Callsign Type kHz Qual. N
+ *   APRS,  Borrar                               | frames with their
+ *   PKT300 check right + dot "flags seen"; the scope's two lines the
+ *          decoder's mark and space (1200/2200 or 1600/1800)
  *   IDENT  Borrar                               | "measuring" /
  *          "listening" + dot, the names that fit, their notes and the
  *          five numbers measured, over the whole area
@@ -67,6 +70,7 @@
 #include "ale_modo.h"
 #include "stanag_modo.h"
 #include "ident.h"
+#include "ax25.h"
 #include "board.h"         /* board_millis() - ALE's poll and its clock */
 #include "demod.h"         /* demod_quieto(): a decoder reconfigured, no block through it */
 #include "idioma.h"        /* ../../User - tr() */
@@ -990,6 +994,44 @@ static void sincroniza(void)
         return;
     }
 
+    if (ax25_activo()) {
+        /* AX.25 - step 54. Upstream shows no chip in APRS or PKT300; here
+         * the frames that passed their check ("12 ok"), and the dot ax25.c's
+         * own "flags seen lately" - the two questions a quiet packet
+         * channel leaves: is anything there, and does it decode. */
+        ax25_info_t in;
+        uint32_t ok;
+
+        ax25_info(&in);
+        ok = (in.tramas_ok > 9999U) ? 9999U : in.tramas_ok;
+        i = 0U;
+        if (ok >= 1000U) { s_chip[i++] = (char)('0' + ok / 1000U); }
+        if (ok >= 100U)  { s_chip[i++] = (char)('0' + (ok / 100U) % 10U); }
+        if (ok >= 10U)   { s_chip[i++] = (char)('0' + (ok / 10U) % 10U); }
+        s_chip[i++] = (char)('0' + ok % 10U);
+        s_chip[i++] = ' '; s_chip[i++] = 'o'; s_chip[i++] = 'k';
+        {
+            /* and in PKT300, what its AFC has moved the tones - the scope's
+             * two lines move with it (ax25_marca_hz()) */
+            int32_t caf = (int32_t)ax25_caf_hz();
+
+            if (caf >= 5 || caf <= -5) {
+                uint32_t v = (uint32_t)((caf < 0) ? -caf : caf);
+
+                s_chip[i++] = ' ';
+                s_chip[i++] = (caf < 0) ? '-' : '+';
+                if (v >= 100U) { s_chip[i++] = (char)('0' + v / 100U); }
+                if (v >= 10U)  { s_chip[i++] = (char)('0' + (v / 10U) % 10U); }
+                s_chip[i++] = (char)('0' + v % 10U);
+                s_chip[i++] = ' '; s_chip[i++] = 'H'; s_chip[i++] = 'z';
+            }
+        }
+        s_chip[i] = '\0';
+        s_st.chip = s_chip;
+        s_st.enganchado = in.enganchado;
+        return;
+    }
+
     if (psk31_activo()) {
         /* upstream's: the chip is the FREQUENCY ERROR, "-3,4 Hz" - the
          * number to tune by - and the dot is the quality (PSK31_CAL_MIN). */
@@ -1136,6 +1178,15 @@ static void osciloscopio(void)
         uint16_t a = (uint16_t)(psk31_get_centro_hz() / nyq * (float)GFX2_W);
 
         if (a < GFX2_W) { gfx_vline(a, DIGI_SCOPE_Y, DIGI_SCOPE_H, color_tema(PAL_ACCENT)); }
+    } else if (nyq > 0.0f && ax25_activo()) {
+        /* AX.25: upstream's scope_rayas() branch - the tones from ax25.c
+         * itself, 1200/2200 in APRS and 1600/1800 in PKT300 - mark in the
+         * accent, space in the warning colour */
+        uint16_t a = (uint16_t)(ax25_marca_hz()   / nyq * (float)GFX2_W);
+        uint16_t b = (uint16_t)(ax25_espacio_hz() / nyq * (float)GFX2_W);
+
+        if (a < GFX2_W) { gfx_vline(a, DIGI_SCOPE_Y, DIGI_SCOPE_H, color_tema(PAL_ACCENT)); }
+        if (b < GFX2_W) { gfx_vline(b, DIGI_SCOPE_Y, DIGI_SCOPE_H, color_tema(PAL_WARN)); }
     } else if (nyq > 0.0f && rtty_get_enabled()) {
         /* RTTY: mark in the accent, space in the warning colour */
         uint16_t a = (uint16_t)(rtty_get_mark_hz()  / nyq * (float)GFX2_W);
