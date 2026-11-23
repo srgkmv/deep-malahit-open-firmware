@@ -34,6 +34,7 @@
 #define NSIM  49
 
 static int fallos;
+static double g_desvio;     /* Hz de error de sintonia, para el CAF (seccion 7) */
 
 static void bien(int ok, const char *que)
 {
@@ -97,7 +98,7 @@ static uint32_t modula(const uint8_t *sim, int n, float *sal,
     for (i = 0; i < (int)retardo; i++) { sal[m++] = 0.0f; }
 
     for (i = 0; i < n; i++) {
-        double f = k_hz[rango(sim[i])];
+        double f = k_hz[rango(sim[i])] + g_desvio;
 
         for (k = 0; k < SPS; k++) {
             sal[m++] = (float)sin(fase);
@@ -260,6 +261,71 @@ int main(void)
         b2 = pasa(aud, n, w2, (uint8_t *)0);
         printf("      TIS EA4 x%d, DATA XYZ x%d\n", b1, b2);
         bien(b1 >= 1 && b2 >= 1, "saca las dos palabras de la pareja");
+    }
+
+    /* --------------------- 7. el CAF: la radio no esta donde dice el dial */
+    printf("\n  con la sintonia corrida (el CAF, 23/11/2026):\n");
+    {
+        const double d[] = { -300.0, -150.0, 150.0, 300.0 };
+        uint8_t s12[NSIM * 12];
+        ale_rx_info_t in;
+        unsigned i;
+        int b, k;
+
+        palabra_a_simbolos(w, s12);
+        for (k = 1; k < 12; k++) { memcpy(&s12[k * NSIM], s12, NSIM); }
+        for (i = 0; i < sizeof d / sizeof d[0]; i++) {
+            g_desvio = d[i];
+            n = modula(s12, NSIM * 12, aud, 37.0, 0.3f, 300U + i);
+            b = 0;
+            ale_rx_start((float)FS);
+            for (k = 0; k < (int)n; k += 256) {
+                uint32_t q = (n - (uint32_t)k > 256U) ? 256U : (n - (uint32_t)k), pw;
+                uint8_t c;
+
+                ale_rx_mete(&aud[k], q);
+                while (ale_rx_saca(&pw, &c)) { if (pw == w) { b++; } }
+            }
+            ale_rx_info(&in);
+            ale_rx_stop();
+            printf("      %+4.0f Hz -> %2d de 12, el CAF en %+d Hz\n", d[i], b, (int)in.afc_hz);
+            /* A +-300 el CAF pasa por la rejilla de al lado y los bordes:
+             * unos 2,4 s de los 4,7 del sondeo. */
+            bien(b >= ((d[i] > 200.0 || d[i] < -200.0) ? 5 : 8)
+                 && in.afc_hz > d[i] - 15.0 && in.afc_hz < d[i] + 15.0,
+                 "lo encuentra y saca las palabras");
+        }
+        g_desvio = 0.0;
+    }
+    {
+        /* Y quieto donde no hay ALE: ruido solo, y una portadora fuerte,
+         * que enciende todos los bins con sus lobulos laterales. */
+        uint32_t j, m = 240000U;
+        ale_rx_info_t in;
+
+        srand(77U);
+        for (j = 0; j < m; j++) {
+            double rr = 0.0;
+            int r;
+
+            for (r = 0; r < 12; r++) { rr += (double)rand() / RAND_MAX; }
+            aud[j] = (float)(0.5 * (rr - 6.0));
+        }
+        ale_rx_start((float)FS);
+        for (j = 0; j < m; j += 256U) { ale_rx_mete(&aud[j], (m - j > 256U) ? 256U : m - j); }
+        ale_rx_info(&in);
+        ale_rx_stop();
+        printf("      20 s de ruido: el CAF en %+d Hz\n", (int)in.afc_hz);
+        bien(in.afc_hz == 0, "con ruido solo, el CAF no se mueve");
+        for (j = 0; j < m; j++) {
+            aud[j] = (float)(0.05 * sin(2.0 * 3.14159265358979 * 1690.0 * j / FS)) + 0.02f * aud[j];
+        }
+        ale_rx_start((float)FS);
+        for (j = 0; j < m; j += 256U) { ale_rx_mete(&aud[j], (m - j > 256U) ? 256U : m - j); }
+        ale_rx_info(&in);
+        ale_rx_stop();
+        printf("      una portadora en 1690 Hz: el CAF en %+d Hz\n", (int)in.afc_hz);
+        bien(in.afc_hz == 0, "ni con una portadora fuerte");
     }
 
     printf("\n%s (%d fallos)\n\n",

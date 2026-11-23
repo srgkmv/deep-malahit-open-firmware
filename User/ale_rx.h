@@ -51,6 +51,7 @@ typedef struct {
     uint8_t  enganchado;  /* 1 = sabe donde empieza cada palabra */
     uint8_t  nivel;       /* 0..99, sin calibrar */
     uint8_t  calidad;     /* votos unanimes de la ultima palabra, 0..48 */
+    int16_t  afc_hz;      /* lo que el CAF ha movido los tonos, en Hz */
 } ale_rx_info_t;
 
 void    ale_rx_start(float fs_hz);
@@ -70,5 +71,23 @@ uint8_t ale_rx_saca(uint32_t *palabra, uint8_t *calidad);
 
 void    ale_rx_info(ale_rx_info_t *out);
 void    ale_rx_cuentas_cero(void);
+
+/*
+ * EL CONTROL AUTOMATICO DE FRECUENCIA - 23/11/2026, port del Malahit.
+ *
+ * Los ocho tonos se buscan en bins fijos de 125 Hz, y eso aguanta +-80 Hz
+ * de error de sintonia y ni uno mas: a 90 no sale nada. En una radio cuyo
+ * cristal anda a unas ppm -6 ppm a 14 MHz son 84 Hz- eso es no oir ALE de
+ * 14 MHz para arriba. Asi que el receptor sigue a la senal: mueve sus ocho
+ * frecuencias, no la radio. Ver la cabecera del CAF en ale_rx.c.
+ *
+ * ale_rx_afc_cero() lo devuelve a cero, como al arrancar: para cuando se
+ * cambia de frecuencia y el error que habia ya no es el de ahora.
+ *
+ * Solo se compila con ALE_CAF=1 (el port del Malahit, los bancos); sin el,
+ * los bins fijos de siempre, afc_hz siempre 0 y ale_rx_afc_cero() vacia:
+ * en el DEEPSDR no cabe, su flash esta llena.
+ */
+void    ale_rx_afc_cero(void);
 
 #endif /* ALE_RX_H */

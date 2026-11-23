@@ -60,5 +60,7 @@ uint8_t  ale_modo_estaciones(void);
 uint8_t  ale_modo_senal(void);
 uint8_t  ale_modo_enganchado(void);
 uint8_t  ale_modo_calidad(void);
+/* Lo que el CAF de ale_rx.c ha movido los tonos, en Hz (23/11/2026). */
+int16_t  ale_modo_afc_hz(void);
 
 #endif /* ALE_MODO_H */

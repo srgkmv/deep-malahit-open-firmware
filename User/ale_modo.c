@@ -58,7 +58,17 @@ static uint8_t    s_sin_nada;   /* palabras seguidas sin extension */
 uint8_t  ale_modo_activo(void)     { return s_on; }
 uint32_t ale_modo_palabras(void)   { return s_palabras; }
 uint8_t  ale_modo_estaciones(void) { return s_nest; }
-void     ale_modo_frec_pon(uint32_t khz) { s_khz = khz; }
+/*
+ * Y AL CAMBIAR DE FRECUENCIA, EL CAF A CERO - 23/11/2026. Lo que ha medido
+ * es sobre todo el error de la radio EN ESTA frecuencia; en otra banda es
+ * otro, y uno viejo de 250 Hz al lado se tendria que deshacer antes de oir
+ * nada. Se pasa en cada vuelta del bucle, asi que solo cuenta el cambio.
+ */
+void ale_modo_frec_pon(uint32_t khz)
+{
+    if (s_on && (khz != s_khz)) { ale_rx_afc_cero(); }
+    s_khz = khz;
+}
 
 uint8_t ale_modo_senal(void)
 {
@@ -74,6 +84,14 @@ uint8_t ale_modo_enganchado(void)
 
     ale_rx_info(&i);
     return i.enganchado;
+}
+
+int16_t ale_modo_afc_hz(void)
+{
+    ale_rx_info_t i;
+
+    ale_rx_info(&i);
+    return i.afc_hz;
 }
 
 uint8_t ale_modo_calidad(void)

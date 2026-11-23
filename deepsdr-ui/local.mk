@@ -2653,7 +2653,7 @@ comprueba: alegolay
 
 out/alesaire: sim/ale_aire.c $(FIRMWARE)/User/ale_rx.c $(FIRMWARE)/User/ale_golay.c
 	@mkdir -p out
-	$(CC) -O2 -Wall -Wextra -I hostinc -I sim -I $(FIRMWARE)/User -o $@ $^ $(LDLIBS)
+	$(CC) -O2 -Wall -Wextra -DALE_CAF=1 -I hostinc -I sim -I $(FIRMWARE)/User -o $@ $^ $(LDLIBS)
 
 .PHONY: alesaire
 alesaire: out/alesaire ; ./out/alesaire
@@ -4425,7 +4425,7 @@ comprueba: tonosaire
 # que se pueden poner del reves sin que nada se queje. Ver sim/ale_aire.c.
 out/aleaire: sim/ale_aire.c $(FIRMWARE)/User/ale_rx.c $(FIRMWARE)/User/ale_golay.c
 	@mkdir -p out
-	$(CC) $(CFLAGS) -I$(FIRMWARE)/User -Ihostinc -Isim -o $@ \
+	$(CC) $(CFLAGS) -DALE_CAF=1 -I$(FIRMWARE)/User -Ihostinc -Isim -o $@ \
 	      sim/ale_aire.c $(FIRMWARE)/User/ale_rx.c \
 	      $(FIRMWARE)/User/ale_golay.c $(LDLIBS)
 

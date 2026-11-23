@@ -922,7 +922,12 @@ const int16_t ui_digi_cols_ais[UI_DIGI_COLS_AIS_N] = { 8, 110, 420, 580, 650, -7
  * el Golay haya cuadrado. Es el unico numero que dice cuanto fiarse de un
  * renglon.
  */
-const int16_t ui_digi_cols_ale[UI_DIGI_COLS_ALE_N] = { 8, 280, 400, 520, -792 };
+/* #ifndef desde el 22/11/2026, como las de JTTY: el port del Malahit pone
+ * las suyas en malahit/compat/malahit_layout.h. Aqui, las de siempre. */
+#ifndef UDG_COLS_ALE
+#define UDG_COLS_ALE { 8, 280, 400, 520, -792 }
+#endif
+const int16_t ui_digi_cols_ale[UI_DIGI_COLS_ALE_N] = UDG_COLS_ALE;
 
 /*
  * Hasta donde puede llegar el campo k sin pisar al siguiente.
