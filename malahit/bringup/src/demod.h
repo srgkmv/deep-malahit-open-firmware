@@ -88,6 +88,9 @@ void demod_hell(int on);
 /* JTTY on (1) or off (0). */
 void demod_jtty(int on);
 
+/* ALE on (1) or off (0), its table of stations from empty. */
+void demod_ale(int on);
+
 /* The bench's recorder of what PSK31 is fed: 1 arms it (2.5 s, g_graba). */
 void demod_graba(int on);
 

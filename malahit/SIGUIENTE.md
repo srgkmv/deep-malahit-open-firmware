@@ -4,6 +4,45 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
+## START HERE — 23/11/2026: step 51 (ALE, with an AFC) committed, flashing over SWD
+
+**In flash: still `10c2ece`** (step 50, below). **Step 51** (`PORTING.md`
+51) - upstream's ALE 2G (ale_rx.c, ale_golay.c, ale_modo.c) on the
+decoders' screen, entry 17 "Sondeos de HF" in Digital, upstream's table
+of stations with its quality bar and "last one N min" clock - **and, the
+owner's word ("without AFC it will most likely not work in practice"),
+an AFC** in User/ale_rx.c under `ALE_CAF` (off by default: the DEEPSDR's
+flash has no room; on in this port's reglas.mk; its own commit, `4703ae0`).
+Checked on the radio FROM RAM (AXI 518.2 of 524.3 kB, 6.1 kB left);
+committed and pushed, the owner's word, and going into flash over SWD:
+`build_flash/bringup.bin`, 292 752 bytes, sha256 `3fc4e261…`.
+
+On the air against the HackRF at 14109 kHz: the AFC finds the ~-81 Hz
+between the two references by itself, every word at quality 48; with the
+HackRF moved a further -250..+150 Hz, 30-36 words of 36, the AFC moving
+up to 400 Hz; SNR 4 from zero, 24 of 36. Host: +-400 Hz at SNR 10 and 4;
+30 min of noise, strong carriers, RTTY, PSK31, CW, JTTY leave it at 0.
+
+**The radio's state**: 14.109 MHz, ALE, from RAM; the FRAM holds mode 17,
+which the flash image does not know (it boots AM, allowed).
+
+**Open**: a REAL station - the one independent check of the Golay's
+bit conventions, shared by upstream's decoder and this file's generator
+only through the standard's text. 2G soundings are on HF day and night
+(ham ALE: 3596, 7102, 10145.5, 14109, 18106 kHz USB; and the utility
+networks). The AFC's value on a real one is this radio's own error there.
+The owner will do it when the test rig comes apart; until then, the next
+decoders (owner, 23/11/2026): STANAG, IDENT, APRS, PKT300, AIS, FT8,
+WSPR, HFDL.
+
+**The bench for ALE**: `tools/hackrf_gen.py ale --call R1TEST --snr N
+[--to MIAMI] [--twas] [--words 6 --sounds 3] [--offset-hz F] --out a.iq`,
+`hackrf_transfer -t a.iq -f <dial + 1625 - 200000> -s 2000000 -a 0 -x 47`
+with the radio on the dial in ALE; host: `deepsdr-ui/out/aleradio f.f32
+[kHz]` (the radio's 16 ms poll; `ALE_TRAZA=1` prints each AFC move), and
+`make aleaire` (section 7: the AFC). Console: `ale: <row> <table row>
+(... afc N Hz)` each time a row changes.
+
 ## START HERE — 22/11/2026, late night: step 50 (JTTY) IN FLASH (10c2ece), over SWD
 
 **In flash: `10c2ece`** - `build_flash/bringup.bin`, 282 288 bytes,

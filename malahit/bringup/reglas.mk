@@ -460,6 +460,13 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/jtty_fec.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/jtty_msg.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/jtty_modo.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/dxcc.c
+# ale_*.c    ALE 2G (MIL-STD-188-141): 8-FSK at 125 Bd, eight Goertzel
+#            on the 12 kHz sideband, the 2-of-3 vote, Golay (24,12),
+#            words joined into addresses in a table of stations; the
+#            table in the borrowed RAM (step 51)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ale_rx.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ale_golay.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ale_modo.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_digi.c
 #
 # THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]
@@ -673,6 +680,14 @@ $(BUILD_DIR)/up_ui_grid.o:    CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
 $(BUILD_DIR)/up_ui_det.o:     CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
 $(BUILD_DIR)/up_ui_kbd.o:     CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
 $(BUILD_DIR)/up_ui_digi.o:    CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
+
+# ale_modo.c asserts that its table fits ft8_shared_ram_t - the waterfall
+# memory upstream lends it - so it includes ft8_shared_ram.h, which reaches
+# Ft8Lib's headers. Only a sizeof: nothing of FT8 is linked (step 51).
+$(BUILD_DIR)/up_ale_modo.o: CFLAGS_EXTRA_UPSTREAM += -I$(UPSTREAM_DIR)/../Ft8Lib
+# ALE's AFC (User/ale_rx.c, 23/11/2026): off by default there, because the
+# DEEPSDR's flash has no room for it; on here.
+$(BUILD_DIR)/up_ale_rx.o: CFLAGS_EXTRA_UPSTREAM += -DALE_CAF=1
 
 $(BUILD_DIR)/up_%.o: $(UPSTREAM_DIR)/%.c $(BUILD_RULES) | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $(CFLAGS_EXTRA_UPSTREAM) $(CFLAGS_FONTS) $< -o $@

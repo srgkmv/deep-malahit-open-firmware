@@ -682,9 +682,84 @@ static void digi_cw(const char *nombre, const char *chip, const char *btn,
     escribe(nombre);
 }
 
+/*
+ * ALE - paso 51 del port, 22/11/2026: la tabla de upstream sobre toda la
+ * zona, como la de JTTY, con las columnas de malahit_layout.h
+ * (UDG_COLS_ALE); la barra, la calidad o el reloj de la ultima palabra; la
+ * chapa, las palabras. Se mide que cada campo quepa en su columna -el peor
+ * indicativo son quince 'W', el tope del estandar- y la barra y la chapa
+ * enteras, en los dos idiomas.
+ */
+static void digi_ale(const char *nombre, uint8_t eng, uint8_t en)
+{
+    static const char *const k_filas[] = {
+        "WWWWWWWWWWWWWWW\tTWAS\t180.000\t48\t65535",
+        "R1TEST\tTIS\t14.109\t48\t18",
+        "EA4XYZ\tTWAS\t7.102\t41\t3",
+        "MIAMI\tTO\t10.145\t33\t1",
+        "K1ABC\tFROM\t5.357\t29\t2",
+    };
+    ui_digi_state_t st;
+    uint8_t i, k;
+    int16_t h = (int16_t)(DIGI_PANEL_Y + DIGI_PANEL_H - DIGI_SCOPE_Y);
+
+    fondo_principal();
+    memset(&st, 0, sizeof st);
+    st.y = DIGI_SCOPE_Y;
+    st.h = h;
+    st.filas = (uint8_t)((h - UDG_HDR_H) / UDG_LINE_H - 1);
+    st.btn = en ? "Clear" : "Borrar";
+    st.cols = ui_digi_cols_ale;
+    st.ncols = UI_DIGI_COLS_ALE_N;
+    st.titulos = en ? "Callsign\tType\tkHz\tQual.\tN" : "Indicativo\tTipo\tkHz\tCal.\tN";
+    for (i = 0; i < sizeof k_filas / sizeof k_filas[0]; i++) { st.fila[i] = k_filas[i]; }
+    st.barra_on = 1U;
+    st.barra_max = 48U;
+    st.barra_v = eng ? 41U : 0U;
+    st.barra_txt = eng ? (en ? "quality 41/48  AFC +400" : "calidad 41/48  CAF +400")
+                       : (en ? "searching for a word  AFC -400" : "última hace 999 min  CAF -400");
+    st.chip = en ? "9999 words" : "9999 pal";
+    st.enganchado = eng;
+    printf("  digi ale: %u filas, barra x %d w %d (hueco %d), chapa x %d w %d\n",
+           (unsigned)st.filas, ui_digi_barra_x_dbg(&st), ui_digi_barra_w_dbg(&st),
+           ui_digi_barra_hueco_dbg(&st), ui_digi_chip_x_dbg(&st), ui_digi_chip_w_dbg(&st));
+    if (st.filas != 14U) { printf("  ALE: %u filas y no las 14 de ALE_MODO_LINEAS\n", st.filas); s_fallos++; }
+    cabe("barra", st.barra_txt, &font_ui_10b, ui_digi_barra_hueco_dbg(&st));
+    cabe("barra", en ? "last one 999 min  AFC -400" : "buscando palabra  CAF -400", &font_ui_10b,
+         ui_digi_barra_hueco_dbg(&st));
+    cabe("barra", en ? "quality 48/48  AFC -400" : "calidad 48/48  CAF -400", &font_ui_10b,
+         ui_digi_barra_hueco_dbg(&st));
+    /* cada campo, contra su columna (la ultima va a la derecha: la reserva) */
+    for (i = 0; i < sizeof k_filas / sizeof k_filas[0]; i++) {
+        const char *p = k_filas[i];
+
+        for (k = 0; k < UI_DIGI_COLS_ALE_N && *p; k++) {
+            char campo[24];
+            uint8_t n = 0;
+            int16_t x = ui_digi_cols_ale[k], hasta;
+
+            while (*p && *p != '\t' && n < sizeof campo - 1U) { campo[n++] = *p++; }
+            campo[n] = '\0';
+            if (*p == '\t') { p++; }
+            if (k + 1U >= UI_DIGI_COLS_ALE_N) { hasta = (int16_t)(x < 0 ? UDG_COL_RESERVA : GFX2_W - x); }
+            else if (ui_digi_cols_ale[k + 1U] >= 0) { hasta = (int16_t)(ui_digi_cols_ale[k + 1U] - x - 4); }
+            else { hasta = (int16_t)(-ui_digi_cols_ale[k + 1U] - UDG_COL_RESERVA - x - 4); }
+            cabe("ale", campo, &font_ui_10b, hasta);
+        }
+    }
+    ui_digi_draw_texto(&st);
+    if (strcmp(ui_digi_chip_visible(&st), st.chip) != 0) {
+        printf("  SE CORTA la chapa \"%s\"\n", st.chip);
+        s_fallos++;
+    }
+    escribe(nombre);
+}
+
 int main(void)
 {
     printf("menus del Malahit, 480 x 320\n");
+    digi_ale("ale", 1U, 0U);
+    digi_ale("ale_en", 0U, 1U);
     digi_cw("cw", "20 ppm 14 dB", "Borrar", "Aprende", 0U);
     digi_cw("cw_en", "20 wpm 14 dB", "Clear", "Learn", 0U);
     digi_cw("rtty", 0, "Borrar", 0, 1U);

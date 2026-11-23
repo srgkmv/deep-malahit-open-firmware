@@ -1758,6 +1758,103 @@ Each step should end with something visible on the radio.
    register operand did not fit). AXI 506.3 of 512 kB, D2 184 of 288: the
    RAM image has 5.7 kB left - from the next decoder on, flash over SWD
    (WORKING.md, "Flash over SWD").
+51. **ALE, the soundings of HF.** *22/11/2026, from RAM, against the
+   HackRF at 7102 and 14109 kHz* - upstream's ale_rx.c, ale_golay.c and
+   ale_modo.c (2G ALE, MIL-STD-188-141 appendix A: 8-FSK at 125 Bd, eight
+   Goertzel on the 12 kHz sideband, the 2-of-3 vote over the three copies
+   of each 49-bit word, two extended Golay (24,12), words joined into
+   addresses by their preambles), stub gone; entry 17 (USB), "Sondeos de
+   HF" in Digital; `demod_ale()` under the flag. Its table of stations
+   (1.1 kB) in the borrowed RAM; ale_modo.c includes ft8_shared_ram.h for
+   a sizeof, so that one file gets `-I Ft8Lib` (nothing of FT8 links).
+   **The screen is upstream's table** over the whole area, as JTTY's -
+   Callsign, Type, kHz, Qual., N, in the order heard, Borrar - with its
+   bar: the quality of the last word (unanimous votes of 48) while locked,
+   else "searching for a word" and, once something has been heard, "last
+   one N min" (upstream's clock, kept in src/digi.c as upstream keeps it
+   in its main.c). The columns through a new `#ifndef UDG_COLS_ALE` in
+   User/ui_digi.c, { 4, 168, 240, 312, -476 } in malahit_layout.h -
+   fifteen 'W's, the longest address, 150 px in 164; the DEEPSDR's
+   ui_digi.o, its digi screens and its 800 x 480 screen byte-identical,
+   the gfx2 copy in step, the DEEPSDR builds and its 29 checks are green;
+   `make malahit-menus` renders the ALE screen (`malahit_ale*.png`) and
+   measures every field against its column. Two things of this port's:
+   upstream's bar said "calidad" in English too, here "quality"; and it
+   repainted the bar only when the quality moved, so an unlock kept
+   "calidad 48/48" up to a minute - here the bar and chip repaint when
+   their text or the dot change, and the table when one of its rows
+   does (a station closed by silence did not repaint upstream's until
+   the next word).
+   **Upstream's poll counts passes, and this port's loop is not
+   upstream's**: ale_modo.c closes the address it is joining after 200
+   polls with no word, 3.2 s in upstream's 16 ms loop; this port's loop
+   on the decoders' screen runs at whatever its drawing costs (4 ms
+   passes in the console), and under ~2 ms a pass "TIS EA4" would be
+   noted alone before its "DATA XYZ" came 392 ms later. So
+   `digi_ale_poll()` calls ale_modo_poll() once per 16 ms of the clock,
+   however many passes that is - upstream's timing on any loop.
+   `tools/hackrf_gen.py ale` writes soundings from the standard's own
+   description, not from ale_*.c (tribit-to-tone table, word layout,
+   Golay by polynomial division - its 4096 codewords weigh {0:1, 8:759,
+   12:2576, 16:759, 24:1} - B's check bits inverted, the interleave, the
+   stuff bit, the bit-level triple copy): `--call`, `--to`, `--twas`,
+   `--words`, `--sounds`, `--offset-hz`. `deepsdr-ui/sim/ale_radio.c`
+   (`make out/aleradio`) runs the mode on a file with the radio's 16 ms
+   poll. What the two could share by mistake (the Golay's bit order, the
+   place of its overall parity) only a real station settles.
+   **Host, as upstream has it**: every word at SNR 2 dB in 500 Hz, most
+   at 0; but the tones' bins are fixed and hold +-80 Hz of mistuning at
+   SNR 10 (+-50 at SNR 4, +-25 at 2), nothing at 90-100. **On the air**
+   at 7102 kHz, SNR 10: 36 words of 36, quality 48; at 14109 kHz the two
+   references are ~80 Hz apart (JTTY measured -93): every word, but at
+   quality ~40; the HackRF 60 Hz up, 48; 60 Hz down, nothing - a radio
+   ~6 ppm off would hear little ALE from 14 MHz up.
+   **So, the owner's word (23/11/2026), an AFC - in User/ale_rx.c, under
+   `ALE_CAF`, OFF by default** (the DEEPSDR's flash is full: with it on,
+   1116 bytes over; off, the DEEPSDR builds as before, +46 bytes, its 29
+   checks green), ON in this port's reglas.mk and in deepsdr-ui's ALE
+   benches. It moves the eight Goertzel, not the radio:
+   - **tracking**: on each clear symbol two Goertzel at +-62.5 Hz of the
+     winning tone - for a rectangular window the ratio of their
+     magnitudes gives the error exactly within half a bin; each tone keeps
+     its own mean error and the AFC moves 8 % of the MEDIAN of them a
+     symbol (a carrier at -6 dB next to one tone pulled the plain mean
+     onto the carrier: +51 Hz for a station at +120);
+   - **search**: beyond ~75 Hz the symbols are not clear - upstream's
+     symbol-phase election goes to windows straddling two symbols, whose
+     half-length tones have twice the lobe - so each symbol also measures
+     one of four other grids (+-62.5, +-125 Hz), each at its OWN best of
+     the four phases (measured at the current grid's phase, all four came
+     out with the same energy); the energy of each tone in each grid,
+     averaged ~100 symbols; a grid "has signal" when six of its eight
+     tones are 30 % over the floor (the poorest grid) AND within a fifth
+     of its strongest tone (a strong carrier lights every bin with its
+     sidelobes, but its own bin is 20-50 times the rest); another grid
+     with signal and 25 % more energy than this one for 16 symbols in a
+     row takes the AFC;
+   - **edges**: a grid 250 Hz off holds seven of the eight tones; the
+     eighth falls 250 Hz below the first or above the last, where an
+     aligned grid sees only noise - averaged there, the AFC jumps 250 Hz.
+   It holds its value without a signal (it is mostly this radio's own
+   error on this frequency) and goes to zero when the dial's kHz change
+   (ale_modo_frec_pon()); the bar shows it ("  AFC -81"), the console
+   too. **Host, with it**: all of +-400 Hz at SNR 10 (26-36 words of
+   36), 18-36 at SNR 4, the middle and parts of the rest at SNR 2; thirty
+   minutes of noise, carriers at SNR 40 (1110, 1690, 1750, 2000 Hz),
+   RTTY, PSK31, CW, JTTY: the AFC stays at 0. Upstream's bench `make
+   aleaire` has a section 7 (+-150 and +-300 Hz, noise, a carrier);
+   `ALE_TRAZA=1 out/aleradio` prints every move. Cost on the radio: the
+   worst upstream call 932 us with ALE, 759 in USB, of 2667 - no SAI
+   overrun. **On the air, with it**, 14109 kHz, the HackRF uncorrected:
+   the AFC finds -81 Hz, every word at quality 48; with the HackRF a
+   further -150, +150, -250 Hz: -231, +66, -333, 30-34 words of 36 each,
+   the AFC moving up to 400 Hz from the last value; SNR 4 from zero: -72
+   then -81, 24 of 36; TO MIAMI + TIS EA4XYZ at +150 Hz, SNR 8: 36 of 36.
+   Before the AFC, with the HackRF 60 Hz up: a 15-character TWAS address
+   after a TO MIAMI (the '@' fill stripped), and SNR 4 and 2 - every
+   word, quality 45 and 37. Borrar, a menu over the screen during a
+   sounding, JTTY <-> ALE <-> USB: as they should. AXI 518.2 of 524.3 kB
+   in the RAM image (6.1 kB left); the flash image 292 752 bytes.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

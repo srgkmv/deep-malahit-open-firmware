@@ -3136,6 +3136,13 @@ jttycadena: out/jttycadena ; ./out/jttycadena
 
 comprueba: jttycadena
 
+# ALE COMO LO LLEVA LA RADIO, CONTRA CUALQUIER FICHERO (22/11/2026, port del
+# Malahit). Ver sim/ale_radio.c. Pide un fichero: fuera de "comprueba".
+out/aleradio: sim/ale_radio.c $(FIRMWARE)/User/ale_modo.c \
+              $(FIRMWARE)/User/ale_rx.c $(FIRMWARE)/User/ale_golay.c
+	@mkdir -p out
+	$(CC) $(CFLAGS) -DALE_CAF=1 -I$(FIRMWARE)/User -I$(FIRMWARE)/Ft8Lib -Ihostinc -Isim -o $@ $^ $(LDLIBS)
+
 # ---------------------------------------------------------------------
 # LAS TRES MEDIDAS DE JTTY QUE NO CABEN EN LA SUITE (28/09/2026)
 #

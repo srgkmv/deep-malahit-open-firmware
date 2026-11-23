@@ -31,6 +31,8 @@
  *          the strips of columns below
  *   JTTY   Borrar                               | atoms count + dot, a
  *          table over the whole area: Time Offset Qual. Message Country
+ *   ALE    Borrar | quality bar / "last one N min" | words count + dot,
+ *          a table over the whole area: Callsign Type kHz Qual. N
  *
  * and upstream's tap on each (rtty_shift_siguiente(), rtty_baud_
  * siguiente(), the Auto toggle, cw_set_aprende()) - on the press here,
@@ -56,6 +58,8 @@
 #include "sstv.h"
 #include "hell.h"
 #include "jtty_modo.h"
+#include "ale_modo.h"
+#include "board.h"         /* board_millis() - ALE's poll and its clock */
 #include "demod.h"         /* demod_quieto(): a decoder reconfigured, no block through it */
 #include "idioma.h"        /* ../../User - tr() */
 
@@ -524,6 +528,183 @@ static void jtty_sync(void)
     s_chip[sizeof s_chip - 1U] = '\0';
 }
 
+/*
+ * ALE - step 51, 22/11/2026. Upstream's digi_sync() ALE branch and its
+ * ale_chapa(): the table of stations over the whole area, as JTTY's (no
+ * scope), in the order heard, no zebra (five columns, few rows),
+ * upstream's column titles; Borrar; no channel button (ALE has no fixed
+ * channels) and no map, as upstream. The bar is the quality of the last
+ * word - the unanimous votes of the 2-of-3, out of 48 - while locked; and
+ * without a lock, "searching for a word" until something has been heard,
+ * then "last one N min": upstream's answer to "is the net quiet, or is the
+ * decoder broken?", which an empty table cannot give. The chip counts the
+ * words, the dot is the lock.
+ *
+ * The clock is kept here, as upstream keeps it in its main.c: ale_modo.c
+ * has none. After the bar's text, what ale_rx.c's AFC has moved the tones
+ * (23/11/2026, "  AFC +62"), when it is not zero. One word in upstream's bar was left Spanish in English
+ * ("calidad"); here it is "quality".
+ */
+#define ALE_POLL_MS 16U                 /* upstream's main loop: digi_ale_poll() */
+
+static uint32_t s_ale_poll_t;
+static uint32_t s_ale_ult_ms;           /* when the last word came */
+static uint32_t s_ale_pal_vista;
+static uint8_t  s_ale_hubo;
+static uint32_t s_ale_hash[ALE_MODO_LINEAS];
+static uint32_t s_ale_gen;              /* moves when a row of the table does */
+static uint32_t s_ale_gen_visto = 0xFFFFFFFFUL;
+static char     s_ale_barra[40];
+static char     s_ale_barra_visto[40];
+static char     s_ale_chip[16];
+
+static uint8_t pega(char *d, uint8_t i, uint8_t cap, const char *t)
+{
+    while (*t != '\0' && (uint8_t)(i + 1U) < cap) { d[i++] = *t++; }
+    d[i] = '\0';
+    return i;
+}
+
+static uint8_t pega_u(char *d, uint8_t i, uint8_t cap, uint32_t v)
+{
+    char t[11];
+    uint8_t n = 0U;
+
+    do { t[n++] = (char)('0' + (v % 10U)); v /= 10U; } while (v != 0U);
+    while (n > 0U && (uint8_t)(i + 1U) < cap) { d[i++] = t[--n]; }
+    d[i] = '\0';
+    return i;
+}
+
+static uint16_t ale_desde_min(void)
+{
+    if (!s_ale_hubo) { return 0xFFFFU; }
+    return (uint16_t)(((board_millis() - s_ale_ult_ms) / 1000U) / 60U);
+}
+
+void digi_ale_borra(void)
+{
+    s_ale_ult_ms = 0U;
+    s_ale_pal_vista = 0U;
+    s_ale_hubo = 0U;
+    memset(s_ale_hash, 0, sizeof s_ale_hash);
+    s_ale_gen++;
+    s_ale_poll_t = board_millis();
+}
+
+/*
+ * From the main loop, ALE on. UPSTREAM'S POLL AT UPSTREAM'S PACE: ale_modo.c
+ * closes the address it is joining after 200 polls with no word - 3.2 s in
+ * upstream's 16 ms loop, eight words' time. This port's loop runs as fast
+ * as its drawing lets it, and at under 2 ms a pass 200 polls would be less
+ * than one word: "TIS EA4" would be noted alone before its "DATA XYZ" came,
+ * 392 ms later, and the DATA dropped as an extension with no anchor. So the
+ * polls are counted in 16 ms of the clock, not in passes - any number per
+ * pass, each one harmless (a poll takes what words there are, up to four).
+ *
+ * Then the clock of the last word, and each row of the table that changed
+ * to the console - its hash moves when a station is added, heard again,
+ * or its quality or count change.
+ */
+void digi_ale_poll(void)
+{
+    uint32_t now = board_millis(), n, w, k;
+
+    n = (now - s_ale_poll_t) / ALE_POLL_MS;
+    if (n > 0U) {
+        s_ale_poll_t += n * ALE_POLL_MS;
+        if (n > 64U) { n = 64U; }
+        while (n-- > 0U) { ale_modo_poll(); }
+    }
+    w = ale_modo_palabras();
+    if (w != s_ale_pal_vista) {
+        s_ale_pal_vista = w;
+        if (w != 0U) { s_ale_ult_ms = now; s_ale_hubo = 1U; }
+    }
+    for (k = 0U; k < ale_modo_lineas() && k < ALE_MODO_LINEAS; k++) {
+        const char *l = ale_modo_linea(k), *p;
+        uint32_t h = 2166136261UL;
+
+        for (p = l; *p != '\0'; p++) { h = (h ^ (uint8_t)*p) * 16777619UL; }
+        if (h != s_ale_hash[k]) {
+            char t[ALE_MODO_LARGO];
+            uint8_t i;
+
+            s_ale_hash[k] = h;
+            s_ale_gen++;
+            for (i = 0U; l[i] != '\0' && i < sizeof t - 1U; i++) { t[i] = (l[i] == '\t') ? '|' : l[i]; }
+            t[i] = '\0';
+            console_printf("  ale: %u %s  (%u words, quality %u/48, afc %d Hz)\n", (uint32_t)k, t,
+                           w, (uint32_t)ale_modo_calidad(), (int)ale_modo_afc_hz());
+        }
+    }
+}
+
+static void ale_sync(void)
+{
+    uint8_t  n = JTTY_FILAS, k, hay = 0U, i;
+    uint8_t  cal = ale_modo_calidad(), eng = ale_modo_enganchado();
+    uint32_t w = ale_modo_palabras();
+
+    if (n > (uint8_t)ALE_MODO_LINEAS) { n = (uint8_t)ALE_MODO_LINEAS; }
+    memset(&s_st, 0, sizeof s_st);
+    s_st.y       = (int16_t)DIGI_SCOPE_Y;
+    s_st.h       = (int16_t)(FAX_Y + FAX_ALTO - DIGI_SCOPE_Y);
+    s_st.filas   = n;
+    s_st.btn     = tr("Borrar", "Clear");
+    s_st.cebra   = 0U;
+    s_st.cols    = ui_digi_cols_ale;
+    s_st.ncols   = UI_DIGI_COLS_ALE_N;
+    s_st.titulos = tr("Indicativo\tTipo\tkHz\tCal.\tN",
+                      "Callsign\tType\tkHz\tQual.\tN");
+    while ((hay < n) && (hay < ale_modo_lineas())) { hay++; }
+    for (k = 0U; k < hay; k++) { s_st.fila[k] = ale_modo_linea(k); }
+
+    s_st.barra_on  = 1U;
+    s_st.barra_max = 48U;
+    s_st.barra_v   = eng ? cal : 0U;
+    if (eng) {
+        i = pega(s_ale_barra, 0U, (uint8_t)sizeof s_ale_barra, tr("calidad ", "quality "));
+        i = pega_u(s_ale_barra, i, (uint8_t)sizeof s_ale_barra, cal);
+        (void)pega(s_ale_barra, i, (uint8_t)sizeof s_ale_barra, "/48");
+    } else {
+        uint16_t min = ale_desde_min();
+
+        if (min == 0xFFFFU) {
+            (void)pega(s_ale_barra, 0U, (uint8_t)sizeof s_ale_barra,
+                       tr("buscando palabra", "searching for a word"));
+        } else {
+            if (min > 999U) { min = 999U; }
+            i = pega(s_ale_barra, 0U, (uint8_t)sizeof s_ale_barra,
+                     tr("última hace ", "last one "));
+            i = pega_u(s_ale_barra, i, (uint8_t)sizeof s_ale_barra, min);
+            (void)pega(s_ale_barra, i, (uint8_t)sizeof s_ale_barra, " min");
+        }
+    }
+    {
+        /* Y lo que el CAF de ale_rx.c ha movido los tonos (23/11/2026): es,
+         * sobre todo, el error de esta radio en esta frecuencia. */
+        int16_t caf = ale_modo_afc_hz();
+
+        if (caf != 0) {
+            i = (uint8_t)strlen(s_ale_barra);
+            i = pega(s_ale_barra, i, (uint8_t)sizeof s_ale_barra, tr("  CAF ", "  AFC "));
+            i = pega(s_ale_barra, i, (uint8_t)sizeof s_ale_barra, (caf > 0) ? "+" : "-");
+            (void)pega_u(s_ale_barra, i, (uint8_t)sizeof s_ale_barra,
+                         (uint32_t)((caf > 0) ? caf : -caf));
+        }
+    }
+    s_st.barra_txt = s_ale_barra;
+
+    if (w > 9999U) { w = 9999U; }
+    i = pega_u(s_ale_chip, 0U, (uint8_t)sizeof s_ale_chip, w);
+    (void)pega(s_ale_chip, i, (uint8_t)sizeof s_ale_chip, tr(" pal", " words"));
+    s_st.chip = s_ale_chip;
+    s_st.enganchado = eng;
+    strncpy(s_chip, s_ale_chip, sizeof s_chip - 1U);
+    s_chip[sizeof s_chip - 1U] = '\0';
+}
+
 void digi_pon(uint8_t on)
 {
     s_on = (uint8_t)(on != 0U);
@@ -799,6 +980,18 @@ static void osciloscopio(void)
 void digi_repinta(void)
 {
     if (!s_on) { return; }
+    if (ale_modo_activo()) {
+        ale_sync();
+        ui_digi_olvida();
+        if (ui_digi_draw_texto(&s_st)) {
+            s_ale_gen_visto = s_ale_gen;
+            s_todo = 0U;
+        }
+        strcpy(s_chip_visto, s_chip);
+        strcpy(s_ale_barra_visto, s_ale_barra);
+        s_eng_visto = s_st.enganchado;
+        return;
+    }
     if (jtty_modo_activo()) {
         jtty_sync();
         ui_digi_olvida();
@@ -848,6 +1041,23 @@ void digi_repinta(void)
 void digi_dibuja(void)
 {
     if (!s_on) { return; }
+    if (ale_modo_activo()) {
+        /* the whole panel when a row of the table moves; the bar and the
+         * chip when their text or the dot do - upstream repaints the panel
+         * at every word, and its bar only when the quality moves (so an
+         * unlock left "calidad 48/48" up until the next minute) */
+        if (s_todo || s_ale_gen != s_ale_gen_visto) { digi_repinta(); return; }
+        ale_sync();
+        if (strcmp(s_chip_visto, s_chip) != 0 || s_eng_visto != s_st.enganchado
+            || strcmp(s_ale_barra_visto, s_ale_barra) != 0) {
+            strcpy(s_chip_visto, s_chip);
+            strcpy(s_ale_barra_visto, s_ale_barra);
+            s_eng_visto = s_st.enganchado;
+            ui_digi_draw_barra(&s_st);
+            ui_digi_draw_chip(&s_st);
+        }
+        return;
+    }
     if (jtty_modo_activo()) {
         /* upstream's: the whole panel when the count of atoms moves */
         if (s_todo || jtty_modo_atomos() != s_jtty_visto) { digi_repinta(); return; }
@@ -970,6 +1180,18 @@ uint8_t digi_toque(uint16_t x, uint16_t y, uint8_t nuevo)
      * if it finds none - the same search that moves the centre by itself,
      * so a tap only matters where that one cannot decide.
      */
+    if (ale_modo_activo()) {
+        ale_sync();
+        if (ui_digi_boton_hit(&s_st, x, y)) {
+            demod_quieto(1);
+            ale_modo_borra();           /* upstream's Borrar: the table, the counts */
+            demod_quieto(0);
+            digi_ale_borra();
+            s_todo = 1U;
+            console_printf("  digi: ALE cleared\n");
+        }
+        return 1U;
+    }
     if (jtty_modo_activo()) {
         jtty_sync();
         if (ui_digi_boton_hit(&s_st, x, y)) {

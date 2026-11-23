@@ -21,6 +21,7 @@
 #include "sstv.h"         /* ../../User - demod_sstv() */
 #include "hell.h"         /* ../../User - demod_hell() */
 #include "jtty_modo.h"    /* ../../User - demod_jtty() */
+#include "ale_modo.h"     /* ../../User - demod_ale() */
 
 /*
  * Upstream's call: 512 frames at 192 kHz in (with rf_doble), 512 stereo
@@ -85,7 +86,7 @@ void demod_init(void)
                             "r"(demod_rtty), "r"(demod_graba));
     __asm__ volatile ("" :: "r"(demod_psk31), "r"(demod_navtex), "r"(demod_dsc),
                             "r"(demod_wefax), "r"(demod_sstv), "r"(demod_hell),
-                            "r"(demod_jtty));
+                            "r"(demod_jtty), "r"(demod_ale));
 }
 
 void demod_block(const int16_t *rx, int16_t *tx, uint32_t frames)
@@ -413,6 +414,21 @@ SWD_ENTRY void demod_jtty(int on)
     demod_quieto(0);
     if (on && !ok) {
         console_printf("  *** JTTY did not start: the borrowed RAM is too small (src/prestamo.c) ***\n");
+    }
+}
+
+/* ALE on or off - upstream's ale_modo_start() takes the borrowed RAM (its
+ * table of stations, 1.1 kB) and says 0 if it cannot. */
+SWD_ENTRY void demod_ale(int on)
+{
+    uint8_t ok = 1U;
+
+    if ((uint8_t)(on != 0) == ale_modo_activo()) { return; }
+    demod_quieto(1);
+    if (on) { ok = ale_modo_start(); } else { ale_modo_stop(); }
+    demod_quieto(0);
+    if (on && !ok) {
+        console_printf("  *** ALE did not start: the borrowed RAM is too small or taken (src/prestamo.c) ***\n");
     }
 }
 

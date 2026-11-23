@@ -557,4 +557,11 @@
  * with FT8's last two columns; the message has 120..390. */
 #define UDG_COLS_JTTY { 4, 38, 90, 120, -476 }
 
+/* ALE's table (step 51): Callsign, Type, kHz, Qual., N - upstream's
+ * { 8, 280, 400, 520, -792 } for 800 px, scaled to 480. Measured in
+ * font_ui_10b: fifteen 'W's (the standard's longest address) 150 px in
+ * 164, "TWAS" 29 in 72, "180.000" 39 in 72; N right-aligned, "65535" 30
+ * in the reserve of 36. */
+#define UDG_COLS_ALE { 4, 168, 240, 312, -476 }
+
 #endif /* MALAHIT_LAYOUT_H */

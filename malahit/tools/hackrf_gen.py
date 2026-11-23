@@ -10,6 +10,7 @@ Test signals for the decoders, sent by a HackRF into the radio - 22/11/2026.
     tools/hackrf_gen.py wefax --snr 20 --lines 200 --out w.iq
     tools/hackrf_gen.py sstv --sstv-mode scottie1 --snr 20 --out s.iq
     tools/hackrf_gen.py hell --snr 15 --out h.iq
+    tools/hackrf_gen.py ale --call R1TEST --snr 10 --out a.iq
     tools/hackrf_gen.py carrier --seconds 10 --out c.iq
     hackrf_transfer -t f.iq -f <carrier Hz - 200000> -s 2000000 -a 0 -x 47
 
@@ -626,6 +627,104 @@ def jtty_baseband(a):
     return x * raised_edges(key, 5.0), f'JTTY {texts}, {a.offset_hz:+.0f} Hz'
 
 
+# ALE 2G, MIL-STD-188-141 appendix A (= FED-STD-1045A), written from the
+# standard's own description, not from upstream's ale_*.c:
+#   - 8-FSK, 125 Bd, tones 750..2500 Hz every 250, each symbol three bits,
+#     the first bit sent the tribit's most significant;
+#   - the tone of each tribit, the standard's table (a Gray code - the
+#     tones in order are 000 001 011 010 110 111 101 100);
+#   - a word is 24 bits: the preamble (3 bits) and three 7-bit characters,
+#     the most significant bit of each first;
+#   - each half of 12 bits through the extended Golay (24,12): the 12 data
+#     bits, then the 11 check bits of the cyclic (23,12) code with
+#     g(x) = x^11 + x^9 + x^7 + x^6 + x^5 + x + 1, then the overall parity;
+#     the second half's 12 check bits INVERTED;
+#   - the two codewords interleaved A1 B1 A2 B2 .. A24 B24, a stuff bit 0
+#     after them (49 bits), and those 49 bits sent three times over - 147
+#     bits, 49 symbols, 392 ms; the copies do not start on a symbol.
+# What the Golay's convention could share with upstream's by mistake (the
+# place of the overall parity, the order of the check bits) only a real
+# station can settle: the soundings on HF are everywhere.
+ALE_TONE_OF_TRIBIT = {0b000: 750, 0b001: 1000, 0b011: 1250, 0b010: 1500,
+                      0b110: 1750, 0b111: 2000, 0b101: 2250, 0b100: 2500}
+ALE_PRE = {'DATA': 0, 'THRU': 1, 'TO': 2, 'TWAS': 3, 'FROM': 4, 'TIS': 5,
+           'CMD': 6, 'REP': 7}
+ALE_GOLAY_G = 0b101011100011           # x^11+x^9+x^7+x^6+x^5+x+1
+
+
+def ale_golay24(d12):
+    """The extended Golay codeword of 12 data bits: data, 11 check bits,
+    overall parity - 24 bits, the data in the top 12."""
+    r = d12 << 11
+    for i in range(22, 10, -1):         # the remainder of d(x) x^11 mod g(x)
+        if r & (1 << i):
+            r ^= ALE_GOLAY_G << (i - 11)
+    c23 = (d12 << 11) | r
+    return (c23 << 1) | (bin(c23).count('1') & 1)
+
+
+def ale_word_tribits(pre, chars):
+    """One ALE word, the preamble's name and three characters, to its 49
+    tribits on the air."""
+    assert len(chars) == 3
+    w = ALE_PRE[pre] << 21
+    for i, c in enumerate(chars):
+        w |= (ord(c) & 0x7F) << (14 - 7 * i)
+    A = ale_golay24(w >> 12)
+    B = ale_golay24(w & 0xFFF) ^ 0xFFF
+    bits = []
+    for k in range(24):
+        bits += [(A >> (23 - k)) & 1, (B >> (23 - k)) & 1]
+    bits.append(0)                      # the stuff bit
+    bits = bits * 3
+    return [(bits[3 * i] << 2) | (bits[3 * i + 1] << 1) | bits[3 * i + 2]
+            for i in range(49)]
+
+
+def ale_address_words(first, addr):
+    """An address after its opening preamble: three characters a word, '@'
+    filling the last, the words after the first alternating DATA and REP."""
+    addr = addr.upper()
+    if len(addr) > 15:
+        raise SystemExit('ale: an address is 15 characters at most')
+    addr += '@' * (-len(addr) % 3)
+    out = []
+    for i in range(0, len(addr), 3):
+        pre = first if i == 0 else ('DATA' if (i // 3) % 2 == 1 else 'REP')
+        out.append((pre, addr[i:i + 3]))
+    return out
+
+
+def ale_baseband(a):
+    """ALE soundings: each the station's address under TIS (or TWAS with
+    --twas), --words times over without a gap (a scanning sound), and with
+    --to a call: the called address under TO first. --sounds of them,
+    --pause s apart. The tones round 0 Hz, 1625 Hz (the middle of 750..2500)
+    being --tone, plus --offset-hz of mistuning."""
+    seq = []
+    if a.to:
+        seq += ale_address_words('TO', a.to)
+    seq += ale_address_words('TWAS' if a.twas else 'TIS', a.call)
+    words = seq * a.words
+    sps = int(FS_LO / 125)              # 384
+    f = [np.full(int(a.lead * FS_LO), np.nan)]
+    for _ in range(a.sounds):
+        tr = []
+        for pre, ch in words:
+            tr += ale_word_tribits(pre, ch)
+        tones = np.array([ALE_TONE_OF_TRIBIT[t] for t in tr], dtype=np.float64)
+        f += [np.repeat(tones - 1625.0 + a.offset_hz, sps),
+              np.full(int(a.pause * FS_LO), np.nan)]
+    f = np.concatenate(f)
+    key = (~np.isnan(f)).astype(np.float64)
+    f = np.nan_to_num(f, nan=0.0)
+    x = np.exp(1j * 2 * np.pi * np.cumsum(f) / FS_LO)
+    txt = ' '.join(f'{p} {c}' for p, c in seq)
+    return x * raised_edges(key, 2.0), (f'ALE [{txt}] x{a.words} words, {a.sounds} sounds, '
+                                        f'{len(words) * 0.392:.1f} s each, '
+                                        f'{a.offset_hz:+.0f} Hz')
+
+
 def carrier_baseband(a):
     return np.ones(int(a.seconds * FS_LO), dtype=np.complex128), 'carrier'
 
@@ -795,6 +894,18 @@ def main():
     p.add_argument('--offset-hz', type=float, default=0.0, help='Hz off the centre')
     p.add_argument('--lead', type=float, default=1.0)
     p.set_defaults(build=jtty_baseband, tone=1500.0)
+
+    p = sub.add_parser('ale', help='ALE 2G soundings, MIL-STD-188-141')
+    common(p)
+    p.add_argument('--call', default='R1TEST', help="the station's own address (15 at most)")
+    p.add_argument('--to', default='', help='a called address, under TO before it')
+    p.add_argument('--twas', action='store_true', help='TWAS instead of TIS')
+    p.add_argument('--words', type=int, default=6, help='times the address is sent in a sound')
+    p.add_argument('--sounds', type=int, default=3)
+    p.add_argument('--pause', type=float, default=5.0, help='s between sounds')
+    p.add_argument('--offset-hz', type=float, default=0.0, help='Hz of mistuning')
+    p.add_argument('--lead', type=float, default=1.0)
+    p.set_defaults(build=ale_baseband, tone=1625.0)
 
     a = ap.parse_args()
     x, what = a.build(a)

@@ -61,4 +61,10 @@ void digi_sstv_poll(uint8_t pinta);
 /* Feld-Hell (step 49): the same, for its columns. */
 void digi_hell_poll(uint8_t pinta);
 
+/* ALE (step 51): upstream's ale_modo_poll() at its 16 ms pace, the clock of
+ * the last word and the table's changes to the console - from the main
+ * loop, ALE on; and the clock and that record cleared (entry, Borrar). */
+void digi_ale_poll(void);
+void digi_ale_borra(void);
+
 #endif /* MALAHIT_DIGI_H */
