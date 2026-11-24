@@ -53,7 +53,7 @@
     uint8_t ACT(void) { return 0U; }                                     \
     void MET(const float *a, uint32_t n) { (void)a; (void)n; }
 
-OFF_U16(ais_modo_activo,    ais_modo_mete)
+/* ais_modo_activo, ais_modo_mete: the real ones since 24/11/2026 (ais_*.c, step 55) */
 /* ale_modo_activo, ale_modo_mete: the real ones since 22/11/2026 (ale_*.c, step 51) */
 OFF_U32(analiz_activo,      analiz_feed)
 /* ax25_activo, ax25_process: the real ones since 23/11/2026 (ax25.c, step 54) */

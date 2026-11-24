@@ -25,6 +25,7 @@
 #include "stanag_modo.h"  /* ../../User - demod_stanag() */
 #include "ident.h"        /* ../../User - demod_ident() */
 #include "ax25.h"         /* ../../User - demod_ax25() */
+#include "ais_modo.h"     /* ../../User - demod_ais() */
 
 /*
  * Upstream's call: 512 frames at 192 kHz in (with rf_doble), 512 stereo
@@ -90,7 +91,7 @@ void demod_init(void)
     __asm__ volatile ("" :: "r"(demod_psk31), "r"(demod_navtex), "r"(demod_dsc),
                             "r"(demod_wefax), "r"(demod_sstv), "r"(demod_hell),
                             "r"(demod_jtty), "r"(demod_ale), "r"(demod_stanag),
-                            "r"(demod_ident), "r"(demod_ax25));
+                            "r"(demod_ident), "r"(demod_ax25), "r"(demod_ais));
 }
 
 void demod_block(const int16_t *rx, int16_t *tx, uint32_t frames)
@@ -479,6 +480,28 @@ SWD_ENTRY void demod_ident(int on)
     demod_quieto(0);
     if (on && !ok) {
         console_printf("  *** IDENT did not start: the borrowed RAM is too small or taken (src/prestamo.c) ***\n");
+    }
+}
+
+/* AIS on or off - upstream's mode change: the rate of the FM discriminator
+ * it eats, told and not asked (ais_modo_tasa_pon()), then ais_modo_start(),
+ * which takes the borrowed RAM and says 0 if it cannot. The wide channel
+ * filter is texto_modo()'s, with SSTV-FM's (src/main.c). */
+SWD_ENTRY void demod_ais(int on)
+{
+    uint8_t ok = 1U;
+
+    if ((uint8_t)(on != 0) == ais_modo_activo()) { return; }
+    demod_quieto(1);
+    if (on) {
+        ais_modo_tasa_pon(demod_am_get_active_fs_hz());
+        ok = ais_modo_start();
+    } else {
+        ais_modo_stop();
+    }
+    demod_quieto(0);
+    if (on && !ok) {
+        console_printf("  *** AIS did not start: the borrowed RAM is too small or taken (src/prestamo.c) ***\n");
     }
 }
 

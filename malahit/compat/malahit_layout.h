@@ -571,4 +571,12 @@
  * drawing", 127 in 136. */
 #define UDG_COLS_IDENT { 4, 72, 340 }
 
+/* AIS's table (step 55): MMSI, Name, Position, Speed, Course, N - upstream's
+ * { 8, 110, 420, 580, 650, -792 } for 800 px reserve the absolute worst
+ * name, twenty 'W's; here that is 200 px of font_ui_10b and does not fit
+ * beside the rest. Measured: "224123456" 54 px in 54, "43,371N 179,999W"
+ * 93 in 94, "102,3" 27 in 28; the name has 130 - "ATLANTIC NAVIGATOR II"
+ * 122 fits, twenty 'W's are cut. N right-aligned, the channel in its title. */
+#define UDG_COLS_AIS { 4, 62, 196, 294, 326, -476 }
+
 #endif /* MALAHIT_LAYOUT_H */

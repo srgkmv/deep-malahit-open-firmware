@@ -75,4 +75,9 @@ void digi_stanag_poll(void);
  * second at most - from the main loop, IDENT on. */
 void digi_ident_poll(void);
 
+/* AIS (step 55): its rows to the console when they change, and that record
+ * cleared (entry, Borrar) - from the main loop, AIS on. */
+void digi_ais_poll(void);
+void digi_ais_borra(void);
+
 #endif /* MALAHIT_DIGI_H */

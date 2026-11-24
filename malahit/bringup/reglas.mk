@@ -490,6 +490,13 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ident.c
 #            1600/1800 Hz, from the 12 kHz sideband); one decoder, its text
 #            to the decoders' screen (step 54)
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ax25.c
+# ais_*.c   AIS: GMSK 9600 bps from the FM discriminator at the RF path's
+#            rate, HDLC with its CRC, messages 1-3/5/18/19/24 into a table
+#            of ships in the borrowed RAM; NFM's channel filter widened to
+#            9 kHz (demod_am_chf_ancho()) (step 55)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ais_rx.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ais_msg.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ais_modo.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_digi.c
 #
 # THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]
@@ -710,11 +717,14 @@ $(BUILD_DIR)/up_ui_digi.o:    CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
 # memory upstream lends it - so it includes ft8_shared_ram.h, which reaches
 # Ft8Lib's headers. Only a sizeof: nothing of FT8 is linked (step 51).
 $(BUILD_DIR)/up_ale_modo.o: CFLAGS_EXTRA_UPSTREAM += -I$(UPSTREAM_DIR)/../Ft8Lib
+$(BUILD_DIR)/up_ais_modo.o: CFLAGS_EXTRA_UPSTREAM += -I$(UPSTREAM_DIR)/../Ft8Lib
 # ALE's AFC (User/ale_rx.c, 23/11/2026): off by default there, because the
 # DEEPSDR's flash has no room for it; on here.
 $(BUILD_DIR)/up_ale_rx.o: CFLAGS_EXTRA_UPSTREAM += -DALE_CAF=1
 # And PKT300's (User/ax25.c, 24/11/2026), off there for the same reason.
 $(BUILD_DIR)/up_ax25.o: CFLAGS_EXTRA_UPSTREAM += -DAX25_CAF=1
+# And AIS's per-burst DC and carrier gate (User/ais_rx.c, 24/11/2026).
+$(BUILD_DIR)/up_ais_rx.o: CFLAGS_EXTRA_UPSTREAM += -DAIS_CAF=1
 
 $(BUILD_DIR)/up_%.o: $(UPSTREAM_DIR)/%.c $(BUILD_RULES) | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $(CFLAGS_EXTRA_UPSTREAM) $(CFLAGS_FONTS) $< -o $@

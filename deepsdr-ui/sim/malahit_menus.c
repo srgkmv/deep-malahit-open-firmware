@@ -83,6 +83,7 @@ static void modos_fam(uint8_t fam, const char *ppm)
         { 1, "IDENT", "¿Qué señal es?", "What signal is this?" },
         { 1, "APRS", "Paquete AX.25", "AX.25 packet" },
         { 1, "PKT300", "Paquete de HF", "HF packet" },
+        { 1, "AIS", "Barcos", "Ships" },
         { 2, "WEFAX", "Mapas del tiempo", "Weather charts" },
         { 2, "SSTV", "Fotos por radio", "Pictures over radio" },
         { 2, "SSTV-FM", "Fotos en FM", "Pictures on FM" },
@@ -887,9 +888,78 @@ static void digi_ident(const char *nombre, uint8_t en)
     escribe(nombre);
 }
 
+/*
+ * AIS - paso 55 del port, 24/11/2026: la tabla de barcos con las columnas de
+ * malahit_layout.h (UDG_COLS_AIS), la barra de barcos, el boton de la
+ * frecuencia y la chapa, como los arma src/digi.c. Se mide cada campo contra
+ * su columna; el nombre de veinte 'W' se corta, a proposito.
+ */
+static void digi_ais(const char *nombre, uint8_t en)
+{
+    static const char *const k_filas[] = {
+        "273123450\tMALAHIT TEST\t59,931N 30,360E\t12,3\t271o\t8",
+        "224123456\tATLANTIC NAVIGATOR II\t43,371N 179,999W\t102,3\t359o\t9999",
+        "211234567\tMAERSK ESSEX\t54,321N 10,123E\t0,1\t12o\t3",
+    };
+    ui_digi_state_t st;
+    uint8_t i, k;
+    int16_t h = (int16_t)(DIGI_PANEL_Y + DIGI_PANEL_H - DIGI_SCOPE_Y);
+
+    fondo_principal();
+    memset(&st, 0, sizeof st);
+    st.y = DIGI_SCOPE_Y;
+    st.h = h;
+    st.filas = (uint8_t)((h - UDG_HDR_H) / UDG_LINE_H - 1);
+    st.btn = en ? "Clear" : "Borrar";
+    st.cebra = 1U;
+    st.cols = ui_digi_cols_ais;
+    st.ncols = UI_DIGI_COLS_AIS_N;
+    st.titulos = en ? "MMSI\tName\tPosition\tSpd\tCourse\tN  (channel B)"
+                    : "MMSI\tNombre\tPosición\tVel\tRumbo\tN  (canal A)";
+    st.btn4 = "162.025";
+    st.barra_on = 1U;
+    st.barra_max = 99U;
+    st.barra_v = 60U;
+    st.barra_txt = en ? "16 ships" : "16 barcos";
+    st.chip = "999/999";
+    st.enganchado = 1U;
+    for (i = 0; i < sizeof k_filas / sizeof k_filas[0]; i++) {
+        const char *p = k_filas[i];
+
+        st.fila[i] = k_filas[i];
+        for (k = 0; k < UI_DIGI_COLS_AIS_N && *p; k++) {
+            char campo[40];
+            uint8_t n = 0;
+            int16_t x = ui_digi_cols_ais[k], hasta;
+
+            while (*p && *p != '\t' && n < sizeof campo - 1U) { campo[n++] = *p++; }
+            campo[n] = '\0';
+            if (*p == '\t') { p++; }
+            if (k + 1U >= UI_DIGI_COLS_AIS_N) { hasta = (int16_t)UDG_COL_RESERVA; }
+            else if (ui_digi_cols_ais[k + 1U] >= 0) { hasta = (int16_t)(ui_digi_cols_ais[k + 1U] - x - 4); }
+            else { hasta = (int16_t)(-ui_digi_cols_ais[k + 1U] - UDG_COL_RESERVA - x - 4); }
+            if (k == 1U && i == 1U) { continue; }      /* el nombre largo se corta a proposito */
+            cabe("ais", campo, &font_ui_10b, hasta);
+        }
+    }
+    printf("  digi ais: btn4 x %d w %d, barra x %d w %d, chapa x %d w %d\n",
+           ui_digi_btn4_x_dbg(&st), ui_digi_btn4_w_dbg(&st), ui_digi_barra_x_dbg(&st),
+           ui_digi_barra_w_dbg(&st), ui_digi_chip_x_dbg(&st), ui_digi_chip_w_dbg(&st));
+    cabe("boton4", st.btn4, &font_ui_10b, ui_digi_btn4_w_dbg(&st) - 8);
+    cabe("barra", st.barra_txt, &font_ui_10b, ui_digi_barra_hueco_dbg(&st));
+    ui_digi_draw_texto(&st);
+    if (strcmp(ui_digi_chip_visible(&st), st.chip) != 0) {
+        printf("  SE CORTA la chapa \"%s\"\n", st.chip);
+        s_fallos++;
+    }
+    escribe(nombre);
+}
+
 int main(void)
 {
     printf("menus del Malahit, 480 x 320\n");
+    digi_ais("ais", 0U);
+    digi_ais("ais_en", 1U);
     digi_ident("ident", 0U);
     digi_stanag("stanag", 0U, 0U);
     digi_stanag("stanag_en", 0U, 1U);

@@ -3143,6 +3143,14 @@ out/stanaggenera: sim/stanag_genera.c sim/stanag_tx.h
 	@mkdir -p out
 	$(CC) $(CFLAGS) -Isim -o $@ sim/stanag_genera.c $(LDLIBS)
 
+# AIS COMO LO LLEVA LA RADIO, CONTRA CUALQUIER FICHERO (24/11/2026, port del
+# Malahit). Ver sim/ais_radio.c. Pide un fichero: fuera de "comprueba". Con
+# AIS_CAF, como la radio (User/ais_rx.c, LA CONTINUA DE CADA RAFAGA).
+out/aisradio: sim/ais_radio.c $(FIRMWARE)/User/ais_modo.c $(FIRMWARE)/User/ais_rx.c \
+              $(FIRMWARE)/User/ais_msg.c
+	@mkdir -p out
+	$(CC) $(CFLAGS) -DAIS_CAF=1 -I$(FIRMWARE)/User -I$(FIRMWARE)/Ft8Lib -Ihostinc -Isim -o $@ $^ $(LDLIBS)
+
 # AX.25 COMO LO LLEVA LA RADIO, CONTRA CUALQUIER FICHERO (23/11/2026, port del
 # Malahit). Ver sim/ax25_radio.c. Pide un fichero: fuera de "comprueba".
 out/ax25radio: sim/ax25_radio.c $(FIRMWARE)/User/ax25.c $(FIRMWARE)/User/nco.c \

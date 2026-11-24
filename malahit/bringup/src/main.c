@@ -72,6 +72,7 @@
 #include "stanag_modo.h"  /* ../../User - upstream: STANAG, identified or read */
 #include "ident.h"        /* ../../User - upstream: IDENT, what signal is this */
 #include "ax25.h"         /* ../../User - upstream: AX.25, APRS and PKT300 */
+#include "ais_modo.h"     /* ../../User - upstream: AIS, the ships */
 #include "rtty_scope.h"   /* ../../User - its spectrum, for navtex_espectro() */
 #include "config.h"       /* ../../User - CONFIG_RTTY_SHIFT_MIN/MAX_HZ */
 #include "nb.h"           /* ../../User - upstream: the blanker, cw_report() */
@@ -6305,7 +6306,8 @@ static int modo_demod(int mode)
         || mode == RADIO_MODE_SSTV || mode == RADIO_MODE_HELL
         || mode == RADIO_MODE_JTTY || mode == RADIO_MODE_ALE
         || mode == RADIO_MODE_STANAG || mode == RADIO_MODE_IDENT) { return (int)DEMOD_MODE_USB; }
-    if (mode == RADIO_MODE_SSTV_FM || mode == RADIO_MODE_APRS) { return (int)DEMOD_MODE_NFM; }
+    if (mode == RADIO_MODE_SSTV_FM || mode == RADIO_MODE_APRS
+        || mode == RADIO_MODE_AIS)                          { return (int)DEMOD_MODE_NFM; }
     if (mode == RADIO_MODE_RTTY_L || mode == RADIO_MODE_PKT300) { return (int)DEMOD_MODE_LSB; }
     return mode;
 }
@@ -6335,16 +6337,18 @@ static void texto_modo(int mode)
     uint8_t id = (uint8_t)(mode == RADIO_MODE_IDENT);
     uint8_t ax = (uint8_t)((mode == RADIO_MODE_APRS) ? 1U
                          : (mode == RADIO_MODE_PKT300) ? 2U : 0U);
+    uint8_t as = (uint8_t)(mode == RADIO_MODE_AIS);
     uint8_t era_cw = cw_get_enabled(), era_rv = s_rtty_var, era_pk = psk31_activo();
     uint8_t era_nx = navtex_activo(), era_ds = dsc_activo(), era_fx = wefax_activo();
     uint8_t era_sv = sstv_activo(), era_hl = hell_activo(), era_jt = jtty_modo_activo();
     uint8_t era_al = ale_modo_activo(), era_sg = stanag_modo_activo();
     uint8_t era_id = ident_modo_activo(), era_ax = s_ax25_var;
+    uint8_t era_as = ais_modo_activo();
 
     if (cw == era_cw && rv == era_rv && pk == era_pk && nx == era_nx
         && ds == era_ds && fx == era_fx && sv == era_sv && hl == era_hl
         && jt == era_jt && al == era_al && sg == era_sg && id == era_id
-        && ax == era_ax) { return; }
+        && ax == era_ax && as == era_as) { return; }
     cw_linea_suelta();
     /* Every decoder off first, then the one wanted on: DSC and WEFAX borrow
      * the same RAM (src/prestamo.c), and the one leaving has to give it
@@ -6363,6 +6367,15 @@ static void texto_modo(int mode)
     if (!sg) { demod_stanag(0); }
     if (!id) { demod_ident(0); }
     if (!ax) { demod_ax25(0); }
+    if (!as) { demod_ais(0); }
+    /*
+     * NFM'S CHANNEL FILTER, WIDE FOR AIS AND SSTV-FM - step 55, 24/11/2026.
+     * Upstream's mode change, one set of biquads for the three: 9 kHz
+     * instead of 6.25 (demod_am_chf_ancho()), because AIS's GMSK takes 14.4
+     * kHz by Carson and SSTV's 1100-2300 Hz at +-3 kHz is more than voice.
+     * Step 48 left it out for SSTV-FM; it is here now for both.
+     */
+    demod_am_chf_ancho((uint8_t)(as || mode == RADIO_MODE_SSTV_FM));
     if (cw)  { demod_cw(1); }
     if (rv)  { demod_rtty(rv); }
     if (pk)  { demod_psk31(1); }
@@ -6381,8 +6394,19 @@ static void texto_modo(int mode)
     if (id)  { demod_ident(1); }
     if (ax)  { demod_ax25(ax); }
     s_ax25_var = ax;
+    if (as)  {
+        /* the channel its title names, from where the dial is (upstream's
+         * button sets it; here the dial may already be on B) */
+        ais_modo_canal_pon((uint8_t)((s_tuned_hz / 1000U == 162025U) ? 1U : 0U));
+        demod_ais(1);
+        digi_ais_borra();
+    }
     s_rtty_var = rv;
-    digi_pon((uint8_t)(cw || rv || pk || nx || ds || fx || sv || hl || jt || al || sg || id || ax));
+    digi_pon((uint8_t)(cw || rv || pk || nx || ds || fx || sv || hl || jt || al || sg || id || ax
+                       || as));
+    if (as != era_as) {
+        console_printf("  AIS %s\n", as ? (ais_modo_activo() ? "on" : "REFUSED") : "off");
+    }
     if (ax != era_ax) {
         console_printf("  %s %s\n", (ax == 2U || era_ax == 2U) ? "PKT300" : "APRS",
                        ax ? (ax25_activo() ? "on" : "REFUSED") : "off");
@@ -6668,6 +6692,13 @@ static void cw_poll(void)
             }
             vistas = n;
         }
+    }
+    if (ais_modo_activo()) {
+        /* step 55: upstream's ais_modo_poll() - the frames the interrupt
+         * closed with the CRC right, unpacked into the table - and each row
+         * that changes to the console (src/digi.c) */
+        ais_modo_poll();
+        digi_ais_poll();
     }
     if (ident_modo_activo()) {
         /* step 53: upstream's ident_modo_poll() - the detector's
@@ -7292,7 +7323,7 @@ static const char *const k_mode_names[] = { "AM", "USB", "LSB", "NFM",
                                             "RTTY-U", "PSK31", "NAVTEX", "DSC",
                                             "WEFAX", "SSTV", "SSTV-FM", "HELL",
                                             "JTTY", "ALE", "STANAG", "IDENT",
-                                            "APRS", "PKT300" };
+                                            "APRS", "PKT300", "AIS" };
 _Static_assert(sizeof k_mode_names / sizeof k_mode_names[0]
                == (size_t)RADIO_MODE_LAST + 1U,
                "a name for every mode, upstream's and the decoders' (menus.h)");
@@ -7496,6 +7527,7 @@ int radio_mode_get(void)
     if (m == (int)DEMOD_MODE_USB && stanag_modo_activo()) { return RADIO_MODE_STANAG; }
     if (m == (int)DEMOD_MODE_USB && ident_modo_activo())  { return RADIO_MODE_IDENT; }
     if (m == (int)DEMOD_MODE_NFM && ax25_activo())        { return RADIO_MODE_APRS; }
+    if (m == (int)DEMOD_MODE_NFM && ais_modo_activo())    { return RADIO_MODE_AIS; }
     if (m == (int)DEMOD_MODE_LSB && ax25_activo())        { return RADIO_MODE_PKT300; }
     return m;
 }

@@ -125,7 +125,8 @@ uint32_t    menu_nr_strength(void);
 #define RADIO_MODE_IDENT    19          /* DEMOD_MODE_USB + ident.c */
 #define RADIO_MODE_APRS     20          /* DEMOD_MODE_NFM + ax25.c, 1200 Bd */
 #define RADIO_MODE_PKT300   21          /* DEMOD_MODE_LSB + ax25.c, 300 Bd */
-#define RADIO_MODE_LAST     RADIO_MODE_PKT300
+#define RADIO_MODE_AIS      22          /* DEMOD_MODE_NFM + ais_modo.c */
+#define RADIO_MODE_LAST     RADIO_MODE_AIS
 void        radio_mode_set(int mode);
 int         radio_mode_get(void);
 const char *radio_mode_name(int mode);

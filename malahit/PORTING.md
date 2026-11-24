@@ -2029,6 +2029,74 @@ Each step should end with something visible on the radio.
    - 4 of 4, the AFC at +85 (the references' 81); 100 Hz up - 4 of 4,
    -25; 100 Hz down - 4 of 4, +169..+193. APRS after it: 4 of 4, twice.
    Flash image 353 904 bytes.
+55. **AIS - the ships.** *24/11/2026, from flash, against the HackRF at
+   161.975 MHz* - upstream's ais_rx.c, ais_msg.c and ais_modo.c, stub
+   gone; Digital 22 "AIS" ("Barcos"), NFM, from the FM discriminator at the
+   RF path's rate (96 kHz, 48 with RATE), raw, before audio filter and
+   squelch, as upstream's demod_am.c hands it. `demod_ais(1|0)` (the rate
+   told, ais_modo_start() takes the borrowed RAM). The channel filter goes
+   wide, as SSTV-FM's - and that one had been lost since step 48: texto_modo()
+   now sets it for both (SSTV-FM's not retried on the air). Entering AIS
+   tunes channel B if the dial is on 162.025, A otherwise. The screen is
+   upstream's table of ships over the whole area, one zebra row per MMSI
+   (MMSI, name, position, speed, course, frames), the channel in the title;
+   button 4 shows the dial ("161.975") and swaps A/B; the bar says the ships
+   ("1 ship"), the chip good/seen frames. Columns in malahit_layout.h
+   (`UDG_COLS_AIS`, `#ifndef` in ui_digi.c, the DEEPSDR's unchanged). The
+   console logs each changed row ("ais: 0 273123450|MALAHIT TEST|...").
+   `tools/hackrf_gen.py ais` writes messages 1 and 5 from ITU-R M.1371, not
+   from ais_rx.c: six-bit text, octets LSB first on the air, CRC-16/X.25,
+   stuffing, NRZI, 24 training bits, GMSK BT 0.4 +-2400 Hz.
+   `deepsdr-ui/sim/ais_radio.c` (`make out/aisradio`) runs the mode on a
+   discriminator file.
+   **Two upstream changes in User/ais_rx.c** (their own commit):
+   - **the octets' bit order.** The frames from the generator passed the CRC
+     8 times of 8 and left no ship: MMSI 547234053 for 273123450. M.1371
+     packs the fields MSB first into octets and each octet goes out as in
+     HDLC, LSB first; gr-ais reverses each octet after the CRC
+     (reverse_bit_order()). Upstream's bench (sim/ais_aire.c) was written
+     with ais_rx.c's own convention, so both agreed; it now writes the air
+     order and its checks are green. Only a real ship settles it;
+   - **`AIS_CAF`, off by default** (the DEEPSDR builds the same; 1 kB of SRAM
+     it would need), on in reglas.mk: the per-burst DC. On the radio the
+     discriminator gives FM noise between bursts, and upstream's 32-bit DC
+     follower walks with it: a burst starts ~0.07 rad/sample off, while the
+     GMSK preamble, after the one-bit average, stands 0.044 from zero. And
+     the bit clock, chasing noise crossings in the pause, starts at a random
+     phase and cannot lock in the preamble's 12 transitions at 1/16. So: a
+     carrier gate, open when the discriminator is *smooth* - sum of
+     (x[n]-x[n-1])^2 over 12 bits under 0.20 of the window's variance
+     (scale-free: the radio's discriminator is radians x 110000, upstream's
+     bench is in deviations; plain x^2 cannot separate noise from signal in
+     a +-9 kHz channel); over 0.50 it is sure noise, and a window holding an
+     exact zero is "nothing" (the empty window at start, digital silence).
+     After 16 bits of sure noise, the opening sets the DC to the window's
+     mean - 12 preamble bits, ++-- in NRZI, zero over any 4 bits - then it
+     follows the window mean at 128 bits, only while open. Not remembered
+     from burst to burst: two ships at +-500 Hz gave 7 of 40 that way. The
+     clock is not corrected on sure noise, and its first 24 bits after an
+     opening go at 1/8.
+   **Host** (`aisradio`, RF noise in 14 kHz, a +-9 kHz channel, bursts at a
+   random bit phase; frames of 20 for one ship, of 40 for two):
+
+   |                               | 25 dB   | 20 dB   | 15 dB |
+   |-------------------------------|---------|---------|-------|
+   | one ship, on frequency        | 13 → 19 | 11 → 19 | 1 → 2 |
+   | one ship, +930 Hz             |  6 → 17 |  4 → 17 | 0 → 3 |
+   | one ship, +1200 Hz            |  0 → 19 |  0 → 18 | 0 → 2 |
+   | two ships, -500/+500 Hz       | 20 → 38 |  8 → 31 | 0 → 1 |
+   | two ships, +700/+1500 Hz      |  8 → 31 |  3 → 27 | 0 → 1 |
+   | one ship, 48 kHz, +930 Hz     |  1 → 13 |  0 → 13 | 0 → 0 |
+
+   Upstream's aisaire with AIS_CAF=1: all green, the offset holds to 3.0
+   deviations (0.8 before). Under ~15 dB almost nothing either way: that is
+   the one-bit average on the discriminator, short for GMSK - other work.
+   **On the air** (8 frames a go, the HackRF and the radio ~0.9 kHz apart
+   at 162 MHz): before the gate, -x 20 none, -x 35 5, -x 45 6; with it, -x
+   20 none, -x 25 3 and 4, -x 30 8 and 8, -x 35 8, -x 45 6; at -x 30 with
+   the HackRF moved +1 / -1 / +2 / -2 kHz: 6, 8, 7, 8. The ship's row
+   complete (name from message 5). DEEPSDR: make all, its 29 checks green.
+   Flash image 361 936 bytes.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

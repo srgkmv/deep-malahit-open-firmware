@@ -81,6 +81,7 @@ static const struct { int mode; uint8_t fam; const char *n; texto_t d; } k_modos
     { RADIO_MODE_IDENT,  FAM_DIG, "IDENT",  T("¿Qué señal es?", "What signal is this?") },
     { RADIO_MODE_APRS,   FAM_DIG, "APRS",   T("Paquete AX.25", "AX.25 packet") },
     { RADIO_MODE_PKT300, FAM_DIG, "PKT300", T("Paquete de HF", "HF packet") },
+    { RADIO_MODE_AIS,    FAM_DIG, "AIS",    T("Barcos", "Ships") },
     { RADIO_MODE_WEFAX,  FAM_IMG, "WEFAX",  T("Mapas del tiempo", "Weather charts") },
     { RADIO_MODE_SSTV,   FAM_IMG, "SSTV",   T("Fotos por radio", "Pictures over radio") },
     /* upstream's "Fotos por radio (FM)" / "Pictures, narrow FM" are 96 and

@@ -4,6 +4,33 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
+## START HERE — 24/11/2026, evening: step 55 (AIS) IN FLASH, committed with it
+
+**In flash: this commit's code** (step 55) -
+`build_flash/bringup.bin`, 361 936 bytes, sha256 `fffb14fe…`, written
+with `swd.sh flashsrst` and verified; the owner's press started it (AIS
+from the FRAM). **Step 55** (`PORTING.md` 55) - upstream's AIS, plus two
+changes to User/ais_rx.c in their own commit (83774f6, the one before
+this one): the octets' bit order
+(M.1371 / gr-ais; only a real ship confirms it) and `AIS_CAF` (off by
+default, on here), the per-burst DC with a carrier gate. On the air: 8 of
+8 from -x 30, 3-4 at -x 25, none at -x 20; +-2 kHz of HackRF offset holds.
+
+**The radio's state**: 161.975 MHz, AIS, from flash.
+
+**Next, the owner's order**: FT8, WSPR, HFDL - the Digital family's last
+three (it reaches 16, its ceiling). Open: AIS under ~15 dB of SNR (the
+one-bit average on the discriminator); SSTV-FM's wide channel filter,
+restored in texto_modo(), not retried on the air.
+
+**The bench for AIS**: `tools/hackrf_gen.py ais --out a.iq` then
+`hackrf_transfer -t a.iq -f 161775000 -s 2000000 -a 0 -x 30` with the
+radio on 161.975 AIS (162.025 is channel B, button 4). Host
+`deepsdr-ui/out/aisradio disc.f32 [96000|48000]` takes the FM
+discriminator in radians per sample (any scale works with AIS_CAF);
+upstream's `make aisaire` builds without the flag. Console: `ais: <row>
+(good/seen frames)` on each changed row.
+
 ## START HERE — 24/11/2026: step 54 (APRS, PKT300 with an AFC) IN FLASH, committed with it
 
 **In flash: this commit's code** (step 54) - `build_flash/bringup.bin`,

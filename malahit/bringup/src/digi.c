@@ -36,6 +36,9 @@
  *   APRS,  Borrar                               | frames with their
  *   PKT300 check right + dot "flags seen"; the scope's two lines the
  *          decoder's mark and space (1200/2200 or 1600/1800)
+ *   AIS    Borrar | "N ships" bar (signal) | 161.975 | frames right
+ *          / closed, a table over the whole area: MMSI Name Position
+ *          Speed Course N, the channel in the title
  *   IDENT  Borrar                               | "measuring" /
  *          "listening" + dot, the names that fit, their notes and the
  *          five numbers measured, over the whole area
@@ -71,6 +74,8 @@
 #include "stanag_modo.h"
 #include "ident.h"
 #include "ax25.h"
+#include "ais_modo.h"
+#include "menus.h"         /* radio_dial_go(), radio_dial_hz() - AIS's channel button */
 #include "board.h"         /* board_millis() - ALE's poll and its clock */
 #include "demod.h"         /* demod_quieto(): a decoder reconfigured, no block through it */
 #include "idioma.h"        /* ../../User - tr() */
@@ -835,6 +840,119 @@ void digi_stanag_poll(void)
 }
 
 /*
+ * AIS - step 55, 24/11/2026. Upstream's digi_sync() AIS branch and its
+ * ais_chapa(): the table of ships over the whole area, zebra rows (six wide
+ * columns), the channel in the titles ("N  (channel A)"), a ship's row
+ * keeping its place; the bar the count of ships over the signal level
+ * (0..99), the chip the frames with the CRC right over those closed. The
+ * fourth button is upstream's frequency: 161.975 / 162.025, a tap goes to
+ * the other channel (from any dial, to A first). No map: this port has
+ * none. Repainted through cambios(), the bar on its own, as STANAG's.
+ */
+typedef struct { uint32_t khz; } ais_canal_t;
+static const ais_canal_t k_ais_canales[2] = { { 161975UL }, { 162025UL } };
+
+static char     s_ais_barra[28];
+static char     s_ais_chip[16];
+static char     s_ais_frec[12];
+static uint8_t  s_ais_barra_v;
+static uint32_t s_ais_hash[AIS_MODO_LINEAS];
+static uint32_t s_ais_t;
+
+static void ais_sync(void)
+{
+    uint8_t  n = JTTY_FILAS, k, hay = 0U, i;
+    uint32_t b = ais_modo_tramas(), v = ais_modo_vistas(), khz = radio_dial_hz() / 1000U;
+    uint8_t  barcos = ais_modo_barcos();
+
+    if (n > (uint8_t)AIS_MODO_LINEAS) { n = (uint8_t)AIS_MODO_LINEAS; }
+    memset(&s_st, 0, sizeof s_st);
+    s_st.y      = (int16_t)DIGI_SCOPE_Y;
+    s_st.h      = (int16_t)(FAX_Y + FAX_ALTO - DIGI_SCOPE_Y);
+    s_st.filas  = n;
+    s_st.btn    = tr("Borrar", "Clear");
+    s_st.cebra  = 1U;
+    s_st.cols   = ui_digi_cols_ais;
+    s_st.ncols  = UI_DIGI_COLS_AIS_N;
+    s_st.titulos = (ais_modo_canal() == 0U)
+                   ? tr("MMSI\tNombre\tPosición\tVel\tRumbo\tN  (canal A)",
+                        "MMSI\tName\tPosition\tSpd\tCourse\tN  (channel A)")
+                   : tr("MMSI\tNombre\tPosición\tVel\tRumbo\tN  (canal B)",
+                        "MMSI\tName\tPosition\tSpd\tCourse\tN  (channel B)");
+    while ((hay < n) && (hay < ais_modo_lineas())) { hay++; }
+    for (k = 0U; k < hay; k++) { s_st.fila[k] = ais_modo_linea((uint32_t)k); }
+
+    /* upstream's ais_frec_rotulo(): kHz with a thousands point */
+    i = pega_u(s_ais_frec, 0U, (uint8_t)sizeof s_ais_frec, khz / 1000U);
+    i = pega(s_ais_frec, i, (uint8_t)sizeof s_ais_frec, ".");
+    s_ais_frec[i++] = (char)('0' + ((khz / 100U) % 10U));
+    s_ais_frec[i++] = (char)('0' + ((khz / 10U) % 10U));
+    s_ais_frec[i++] = (char)('0' + (khz % 10U));
+    s_ais_frec[i] = '\0';
+    s_st.btn4 = s_ais_frec;
+
+    s_st.barra_on  = 1U;
+    s_st.barra_max = 99U;
+    s_st.barra_v   = ais_modo_senal();
+    i = pega_u(s_ais_barra, 0U, (uint8_t)sizeof s_ais_barra, barcos);
+    (void)pega(s_ais_barra, i, (uint8_t)sizeof s_ais_barra,
+               (barcos == 1U) ? tr(" barco", " ship") : tr(" barcos", " ships"));
+    s_st.barra_txt = s_ais_barra;
+
+    if (b > 999U) { b = 999U; }
+    if (v > 999U) { v = 999U; }
+    i = pega_u(s_ais_chip, 0U, (uint8_t)sizeof s_ais_chip, b);
+    i = pega(s_ais_chip, i, (uint8_t)sizeof s_ais_chip, "/");
+    (void)pega_u(s_ais_chip, i, (uint8_t)sizeof s_ais_chip, v);
+    s_st.chip = s_ais_chip;
+    s_st.enganchado = (uint8_t)(b > 0U);
+    strncpy(s_chip, s_ais_chip, sizeof s_chip - 1U);
+    s_chip[sizeof s_chip - 1U] = '\0';
+}
+
+/* The panel through cambios(), the bar as last drawn; then the bar. */
+static uint8_t ais_pinta(void)
+{
+    ui_digi_state_t c = s_st;
+
+    c.barra_v = s_ais_barra_v;
+    if (!ui_digi_draw_cambios(&c)) { return 0U; }
+    if (s_st.barra_v != s_ais_barra_v) {
+        ui_digi_draw_barra(&s_st);
+        s_ais_barra_v = s_st.barra_v;
+    }
+    return 1U;
+}
+
+void digi_ais_borra(void)
+{
+    memset(s_ais_hash, 0, sizeof s_ais_hash);
+}
+
+/* From the main loop, AIS on: each row that changed to the console. */
+void digi_ais_poll(void)
+{
+    uint32_t k, n = ais_modo_lineas();
+
+    if (n > AIS_MODO_LINEAS) { n = AIS_MODO_LINEAS; }
+    for (k = 0U; k < n; k++) {
+        const char *l = ais_modo_linea(k), *p;
+        uint32_t h = 2166136261UL;
+
+        for (p = l; *p != '\0'; p++) { h = (h ^ (uint8_t)*p) * 16777619UL; }
+        if (h != s_ais_hash[k]) {
+            char t[AIS_MODO_LARGO + 4U];
+            uint32_t i;
+
+            s_ais_hash[k] = h;
+            for (i = 0U; l[i] != '\0' && i < sizeof t - 1U; i++) { t[i] = (l[i] == '\t') ? '|' : l[i]; }
+            t[i] = '\0';
+            console_printf("  ais: %u %s  (%u/%u frames)\n", k, t, ais_modo_tramas(), ais_modo_vistas());
+        }
+    }
+}
+
+/*
  * IDENT - step 53, 23/11/2026. Upstream's digi_sync() IDENT branch: rows
  * over the whole area, no columns (a name, its note, the five numbers -
  * phrases, not fields), Borrar, no waveform button (here nothing is
@@ -1211,6 +1329,13 @@ static void osciloscopio(void)
 void digi_repinta(void)
 {
     if (!s_on) { return; }
+    if (ais_modo_activo()) {
+        ais_sync();
+        ui_digi_olvida();
+        s_ais_barra_v = s_st.barra_v;
+        if (ais_pinta()) { s_ais_t = board_millis(); s_todo = 0U; }
+        return;
+    }
     if (ident_modo_activo()) {
         ident_sync();
         ui_digi_olvida();
@@ -1293,6 +1418,15 @@ void digi_repinta(void)
 void digi_dibuja(void)
 {
     if (!s_on) { return; }
+    if (ais_modo_activo()) {
+        /* four times a second, only what changed - upstream repaints the
+         * panel when the frame count moves, the bar when the level does */
+        if (s_todo) { digi_repinta(); return; }
+        if ((board_millis() - s_ais_t) < 250U) { return; }
+        ais_sync();
+        if (ais_pinta()) { s_ais_t = board_millis(); }
+        return;
+    }
     if (ident_modo_activo()) {
         /* four times a second, only what changed - upstream repaints the
          * panel when the rows or the first row's name change, and its
@@ -1454,6 +1588,32 @@ uint8_t digi_toque(uint16_t x, uint16_t y, uint8_t nuevo)
      * if it finds none - the same search that moves the centre by itself,
      * so a tap only matters where that one cannot decide.
      */
+    if (ais_modo_activo()) {
+        ais_sync();
+        if (ui_digi_boton_hit(&s_st, x, y)) {
+            demod_quieto(1);
+            ais_modo_borra();           /* upstream's: the ships and the counts */
+            demod_quieto(0);
+            digi_ais_borra();
+            s_todo = 1U;
+            console_printf("  digi: AIS cleared\n");
+        } else if (ui_digi_boton4_hit(&s_st, x, y)) {
+            /* upstream's ais_frec_siguiente(): the other channel, or A from
+             * anywhere else; the dial goes there and the title says which */
+            uint32_t khz = radio_dial_hz() / 1000U;
+            uint8_t  sig = 0U, c;
+
+            for (c = 0U; c < 2U; c++) {
+                if (k_ais_canales[c].khz == khz) { sig = (uint8_t)((c + 1U) % 2U); }
+            }
+            (void)radio_dial_go(k_ais_canales[sig].khz * 1000U);
+            ais_modo_canal_pon(sig);
+            s_todo = 1U;
+            console_printf("  digi: AIS channel %c, %u kHz\n", (char)('A' + sig),
+                           k_ais_canales[sig].khz);
+        }
+        return 1U;
+    }
     if (ident_modo_activo()) {
         ident_sync();
         if (ui_digi_boton_hit(&s_st, x, y)) {

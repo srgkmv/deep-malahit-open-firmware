@@ -12,6 +12,7 @@ Test signals for the decoders, sent by a HackRF into the radio - 22/11/2026.
     tools/hackrf_gen.py hell --snr 15 --out h.iq
     tools/hackrf_gen.py ale --call R1TEST --snr 10 --out a.iq
     tools/hackrf_gen.py audio --in s.f32 --tone 1800 --snr 15 --out s.iq
+    tools/hackrf_gen.py ais --out s.iq                       (AIS, 161.975 MHz)
     tools/hackrf_gen.py ax25 --fm 3000 --out a.iq            (APRS, NFM)
     tools/hackrf_gen.py ax25 --hf --lsb --snr 15 --out p.iq  (PKT300, LSB)
     tools/hackrf_gen.py carrier --seconds 10 --out c.iq
@@ -813,6 +814,100 @@ def ax25_baseband(a):
                                         f'x{a.frames}: {info!r}')
 
 
+# AIS (ITU-R M.1371), written from the recommendation and not from
+# upstream's ais_*.c:
+#   - message 1, the position report, 168 bits: type, repeat, MMSI, status,
+#     rate of turn (-128 = none), speed x10, accuracy, longitude and
+#     latitude in 1/10000 minute, course x10, heading, second, manoeuvre,
+#     spare, RAIM, radio state; and message 5, 424 bits: MMSI, version,
+#     IMO, callsign (7) and name (20) in six-bit ASCII ('@'..'_' are 0..31,
+#     ' '..'?' 32..63), type, dimensions, EPFD, ETA, draught, destination;
+#   - the bits packed most significant first into bytes, and the bytes
+#     sent LEAST significant bit first, as HDLC sends them; the FCS is
+#     CRC-16/X.25 over those bytes, low byte first;
+#   - bit stuffing, NRZI (0 changes, 1 keeps), a 24-bit training sequence
+#     of alternating bits, flags 0x7E either side;
+#   - GMSK: BT 0.4, 9600 bps, h 0.5, so +-2400 Hz.
+AIS_6BIT = '@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_ !"#$%&\'()*+,-./0123456789:;<=>?'
+
+
+def ais_bits(fields):
+    out = []
+    for v, n in fields:
+        out += [(int(v) >> (n - 1 - i)) & 1 for i in range(n)]
+    return out
+
+
+def ais_text(t, n):
+    t = (t.upper() + '@' * n)[:n]
+    return [(AIS_6BIT.index(c), 6) for c in t]
+
+
+def ais_msg1(mmsi, lat, lon, sog, cog, hdg):
+    return ais_bits([(1, 6), (0, 2), (mmsi, 30), (0, 4), (0x80, 8), (round(sog * 10), 10),
+                     (1, 1), (round(lon * 600000) & 0xFFFFFFF, 28),
+                     (round(lat * 600000) & 0x7FFFFFF, 27), (round(cog * 10), 12),
+                     (hdg, 9), (30, 6), (0, 2), (0, 3), (0, 1), (0, 19)])
+
+
+def ais_msg5(mmsi, call, name, dest):
+    f = [(5, 6), (0, 2), (mmsi, 30), (0, 2), (9123456, 30)] + ais_text(call, 7) \
+        + ais_text(name, 20) + [(70, 8), (100, 9), (50, 9), (10, 6), (10, 6), (1, 4),
+                                (11, 4), (24, 5), (12, 5), (0, 6), (65, 8)] \
+        + ais_text(dest, 20) + [(0, 1), (0, 1)]
+    return ais_bits(f)
+
+
+def ais_frame_bits(msg):
+    assert len(msg) % 8 == 0
+    data = [int(''.join(str(b) for b in msg[i:i + 8]), 2) for i in range(0, len(msg), 8)]
+    crc = ax25_crc(data)
+    data += [crc & 0xFF, crc >> 8]
+    flag = [0, 1, 1, 1, 1, 1, 1, 0]
+    bits, ones = [0, 1] * 12 + flag, 0
+    for b in data:
+        for k in range(8):                      # least significant first
+            v = (b >> k) & 1
+            bits.append(v)
+            ones = ones + 1 if v else 0
+            if ones == 5:
+                bits.append(0)
+                ones = 0
+    return bits + flag + [0, 0, 0, 0]
+
+
+def ais_baseband(a):
+    """AIS bursts: message 1 and message 5 of one ship, --repeat times,
+    --pause s apart, GMSK at +-2400 Hz round 0 Hz."""
+    msgs = [ais_msg1(a.mmsi, a.lat, a.lon, a.sog, a.cog, a.hdg),
+            ais_msg5(a.mmsi, a.call, a.name, a.dest)]
+    sps = FS_LO // 9600                        # 5
+    from scipy.special import erf
+    bt = 0.4
+    t = (np.arange(-2 * sps, 2 * sps + 1)) / sps
+    c = 2 * np.pi * bt / np.sqrt(np.log(2))
+    g = 0.5 * (erf(c * (t + 0.5) / np.sqrt(2)) - erf(c * (t - 0.5) / np.sqrt(2)))
+    g /= g.sum()
+    out = [np.full(int(a.lead * FS_LO), np.nan)]
+    for _ in range(a.repeat):
+        for m in msgs:
+            bits = ais_frame_bits(m)
+            lvl, nrz = 1, []
+            for v in bits:
+                if v == 0:
+                    lvl = -lvl                 # NRZI
+                nrz.append(lvl)
+            x = np.repeat(np.array(nrz, dtype=np.float64), sps)
+            f = np.convolve(x, g * sps, mode='same') / sps * 2400.0
+            out += [f, np.full(int(a.pause * FS_LO), np.nan)]
+    f = np.concatenate(out)
+    key = (~np.isnan(f)).astype(np.float64)
+    f = np.nan_to_num(f, nan=0.0)
+    x = np.exp(1j * 2 * np.pi * np.cumsum(f) / FS_LO)
+    return x * raised_edges(key, 0.5), (f'AIS {a.mmsi} {a.name!r} {a.lat:.4f},{a.lon:.4f} '
+                                        f'x{a.repeat}')
+
+
 def audio_baseband(a):
     """Any 12 kHz f32 audio file - what a sideband receiver should hand its
     decoders, written by a host tool (deepsdr-ui/out/stanaggenera, ...) -
@@ -1026,6 +1121,22 @@ def main():
     p.add_argument('--pause', type=float, default=2.0)
     p.add_argument('--lead', type=float, default=1.0)
     p.set_defaults(build=ax25_baseband, tone=1700.0)
+
+    p = sub.add_parser('ais', help='AIS: message 1 and 5 of a ship, GMSK 9600 bps')
+    common(p)
+    p.add_argument('--mmsi', type=int, default=273123450)
+    p.add_argument('--name', default='MALAHIT TEST')
+    p.add_argument('--call', default='R1TEST')
+    p.add_argument('--dest', default='SANKT PETERBURG')
+    p.add_argument('--lat', type=float, default=59.9311)
+    p.add_argument('--lon', type=float, default=30.3609)
+    p.add_argument('--sog', type=float, default=12.3)
+    p.add_argument('--cog', type=float, default=271.5)
+    p.add_argument('--hdg', type=int, default=270)
+    p.add_argument('--repeat', type=int, default=4)
+    p.add_argument('--pause', type=float, default=1.0)
+    p.add_argument('--lead', type=float, default=1.0)
+    p.set_defaults(build=ais_baseband, tone=0.0)
 
     p = sub.add_parser('audio', help='any 12 kHz f32 audio file, sent as USB')
     common(p)
