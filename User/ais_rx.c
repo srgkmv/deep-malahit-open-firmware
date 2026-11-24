@@ -1,5 +1,6 @@
 #include "ais_rx.h"
 #include <string.h>
+#include <math.h>   /* sqrtf(), solo con AIS_CAF y solo al arrancar */
 
 /* ==========================================================================
  * EL CRC, QUE ES EL MISMO DEL AX.25
@@ -85,6 +86,95 @@ static ais_rx_info_t s_info;
 static float    s_nivel;
 
 /* ==========================================================================
+ * LA CONTINUA DE CADA RAFAGA - 24/11/2026, port del Malahit
+ * ==========================================================================
+ *
+ * SOLO CON AIS_CAF=1, y por defecto no: el DEEPSDR va justo de flash y de
+ * SRAM (son 1 kB de ventanas). El port del Malahit lo enciende en su
+ * reglas.mk. El nombre es el de los otros dos (ALE_CAF, AX25_CAF): aqui el
+ * error de sintonia es la continua del discriminador.
+ *
+ * POR QUE. La continua lenta de abajo (32 bits) se midio con ruido sumado a
+ * la salida del discriminador. En una radio, entre rafaga y rafaga el
+ * discriminador da ruido de FM -medio radian por muestra, con chasquidos de
+ * pi- y la continua lo sigue: al entrar la rafaga lleva unos 0,07 rad por
+ * muestra de error, y el preambulo de GMSK, a la salida de la media de un
+ * bit, se separa de cero 0,044. El preambulo y el principio de los datos
+ * se cortan mal. Y el reloj, que en la pausa persigue los cruces del
+ * ruido, entra con la fase al azar, y en los doce cambios del preambulo, a
+ * 1/16 por cambio, no llega. Medido en deepsdr-ui/out/aisradio con ruido
+ * de RF (canal de +-9 kHz, rafagas con la fase de bit al azar): 13 de 20 a
+ * 25 dB de SNR en 14 kHz, 11 a 20 dB; con la radio 930 Hz corrida -lo que
+ * hay entre el HackRF y esta radio en 162 MHz- 6 y 4.
+ *
+ * COMO.
+ *
+ *   HAY PORTADORA cuando la salida del discriminador es LISA: en una
+ *   ventana de 12 bits, la suma de (x[n] - x[n-1])^2 por debajo de 0,20
+ *   veces la varianza de x (a 10 muestras por bit; la señal da ese
+ *   cociente como 1/spb^2 y el ruido casi igual a cualquier tasa, asi que
+ *   a 48 kHz el umbral sube como spb^-1,5). El GMSK cambia despacio; el
+ *   ruido de FM salta de una muestra a otra: medido a 96 kHz en un canal
+ *   de +-9 kHz, la señal da 0,04 de mediana a 25 dB y 0,29 en lo peor a
+ *   15; el ruido, 1,06 de mediana y 0,33 en la ventana mas tranquila de
+ *   un millon. Y NO DEPENDE DE LA ESCALA: en la radio el discriminador
+ *   sale en radianes por 110000 (NFM_DISC_GAIN, demod_am.c), en el banco
+ *   de upstream en desviaciones. Con x^2 a secas no habria valido aunque
+ *   la escala se supiera: la ventana de ruido mas tranquila cae por
+ *   debajo de la de señal mas movida.
+ *
+ *   POR ENCIMA DE 0,50 ES RUIDO SEGURO; entre los dos, una rafaga floja o
+ *   un chasquido. Y una ventana con algun CERO EXACTO es "no hay nada":
+ *   eso no lo da un discriminador, es la ventana aun vacia al arrancar o
+ *   un silencio digital (ver la entrada).
+ *
+ *   LA CONTINUA SE ESTIMA EN CADA RAFAGA: al abrirse la puerta tras 16
+ *   bits de ruido seguro, es la media de la ventana -12 bits del
+ *   preambulo; el 0101... en NRZI es ++--, que en cualquier multiplo de 4
+ *   bits suma cero-. Luego sigue a la media de la ventana con 128 bits de
+ *   constante, y solo con la puerta abierta. Lo dudoso no cuenta como
+ *   pausa: una estima nueva a media rafaga se haria sobre datos. NO se
+ *   guarda de una rafaga a otra: dos barcos traen dos desvios (3 ppm son
+ *   +-486 Hz) y, guardada, cada uno empezaba con el del otro - medido: con
+ *   dos barcos a +-500 Hz, 7 de 40, peor que sin nada.
+ *
+ *   EL RELOJ no se corrige con ruido seguro, y los primeros 24 bits tras
+ *   abrirse la puerta van a 1/8 en vez de 1/16.
+ *
+ * Lo que da, igual medido, en malahit/PORTING.md (paso 55): con la radio
+ * corrida 930 o 1200 Hz pasa de casi nada a casi todo, y con dos barcos
+ * de desvios distintos tambien. En el banco de upstream, con AIS_CAF=1,
+ * el desvio aguanta hasta 3 veces la desviacion (antes 0,8). De 15 dB para
+ * abajo sigue sin salir casi nada: ahi manda la media de un bit sobre el
+ * discriminador, que para GMSK se queda corta (ver la entrada). Eso es
+ * otra obra.
+ */
+#ifndef AIS_CAF
+#define AIS_CAF 0
+#endif
+#if AIS_CAF
+#define CAF_VMAX     128U     /* 12 bits a 96 kHz; a mas tasa, 8 bits */
+#ifndef CAF_LISA
+#define CAF_LISA     0.20f    /* sum(dx^2) / varianza, a 10 muestras por bit */
+#endif
+#ifndef CAF_RUIDO
+#define CAF_RUIDO    0.50f    /* y por encima de esto, ruido seguro */
+#endif
+#ifndef CAF_HUECO
+#define CAF_HUECO    16U      /* bits de ruido para estimar de nuevo */
+#endif
+#define CAF_RAPIDO   24U      /* bits de reloj a 1/8 */
+static float    s_caf_x[CAF_VMAX];     /* la entrada, tal cual */
+static float    s_caf_d[CAF_VMAX];     /* el salto al cuadrado */
+static float    s_caf_sx, s_caf_sxx, s_caf_sd;   /* sus sumas */
+static float    s_caf_lisa, s_caf_ruido, s_caf_ant;
+static uint16_t s_caf_hueco;           /* muestras de ruido seguro */
+static uint8_t  s_caf_j, s_caf_n, s_caf_abierta, s_caf_rapido;
+static uint8_t  s_caf_ceros;           /* ceros exactos en la ventana */
+static uint8_t  s_caf_ruidosa;         /* la ventana es ruido seguro */
+#endif
+
+/* ==========================================================================
  * ARRANQUE
  * ========================================================================== */
 #define AIS_BAUD 9600.0f
@@ -159,6 +249,28 @@ void ais_rx_start(float fs_hz)
      */
     s_dc_a = 1.0f / (32.0f * (float)s_spb);
 
+#if AIS_CAF
+    {
+        uint8_t i;
+
+        /* 128 bits de constante: la estima de la rafaga ya esta hecha, y
+         * cuanto mas lenta, menos sigue lo que llevan los datos. */
+        s_dc_a = 1.0f / (128.0f * (float)s_spb);
+        s_caf_n = (uint8_t)(((12U * s_spb) <= CAF_VMAX) ? (12U * s_spb) : (8U * s_spb));
+        /* La señal da (dx^2)/varianza como 1/spb^2 y el ruido casi igual a
+         * cualquier tasa: a 48 kHz el umbral sube, pero no tanto. */
+        s_caf_lisa = CAF_LISA * 31.622777f / ((float)s_spb * sqrtf((float)s_spb));
+        s_caf_ruido = s_caf_lisa * (CAF_RUIDO / CAF_LISA);
+        for (i = 0U; i < CAF_VMAX; i++) { s_caf_x[i] = 0.0f; s_caf_d[i] = 0.0f; }
+        s_caf_sx = 0.0f; s_caf_sxx = 0.0f; s_caf_sd = 0.0f;
+        s_caf_ant = 0.0f;
+        s_caf_ceros = s_caf_n;         /* la ventana empieza vacia: cerrada */
+        s_caf_j = 0U; s_caf_abierta = 0U; s_caf_rapido = 0U;
+        s_caf_ruidosa = 1U;
+        s_caf_hueco = 0xFFFFU;
+    }
+#endif
+
     s_on = 1U;
 }
 
@@ -231,6 +343,32 @@ static void trama_fin(void)
 
     s_info.buenas++;
     util = (uint16_t)(n - 16U);   /* fuera los del CRC */
+
+    /*
+     * CADA OCTETO SALE AL AIRE DE MENOS A MAS PESO - 24/11/2026, port del
+     * Malahit. La ITU-R M.1371 define los campos de mas a menos peso y los
+     * reparte en octetos, y cada octeto viaja como en el HDLC, empezando
+     * por el bit de menos peso. Asi que lo que llega en orden no es el
+     * mensaje: es el mensaje con cada octeto del reves, y hay que darle la
+     * vuelta antes de leer campos. gr-ais hace esto mismo
+     * (reverse_bit_order(), despues del CRC, que va sobre el orden del
+     * aire). Sin ello, el banco de upstream -escrito con la misma
+     * convencion que este fichero- cuadraba, y una señal escrita desde la
+     * norma (malahit/tools/hackrf_gen.py ais) pasaba el CRC las ocho veces
+     * de ocho y no dejaba un barco: el MMSI salia 547234053 en vez de
+     * 273123450. Solo un barco de verdad lo zanja; la norma y gr-ais dicen
+     * esto.
+     */
+    {
+        uint16_t k;
+
+        for (k = 0U; k < (uint16_t)(util >> 3); k++) {
+            uint8_t v = s_bits[k], r = 0U, j;
+
+            for (j = 0U; j < 8U; j++) { r = (uint8_t)((r << 1) | ((v >> j) & 1U)); }
+            s_bits[k] = r;
+        }
+    }
 
     {
         uint8_t sig = (uint8_t)((s_cab + 1U) % ANILLO_N);
@@ -347,7 +485,12 @@ static void reloj(float d)
 
     s_fase += s_inc;
 
-    if (s_fase < fase_ant) { nrzi_bit(sig); }
+    if (s_fase < fase_ant) {
+        nrzi_bit(sig);
+#if AIS_CAF
+        if (s_caf_rapido != 0U) { s_caf_rapido--; }
+#endif
+    }
 
     if (sig != s_sig_ant) {
         int32_t err = (int32_t)(s_fase - 0x80000000UL);
@@ -375,7 +518,13 @@ static void reloj(float d)
          * Hecha sin signo, la vuelta por cero esta DEFINIDA y es justo la
          * que un acumulador de fase quiere.
          */
+#if AIS_CAF
+        if (!s_caf_ruidosa) {
+            s_fase = s_fase - (uint32_t)(err >> ((s_caf_rapido != 0U) ? (DPLL_G - 1) : DPLL_G));
+        }
+#else
         s_fase = s_fase - (uint32_t)(err >> DPLL_G);
+#endif
         s_sig_ant = sig;
     }
 }
@@ -402,7 +551,63 @@ void ais_rx_mete(const float *disc, uint32_t n)
          * a caer en medio de los dos niveles y la sintonia deja de tener
          * que ser exacta.
          */
+#if AIS_CAF
+        {
+            /* Ver LA CONTINUA DE CADA RAFAGA, arriba. */
+            float d = x - s_caf_ant;
+            float sale = s_caf_x[s_caf_j];
+            float var;
+
+            s_caf_ant = x;
+            s_caf_sd += (d * d) - s_caf_d[s_caf_j];
+            s_caf_sx += x - sale;
+            s_caf_sxx += (x * x) - (sale * sale);
+            /* UN CERO EXACTO no lo da un discriminador: es la ventana
+             * todavia vacia al arrancar, o un silencio digital. Una ventana
+             * a medias entre eso y una rafaga es lisa y su media no vale
+             * -medido en sim/ais_aire.c, que empieza la rafaga en la
+             * muestra cero: abria a la cuarta y con 0,8 de desvio no
+             * salia-, asi que mientras quede uno, cerrada. */
+            if (x == 0.0f) { s_caf_ceros++; }
+            if (sale == 0.0f) { s_caf_ceros--; }
+            s_caf_d[s_caf_j] = d * d;
+            s_caf_x[s_caf_j] = x;
+            if (++s_caf_j >= s_caf_n) {
+                /* Una vuelta de ventana: las sumas, de nuevo, para que el
+                 * redondeo de sumar y restar no se acumule en horas. */
+                uint8_t i;
+
+                s_caf_j = 0U; s_caf_sx = 0.0f; s_caf_sxx = 0.0f; s_caf_sd = 0.0f;
+                for (i = 0U; i < s_caf_n; i++) {
+                    s_caf_sx += s_caf_x[i];
+                    s_caf_sxx += s_caf_x[i] * s_caf_x[i];
+                    s_caf_sd += s_caf_d[i];
+                }
+            }
+            var = s_caf_sxx - (s_caf_sx * s_caf_sx) / (float)s_caf_n;
+            s_caf_ruidosa = (uint8_t)((s_caf_ceros != 0U) || !(var > 0.0f) ||
+                                      (s_caf_sd > s_caf_ruido * var));
+            if ((s_caf_ceros == 0U) && (var > 0.0f) && (s_caf_sd < s_caf_lisa * var)) {
+                if (!s_caf_abierta) {
+                    s_caf_abierta = 1U;
+                    s_caf_rapido = CAF_RAPIDO;
+                    if (s_caf_hueco >= (uint16_t)(CAF_HUECO * s_spb)) {
+                        s_dc = s_caf_sx / (float)s_caf_n;
+                    }
+                }
+                s_dc += s_dc_a * ((s_caf_sx / (float)s_caf_n) - s_dc);
+                s_caf_hueco = 0U;
+            } else {
+                /* Ni lisa ni ruido seguro -una rafaga floja, un
+                 * chasquido-: la continua quieta, pero la pausa no cuenta,
+                 * que una estima nueva a media rafaga se haria sobre datos. */
+                s_caf_abierta = 0U;
+                if (s_caf_ruidosa && (s_caf_hueco < 0xFFFFU)) { s_caf_hueco++; }
+            }
+        }
+#else
         s_dc += s_dc_a * (x - s_dc);
+#endif
         y = x - s_dc;
 
         /* Media movil de un bit: el filtro adaptado del pobre. Para NRZ es

@@ -903,7 +903,13 @@ const int16_t ui_digi_cols_ident[UI_DIGI_COLS_IDENT_N] = UDG_COLS_IDENT;
  * grados estan en el titulo, y repetirlos catorce veces es ruido. Es la
  * misma decision que en la tabla de FT8.
  */
-const int16_t ui_digi_cols_ais[UI_DIGI_COLS_AIS_N] = { 8, 110, 420, 580, 650, -792 };
+/* #ifndef desde el 24/11/2026, como las de JTTY, ALE y el identificador: el
+ * port del Malahit pone las suyas en malahit/compat/malahit_layout.h. Aqui,
+ * las de siempre. */
+#ifndef UDG_COLS_AIS
+#define UDG_COLS_AIS { 8, 110, 420, 580, 650, -792 }
+#endif
+const int16_t ui_digi_cols_ais[UI_DIGI_COLS_AIS_N] = UDG_COLS_AIS;
 
 /*
  * ALE: quien se ha oido, con que tipo de palabra, donde y como de bien.

@@ -61,6 +61,15 @@ static uint8_t lee(const uint8_t *b, uint16_t k)
     return (uint8_t)((b[k >> 3] >> (7U - (k & 7U))) & 1U);
 }
 
+/* El bit `i` en el orden del AIRE: cada octeto del mensaje de menos a mas
+ * peso, como el HDLC (ITU-R M.1371; ver trama_fin() en ais_rx.c, que le da
+ * la vuelta). Hasta el 24/11/2026 este banco mandaba el mensaje tal cual,
+ * y como ais_rx.c leia igual, cuadraba consigo mismo. */
+static uint8_t aire(const uint8_t *b, uint16_t i)
+{
+    return lee(b, (uint16_t)((i & ~7U) + (7U - (i & 7U))));
+}
+
 /* ------------------------------------------------------------- el CRC */
 /*
  * El FCS del X.25, y OJO CON EL COMPLEMENTO.
@@ -77,7 +86,7 @@ static uint16_t fcs(const uint8_t *bits, uint16_t n)
     uint16_t i;
 
     for (i = 0; i < n; i++) {
-        uint16_t x = (uint16_t)((crc ^ lee(bits, i)) & 1U);
+        uint16_t x = (uint16_t)((crc ^ aire(bits, i)) & 1U);
 
         crc >>= 1;
         if (x) { crc ^= 0x8408U; }
@@ -101,7 +110,7 @@ static uint16_t trama(const uint8_t *msg, uint16_t nmsg, uint8_t *sal)
 
     /* Datos y FCS, con relleno. El FCS va de menos a mas peso. */
     for (i = 0; i < (uint16_t)(nmsg + 16U); i++) {
-        uint8_t b = (i < nmsg) ? lee(msg, i)
+        uint8_t b = (i < nmsg) ? aire(msg, i)
                                : (uint8_t)((f >> (i - nmsg)) & 1U);
 
         sal[n++] = b;
