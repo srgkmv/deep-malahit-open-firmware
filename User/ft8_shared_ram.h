@@ -86,6 +86,19 @@
  * esta al dia; este bloque decia "corregir" aquellos numeros y llevaba una
  * semana corrigiendolos hacia atras.
  */
+/*
+ * LOS SUBBLOQUES DEL DECIMADOR, CUANTOS - #ifndef desde el 25/11/2026.
+ *
+ * Dos, o sea entre 160 y 320 ms de colchon segun en que punto del subbloque
+ * se pare el bucle principal (ver ft8_decimator.c). El port del Malahit
+ * pone 8 (malahit/bringup/reglas.mk): alli la busqueda de candidatos, una
+ * sola llamada en el borde de ranura, se acerca a ese colchon. Aqui, los
+ * dos de siempre.
+ */
+#ifndef FT8_DECI_BUFS
+#define FT8_DECI_BUFS 2
+#endif
+
 typedef union
 {
     uint8_t waterfall_buf[WATERFALL_ROWS][WATERFALL_WIDTH];
@@ -221,7 +234,7 @@ typedef union
          */
         float   ldpc_tov[174][3];    /* FTX_LDPC_N x 3  - ldpc.c  */
         float   ldpc_toc[83][7];     /* FTX_LDPC_M x 7  - ldpc.c  */
-        int16_t deci_out[2][FT8_ADAPTER_SUBBLOCK_SIZE];  /* ft8_decimator.c */
+        int16_t deci_out[FT8_DECI_BUFS][FT8_ADAPTER_SUBBLOCK_SIZE];  /* ft8_decimator.c */
         uint8_t cola[4224];          /* s_queue       - ft8_decoder.c (48 x 88) */
         uint8_t cands[1120];         /* candidate_list- ft8_decoder.c */
         char    lineas[48][88];      /* s_lin         - ft8_modo.c */

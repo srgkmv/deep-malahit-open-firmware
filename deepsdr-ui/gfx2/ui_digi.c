@@ -756,7 +756,13 @@ static void cabecera(gfx2_surf_t *s, const ui_digi_state_t *st)
  * Si algun dia se anade un campo hay que volver a MEDIR, no estimar: este
  * reparto sale de los anchos de verdad de font_ui_14b.
  */
-const int16_t ui_digi_cols_ft8[UI_DIGI_COLS_FT8_N] = { 8, 110, 210, 290, 380, -660, -792 };
+/* #ifndef desde el 25/11/2026, como las de JTTY, ALE, IDENT y AIS: el port
+ * del Malahit pone las suyas en malahit/compat/malahit_layout.h, para 480
+ * px. Aqui, las de siempre. */
+#ifndef UDG_COLS_FT8
+#define UDG_COLS_FT8 { 8, 110, 210, 290, 380, -660, -792 }
+#endif
+const int16_t ui_digi_cols_ft8[UI_DIGI_COLS_FT8_N] = UDG_COLS_FT8;
 
 /*
  * HFDL: quien es el avion, su vuelo, donde esta, que hizo y cuantas veces.

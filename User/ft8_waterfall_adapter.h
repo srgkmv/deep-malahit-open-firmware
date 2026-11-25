@@ -176,7 +176,13 @@
  * frecuencias se queda sin decodificar al borde de la sensibilidad. Ver el
  * bloque "LO QUE ESTO ES HOY" al principio de este fichero.
  */
+/* #ifndef desde el 25/11/2026: el port del Malahit, que tiene RAM, compila
+ * con 2 (malahit/bringup/reglas.mk) - lo que cuesta el 1 medido alli: una
+ * senal a media celda (3,125 Hz) de su bin no sale a -12 dB, 0 de 20 en el
+ * banco, 20 de 20 en el bin. Aqui, el 1 de siempre. */
+#ifndef FT8_ADAPTER_FREQ_OSR
 #define FT8_ADAPTER_FREQ_OSR       1   /* ver el bloque de arriba (era 2) - A/B testing showed THIS is the axis that actually matters: reducing it to 1 (alone or combined with TIME_OSR=1) lost a real decode (CT3IQ EI8GVB IO63, -9dB) that the (2,2) and (1,2) configs both still get */
+#endif
 #define FT8_ADAPTER_BLOCK_SIZE     1024 /* = FT8_ADAPTER_SAMPLE_RATE_HZ * FT8_SYMBOL_PERIOD */
 #define FT8_ADAPTER_SUBBLOCK_SIZE  1024 /* = FT8_ADAPTER_BLOCK_SIZE / FT8_ADAPTER_TIME_OSR - one snapshot per full symbol period (160ms), since TIME_OSR=1 leaves no time-subdivision to fill */
 #define FT8_ADAPTER_NFFT           2048 /* MUST equal ft8_fft.h's FT8_FFT_SIZE, enforced in the .c file */

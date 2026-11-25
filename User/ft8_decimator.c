@@ -389,9 +389,9 @@ static uint16_t s_out_block_fill;
  * the assumed 12000Hz (see ft8_decimator_get_raw_sample_count()).
  */
 static uint32_t s_raw_sample_count;
-static volatile uint8_t s_out_block_writing; /* 0 or 1 - which of the two s_out_block[] the ISR is currently filling */
+static volatile uint8_t s_out_block_writing; /* which of the FT8_DECI_BUFS s_out_block[] the ISR is currently filling */
 static volatile uint16_t s_perdidos;         /* ver produce_output_sample() */
-static volatile bool s_out_block_ready[2];   /* true = full, waiting for ft8_decimator_poll() to consume it */
+static volatile bool s_out_block_ready[FT8_DECI_BUFS];   /* true = full, waiting for ft8_decimator_poll() to consume it */
 
 void ft8_decimator_reset_perdidos(void) { s_perdidos = 0U; }
 
@@ -434,13 +434,13 @@ void ft8_decimator_reset(void)
 
     for (i = 0; i < FT8_ADAPTER_SUBBLOCK_SIZE; i++)
     {
-        s_out_block[0][i] = 0;
-        s_out_block[1][i] = 0;
+        uint8_t b;
+
+        for (b = 0U; b < (uint8_t)FT8_DECI_BUFS; b++) { s_out_block[b][i] = 0; }
     }
     s_out_block_fill = 0U;
     s_out_block_writing = 0U;
-    s_out_block_ready[0] = false;
-    s_out_block_ready[1] = false;
+    for (i = 0; i < (uint16_t)FT8_DECI_BUFS; i++) { s_out_block_ready[i] = false; }
     /* s_perdidos NO se borra: cuenta desde que se encendio FT8, que es
      * justo el periodo sobre el que hay que juzgarlo. Se borra en
      * ft8_decimator_reset_perdidos(), que llama ft8_modo_start(). */
@@ -495,7 +495,8 @@ static void produce_output_sample(uint8_t phase)
         /*
          * ¿SE HA PERDIDO UN SUBBLOQUE? - 25/09/2026.
          *
-         * Aqui solo hay DOS buffers, o sea 320 ms de colchon. Si el bucle
+         * Aqui solo hay DOS buffers (FT8_DECI_BUFS, ver ft8_shared_ram.h: el
+         * port del Malahit pone 8), o sea 320 ms de colchon. Si el bucle
          * principal tarda mas que eso en pasar por ft8_decimator_poll(), el
          * que estaba lleno y sin vaciar se pisa y ese trozo de audio no llega
          * nunca al analisis. El comentario de abajo ya lo decia -"safety
@@ -511,7 +512,8 @@ static void produce_output_sample(uint8_t phase)
         if (s_out_block_ready[s_out_block_writing]) { s_perdidos++; }
 
         s_out_block_ready[s_out_block_writing] = true;
-        s_out_block_writing = (uint8_t)(1U - s_out_block_writing);
+        /* El siguiente de FT8_DECI_BUFS, en rueda (con dos, el otro). */
+        s_out_block_writing = (uint8_t)((s_out_block_writing + 1U) % (uint8_t)FT8_DECI_BUFS);
         s_out_block_fill = 0U;
     }
 }
@@ -612,11 +614,14 @@ void ft8_decimator_poll(void)
      * Se lee UNA vez: si la interrupcion cambia a media vuelta es que ya se
      * ha perdido un subbloque entero, y eso lo cuenta s_perdidos.
      */
+    /* Con FT8_DECI_BUFS en rueda (#ifndef desde el 25/11/2026) vale lo
+     * mismo: el que se esta escribiendo, si sigue lleno, es el mas viejo,
+     * y detras van los siguientes en el orden en que se llenaron. */
     uint8_t viejo = s_out_block_writing;
     uint8_t i;
-    for (i = 0; i < 2U; i++)
+    for (i = 0; i < (uint8_t)FT8_DECI_BUFS; i++)
     {
-        uint8_t k = (uint8_t)((viejo + i) & 1U);
+        uint8_t k = (uint8_t)((viejo + i) % (uint8_t)FT8_DECI_BUFS);
 
         if (s_out_block_ready[k])
         {
