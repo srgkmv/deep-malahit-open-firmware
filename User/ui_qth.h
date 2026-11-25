@@ -44,21 +44,33 @@
  * de una pantalla a otra no baile nada.
  */
 
+/* #ifndef desde el 25/11/2026, como ui_hora.h: el port del Malahit (480 x
+ * 320) pone las suyas en malahit/compat/malahit_layout.h. Aqui, las de
+ * siempre. UIQ_W es el ancho que antes iba escrito como 800. */
+#ifndef UIQ_Y
 #define UIQ_Y        104
 #define UIQ_H        318                 /* 104..421, igual que la rejilla */
+#define UIQ_W        800
 #define UIQ_PAD       14
+#endif
 
 #define UIQ_N          6                 /* caracteres del localizador */
+#ifndef UIQ_CAJA_W
 #define UIQ_CAJA_W    96
 #define UIQ_CAJA_H    88
 #define UIQ_CAJA_GAP  12
-#define UIQ_CAJA_Y   (UIQ_Y + 58)
-#define UIQ_CAJA_X0  ((800 - (UIQ_N * UIQ_CAJA_W + (UIQ_N - 1) * UIQ_CAJA_GAP)) / 2)
+#define UIQ_CAJA_DY   58                 /* las casillas, desde UIQ_Y */
+#endif
+#define UIQ_CAJA_Y   (UIQ_Y + UIQ_CAJA_DY)
+#define UIQ_CAJA_X0  ((UIQ_W - (UIQ_N * UIQ_CAJA_W + (UIQ_N - 1) * UIQ_CAJA_GAP)) / 2)
 
+#ifndef UIQ_BTN_H
 #define UIQ_BTN_H     56
 #define UIQ_BTN_W    176
 #define UIQ_BTN_GAP   12
-#define UIQ_BTN_Y    (UIQ_Y + UIQ_H - UIQ_BTN_H - 12)
+#define UIQ_BTN_FONDO 12                 /* del pie de los botones al de la banda */
+#endif
+#define UIQ_BTN_Y    (UIQ_Y + UIQ_H - UIQ_BTN_H - UIQ_BTN_FONDO)
 
 /* Los cuatro botones de abajo, y luego las seis casillas: 0..3 son botones
  * y 4..9 son las casillas, o sea UIQ_HIT_CAJA + i. */

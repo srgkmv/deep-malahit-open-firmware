@@ -28,6 +28,20 @@
  * 18b ya esta dentro y se lee perfectamente en una caja de 96x88.
  */
 
+/* #ifndef desde el 25/11/2026: ver ui_qth.h. Los valores de siempre. */
+#ifndef UIQ_TIT_DY
+#define UIQ_TIT_DY     12             /* el titulo, desde UIQ_Y */
+#define UIQ_PIE_DY     20             /* el pie, a la derecha */
+#define UIQ_LETRA_DY   28             /* la letra, desde lo alto de su casilla */
+#define UIQ_PISTA_DY   26             /* la pista, desde el pie de su casilla */
+#define UIQ_COORD_DY   16             /* las coordenadas, bajo las casillas */
+#define UIQ_BTN_TXT_DY 18             /* el rotulo, desde lo alto del boton */
+#define UIQ_BTN_R      10             /* radio de las esquinas de un boton */
+#define UIQ_CAJA_R     12             /* y de una casilla */
+#define UIQ_HIT_CAJA_AIRE 18          /* lo que se lleva el toque arriba y abajo */
+#define UIQ_HIT_BTN_AIRE  16
+#endif
+
 static int16_t btn_x(uint8_t i)
 {
     switch (i) {
@@ -49,10 +63,10 @@ static void boton(gfx2_surf_t *s, uint8_t i, const char *rot,
     int16_t x = btn_x(i);
     uint32_t fondo = hundido ? PAL_SURF_3 : (vivo ? PAL_SURF_1 : PAL_SURF_0);
 
-    gfx2_rrect(s, x, UIQ_BTN_Y, UIQ_BTN_W, UIQ_BTN_H, 10, gfx2_rgb(fondo));
-    gfx2_rrect_outline(s, x, UIQ_BTN_Y, UIQ_BTN_W, UIQ_BTN_H, 10, 2,
+    gfx2_rrect(s, x, UIQ_BTN_Y, UIQ_BTN_W, UIQ_BTN_H, UIQ_BTN_R, gfx2_rgb(fondo));
+    gfx2_rrect_outline(s, x, UIQ_BTN_Y, UIQ_BTN_W, UIQ_BTN_H, UIQ_BTN_R, 2,
                        gfx2_rgb((vivo && acento) ? PAL_ACCENT : PAL_LINE));
-    gfx2_text_in(s, x, (int16_t)(UIQ_BTN_Y + 18), UIQ_BTN_W, rot, &font_ui_18b,
+    gfx2_text_in(s, x, (int16_t)(UIQ_BTN_Y + UIQ_BTN_TXT_DY), UIQ_BTN_W, rot, &font_ui_18b,
                  gfx2_rgb(vivo ? PAL_INK : PAL_INK_MUTE), GFX2_ALIGN_C);
 }
 
@@ -63,10 +77,10 @@ static void pinta(gfx2_surf_t *s, void *ctx)
 
     gfx2_fill(s, 0, UIQ_Y, GFX2_W, UIQ_H, gfx2_rgb(PAL_SURF_0));
 
-    gfx2_text(s, UIQ_PAD, (int16_t)(UIQ_Y + 12), st->titulo, &font_ui_18b,
+    gfx2_text(s, UIQ_PAD, (int16_t)(UIQ_Y + UIQ_TIT_DY), st->titulo, &font_ui_18b,
               gfx2_rgb(PAL_INK));
     if (st->pie != 0) {
-        gfx2_text_in(s, 0, (int16_t)(UIQ_Y + 20), (int16_t)(GFX2_W - UIQ_PAD),
+        gfx2_text_in(s, 0, (int16_t)(UIQ_Y + UIQ_PIE_DY), (int16_t)(GFX2_W - UIQ_PAD),
                      st->pie, &font_ui_14, gfx2_rgb(PAL_INK_DIM), GFX2_ALIGN_R);
     }
 
@@ -75,26 +89,26 @@ static void pinta(gfx2_surf_t *s, void *ctx)
         uint8_t sel = (uint8_t)(i == st->sel);
         char c[2];
 
-        gfx2_rrect(s, x, UIQ_CAJA_Y, UIQ_CAJA_W, UIQ_CAJA_H, 12,
+        gfx2_rrect(s, x, UIQ_CAJA_Y, UIQ_CAJA_W, UIQ_CAJA_H, UIQ_CAJA_R,
                    gfx2_rgb(sel ? PAL_SURF_2 : PAL_SURF_1));
-        gfx2_rrect_outline(s, x, UIQ_CAJA_Y, UIQ_CAJA_W, UIQ_CAJA_H, 12,
+        gfx2_rrect_outline(s, x, UIQ_CAJA_Y, UIQ_CAJA_W, UIQ_CAJA_H, UIQ_CAJA_R,
                            (int16_t)(sel ? 3 : 2),
                            gfx2_rgb(sel ? PAL_ACCENT : PAL_LINE));
 
         c[0] = st->loc[i];
         c[1] = '\0';
-        gfx2_text_in(s, x, (int16_t)(UIQ_CAJA_Y + 28), UIQ_CAJA_W, c,
+        gfx2_text_in(s, x, (int16_t)(UIQ_CAJA_Y + UIQ_LETRA_DY), UIQ_CAJA_W, c,
                      &font_ui_18b, gfx2_rgb(sel ? PAL_ACCENT : PAL_INK),
                      GFX2_ALIGN_C);
         if (st->pista[i] != 0) {
-            gfx2_text_in(s, x, (int16_t)(UIQ_CAJA_Y + UIQ_CAJA_H - 26),
+            gfx2_text_in(s, x, (int16_t)(UIQ_CAJA_Y + UIQ_CAJA_H - UIQ_PISTA_DY),
                          UIQ_CAJA_W, st->pista[i], &font_ui_14,
                          gfx2_rgb(PAL_INK_DIM), GFX2_ALIGN_C);
         }
     }
 
     if (st->coord != 0) {
-        gfx2_text_in(s, 0, (int16_t)(UIQ_CAJA_Y + UIQ_CAJA_H + 16), GFX2_W,
+        gfx2_text_in(s, 0, (int16_t)(UIQ_CAJA_Y + UIQ_CAJA_H + UIQ_COORD_DY), GFX2_W,
                      st->coord, &font_ui_18b, gfx2_rgb(PAL_INK_DIM), GFX2_ALIGN_C);
     }
 
@@ -144,7 +158,8 @@ int8_t ui_qth_hit(uint16_t x, uint16_t y)
      * objetivo comodo de dedo son 47 y aqui hay sitio de sobra; lo que
      * cuesta un toque fallado es tener que volver a apuntar.
      */
-    if ((int16_t)y >= UIQ_CAJA_Y - 18 && (int16_t)y < UIQ_CAJA_Y + UIQ_CAJA_H + 18) {
+    if ((int16_t)y >= UIQ_CAJA_Y - UIQ_HIT_CAJA_AIRE
+        && (int16_t)y < UIQ_CAJA_Y + UIQ_CAJA_H + UIQ_HIT_CAJA_AIRE) {
         for (i = 0U; i < UIQ_N; i++) {
             if ((int16_t)x >= caja_x(i) && (int16_t)x < caja_x(i) + UIQ_CAJA_W) {
                 return (int8_t)(UIQ_HIT_CAJA + i);
@@ -153,7 +168,8 @@ int8_t ui_qth_hit(uint16_t x, uint16_t y)
         return UIQ_HIT_NONE;
     }
 
-    if ((int16_t)y < UIQ_BTN_Y - 16 || (int16_t)y >= UIQ_BTN_Y + UIQ_BTN_H + 16) {
+    if ((int16_t)y < UIQ_BTN_Y - UIQ_HIT_BTN_AIRE
+        || (int16_t)y >= UIQ_BTN_Y + UIQ_BTN_H + UIQ_HIT_BTN_AIRE) {
         return UIQ_HIT_NONE;
     }
     for (i = 0U; i < UIQ_BTN_N; i++) {
