@@ -79,5 +79,9 @@ void digi_ident_poll(void);
  * cleared (entry, Borrar) - from the main loop, AIS on. */
 void digi_ais_poll(void);
 void digi_ais_borra(void);
+/* FT8 (step 57): each decode and each slot's numbers to the console; the
+ * panel's view (scroll, counters) back to the newest on entering. */
+void digi_ft8_poll(void);
+void digi_ft8_borra(void);
 
 #endif /* MALAHIT_DIGI_H */

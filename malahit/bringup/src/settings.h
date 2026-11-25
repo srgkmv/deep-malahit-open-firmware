@@ -83,6 +83,8 @@ typedef struct {
                                0 = not stored (upstream's +1:00) - step 56 */
     uint8_t  huso_medido;   /* v4: 2 = a station measured it, 1 = a city;
                                0 = not stored */
+    char     qth[6];        /* v4: the Maidenhead locator, ASCII, zeros past
+                               its end; all zero = not stored (none) - step 57 */
 } settings_t;
 
 #define SET_AJ_NB_MASK      0x03U   /* blanker level 0-3 */

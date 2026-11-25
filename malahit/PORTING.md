@@ -2193,6 +2193,77 @@ Each step should end with something visible on the radio.
    million times, each pass writing over the record - which now keeps the
    first fault. Not reproduced at 103.1 since.
    Flash image 398 472 bytes.
+57. **FT8, and the QTH screen.** *25/11/2026, from flash, against the
+   HackRF at 14.074 MHz* - upstream's ft8_decimator.c, ft8_fft.c,
+   ft8_tablas.c, ft8_waterfall_adapter.c, ft8_decoder.c, ft8_snr.c,
+   ft8_lista.c and ft8_modo.c, and ft8_lib's decoder as upstream trimmed
+   it (Ft8Lib/ft8, objects `ftx_*`), stub gone; Digital "FT8" ("Digital de
+   HF"), USB, after DSC as upstream's. `demod_ft8(1|0)`; `ft8_modo_tick()`
+   from cw_poll(). The slot comes from the RTC (step 56).
+   **Its memory is upstream's union itself**: FT8's files name the members
+   of `g_ft8_shared_ram` directly, so src/prestamo.c now DEFINES that union
+   and lends all of it to the other borrowers (hfdl_ram_todo()); it is
+   wiped when taken (FT8's lines live in it and a JTTY table left behind
+   would show as decodes). It moved from D2 to AXI SRAM (no RAM image to
+   fit any more), 175 kB with this port's flags, below.
+   **The screen** is upstream's: the table over the whole area (Time Hz dB
+   DT Message km Country, `UDG_COLS_FT8` in malahit_layout.h, measured by
+   `make malahit-menus`), CQs in their colour; the second header layout:
+   Clear, the CQ filter, the frequency (upstream's nine FT8 dials, a tap
+   goes to the next), the slot's bar with the second, the candidates and
+   the mean DT; a tap on the bar squares the slot; a finger scrolls the 48
+   kept (ft8_lista.c). Upstream's Map is left out. The console: each
+   decode, and once a slot its numbers (`ft8 slot N: ...`).
+   **What this radio needed, each measured** (host: `deepsdr-ui
+   out/ft8radio`, upstream's whole mode on a 12 kHz file, with the decode's
+   duration modelled; signals: `tools/hackrf_gen.py ft8`, an encoder
+   written from the protocol - pack77, CRC-14, the generator matrix that
+   ft8_lib's decoder does NOT use, checked against its parity checks, Gray,
+   GFSK BT 2 - whose messages upstream's decoder reads back):
+   - **the level** - the sideband reaches FT8 at sigma ~3 LSB (ATT 46),
+     upstream's benches at 1000. Upstream's decimator AGC resets to unity
+     at every slot edge and takes ~10 s to come down to that, two thirds
+     of every slot on the bottom of the spectrogram; on the host, 18 of 20
+     decodes at this radio's level, none at half of it.
+     `__wrap_ft8_modo_come()` (src/demod.c) lifts the block to RMS 1000
+     with a gain that follows slowly (30 s), x115-560 seen;
+   - **FREQ_OSR=2** (upstream: 1, for the DEEPSDR's RAM; `#ifndef` now) -
+     a signal half a bin (3.125 Hz) off read 0 of 20 at -12 dB, 20 with 2;
+     on the radio, -12 dB 10 -> 20 of 20, -15 dB 7 -> 20;
+   - **a byte a cell** (`FT8_ADAPTER_MAG_BITS=8`, `FTX_MAG_4BITS=0`,
+     upstream's other branch) - the candidate search is one call at the
+     slot's edge over the whole spectrogram, and with 4-bit cells and
+     FREQ_OSR=2 it took 650 ms (PC sampled over SWD: ft8_sync_score(), a
+     nibble and four float operations per read, D-cache off); it is ~300
+     ms now, and more sensitive (-15 dB a quarter bin off, 2 -> 11 of 20);
+   - **eight hand-off buffers** (`FT8_DECI_BUFS`, `#ifndef` now) - two
+     give between 160 and 320 ms, and that search plus a frame still lost a
+     sub-block now and then; eight give 1.1 s. `lost 0` over 17 slots.
+   On the radio, five messages a slot from the HackRF: -8 dB 25 of 25, -12
+   dB 15-20 of 20, -15 dB 20 of 20 (WSJT-X's SNR in 2500 Hz; upstream's
+   estimate reads ~3 dB high); the decode 0.5-0.9 s, the worst main-loop
+   pass 301 ms.
+   **Left as upstream has it**: TIME_OSR=1 - a signal a fraction of a
+   symbol off the 160 ms grid loses some dB; the capture starts at a main
+   loop pass (10-60 ms of jitter here), so near -12 dB slots alternate on
+   the host until the auto-squaring settles, and on the air every station
+   brings its own DT. TIME_OSR=2 doubles the search again and the
+   spectrogram (~95 kB more) - a decision for after the live antenna.
+   And "short" slots every time (92 of 93 blocks: upstream's 120 ms margin
+   against this loop), harmless since upstream decodes short slots.
+   **The QTH screen** - upstream's ui_qth.c (its geometry `#ifndef` now,
+   this port's in malahit_layout.h; its font_ui_18b kept for the letters)
+   and its controller (src/qth.c, out of upstream's main.c): six boxes,
+   each only its alphabet, the coordinates under them, -, +, Apply, Exit;
+   Settings > Device > QTH, "not set" until set. This port adds the knob:
+   turning moves the chosen box, the press goes to the next. In the FRAM,
+   v4 bytes 39-44. Upstream boots on IN80dk; here none, so the km column
+   stays empty until the owner sets one.
+   **Found on the way**: the HackRF and the radio are 719 Hz apart at 14
+   MHz today (51 ppm; ~6 ppm in steps 50-55) - nothing in the tuning moved;
+   for the live pass, against a known station (upstream has "Calibrar
+   PPM", not ported).
+   Flash image 439 160 bytes.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

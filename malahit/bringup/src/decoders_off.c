@@ -58,7 +58,7 @@
 OFF_U32(analiz_activo,      analiz_feed)
 /* ax25_activo, ax25_process: the real ones since 23/11/2026 (ax25.c, step 54) */
 /* dsc_activo, dsc_process: the real ones since 22/11/2026 (dsc.c, step 46) */
-OFF_U16(ft8_modo_activo,    ft8_modo_come)
+/* ft8_modo_activo, ft8_modo_come: the real ones since 25/11/2026 (ft8_*.c, Ft8Lib, step 57) */
 /* hell_activo, hell_process: the real ones since 22/11/2026 (hell.c, step 49) */
 /* ident_modo_activo, ident_modo_mete: the real ones since 23/11/2026 (ident.c, step 53) */
 /* jtty_modo_activo, jtty_modo_mete: the real ones since 22/11/2026 (jtty_*.c, step 50) */

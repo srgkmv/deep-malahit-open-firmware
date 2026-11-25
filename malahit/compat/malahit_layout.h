@@ -615,4 +615,45 @@
  * 122 fits, twenty 'W's are cut. N right-aligned, the channel in its title. */
 #define UDG_COLS_AIS { 4, 62, 196, 294, 326, -476 }
 
+/*
+ * THE QTH SCREEN - ui_qth.c, step 57 (25/11/2026). Upstream's six boxes,
+ * one per character of the locator, each offering only its own alphabet,
+ * in the menus' place 53..289; its literals #ifndef in ui_qth.h/.c with
+ * upstream's values. Faces: font_ui_18b kept for the letters, the title,
+ * the coordinates and the buttons (reglas.mk: ui_qth.o's own set), its
+ * font_ui_14 as font_ui_10 for the line on the right and the hints.
+ *
+ *   title 57   boxes 93..155   coordinates 173   buttons 249..285
+ *
+ * Six boxes of 64: 28 + 6*64 + 5*8 + 28 = 480. Four buttons of 110:
+ * 8 + 4*110 + 3*8 + 8 = 480.
+ */
+#define UIQ_Y               UIG_Y                       /* 53 */
+#define UIQ_H               UIG_H                       /* 236 */
+#define UIQ_W               480
+#define UIQ_PAD               8
+#define UIQ_CAJA_W           64
+#define UIQ_CAJA_H           62
+#define UIQ_CAJA_GAP          8
+#define UIQ_CAJA_DY          40
+#define UIQ_BTN_H            36
+#define UIQ_BTN_W           110
+#define UIQ_BTN_GAP           8
+#define UIQ_BTN_FONDO         4     /* 249..285: the action bar starts at 290 */
+#define UIQ_TIT_DY            4
+#define UIQ_PIE_DY            8
+#define UIQ_LETRA_DY         12
+#define UIQ_PISTA_DY         18
+#define UIQ_COORD_DY         18
+#define UIQ_BTN_TXT_DY        8
+#define UIQ_BTN_R             6
+#define UIQ_CAJA_R            8
+#define UIQ_HIT_CAJA_AIRE    12
+#define UIQ_HIT_BTN_AIRE      4
+
+/* FT8's table (step 57): Time, Hz, dB, DT, Message, km, Country - upstream's
+ * { 8, 110, 210, 290, 380, -660, -792 } for 800 px, measured in font_ui_10b
+ * (deepsdr-ui `make malahit-menus`, digi_ft8()). */
+#define UDG_COLS_FT8 { 4, 36, 64, 88, 116, -392, -476 }
+
 #endif /* MALAHIT_LAYOUT_H */

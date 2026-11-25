@@ -497,7 +497,72 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ax25.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ais_rx.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ais_msg.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ais_modo.c
+# ft8_*.c   FT8: the 12 -> 3.2 kHz decimator in the audio interrupt, a
+#            1024-point FFT per 40 ms sub-block into a 4-bit spectrogram of
+#            the 15 s slot, and ft8_lib's decoder (Ft8Lib below) from the
+#            main loop, a few candidates per pass (ft8_modo_tick()); the
+#            slot from the RTC (step 56). All its large buffers are
+#            upstream's union, g_ft8_shared_ram, which src/prestamo.c
+#            makes the borrowed RAM itself (step 57)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ft8_decimator.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ft8_decoder.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ft8_fft.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ft8_lista.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ft8_modo.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ft8_snr.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ft8_tablas.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ft8_waterfall_adapter.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_digi.c
+#
+# FT8_LIB: ft8_lib's decoder (Karlis Goba, MIT - Ft8Lib/LICENSE), as
+# upstream trimmed it: the sync search, the LDPC, the CRC and the message
+# unpacking, no encoder. Out of ../../Ft8Lib/ft8, in place; objects
+# prefixed ftx_ - its constants.c and text.c would otherwise be one
+# careless name away from a file of ours.
+#
+#
+# FT8_ADAPTER_FREQ_OSR=2: the spectrogram keeps BOTH of the FFT's 3.125 Hz
+# bins in each 6.25 Hz FT8 tone, as ft8_lib's own design does; upstream
+# keeps one, to fit the DEEPSDR's RAM (#ifndef there since 25/11/2026).
+# Measured on deepsdr-ui out/ft8radio, five messages, 20 decodes possible:
+# a signal half a bin off (+3.125 Hz) at -12 dB, 0 with 1 and 20 with 2; at
+# -15 dB, 0 and 13 (13 is what an on-bin signal gives with either). On the
+# air no station sits on a bin, and the HackRF's offset put the bench's
+# between them: -12 dB read 10 of 20 on the radio. Costs ~32 kB more of the
+# union (mag[] and the side buffer twice) and no extra FFT. In DEFS, not
+# per file: ft8_shared_ram.h sizes the union with it, and prestamo.c and
+# digi.c include it too.
+#
+DEFS += -DFT8_ADAPTER_FREQ_OSR=2
+#
+# FT8_ADAPTER_MAG_BITS=8 + FTX_MAG_4BITS=0: a byte a cell (0.5 dB steps,
+# -120..+7.5 dB), upstream's other branch, kept "to measure"; upstream packs
+# two cells a byte on a fixed ladder of 16 steps of 3.4 dB to save RAM.
+# Not for the RAM here but for the TIME: the candidate search reads the
+# spectrogram ~5 million times a slot, all in one call at the slot's edge,
+# and each 4-bit read is a nibble unpacked and four float operations, from
+# memory the D-cache does not cover. With FREQ_OSR=2 that call took 650 ms
+# (PC sampled over SWD: ft8_sync_score()), the decimator's two sub-blocks
+# (320 ms) ran out, and every slot lost two - where the transmissions
+# start. A byte is read as it is. Also more sensitive (deepsdr-ui
+# out/ft8radio, -15 dB): a quarter bin off 2 -> 11 of 20, half a bin 13 ->
+# 17. ~60 kB more of the union, which lives in AXI (src/prestamo.c).
+#
+DEFS += -DFT8_ADAPTER_MAG_BITS=8 -DFTX_MAG_4BITS=0
+#
+# FT8_DECI_BUFS=8: the decimator hands the main loop sub-blocks of 160 ms
+# through a ring of 8 instead of upstream's 2 (#ifndef there since
+# 25/11/2026). Two leave between 160 and 320 ms, by where in a sub-block
+# the loop stops; the candidate search is one call of 250-300 ms at the
+# slot's edge, and a frame of drawing can come before it - so a sub-block
+# was still lost now and then (3 in 12 slots with the QTH test). Eight are
+# 1.12-1.28 s; 12 kB more of the union.
+#
+DEFS += -DFT8_DECI_BUFS=8
+FT8LIB_DIR      = ../../Ft8Lib
+FT8LIB_SOURCES  = $(FT8LIB_DIR)/ft8/constants.c $(FT8LIB_DIR)/ft8/crc.c
+FT8LIB_SOURCES += $(FT8LIB_DIR)/ft8/decode.c $(FT8LIB_DIR)/ft8/ldpc.c
+FT8LIB_SOURCES += $(FT8LIB_DIR)/ft8/message.c $(FT8LIB_DIR)/ft8/text.c
 # rtc_cal.c the calendar's arithmetic - BCD, days since 1970, the weekday,
 #            "is this date possible" - which upstream keeps apart from its
 #            GD32 rtc_hw.c so a bench can test it; src/rtc_hw.c is this
@@ -514,6 +579,10 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hora_wwv.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hora_comun.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/husos.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_hora.c
+# ui_qth.c  the QTH screen: six boxes, one per character of the locator,
+#            each only its alphabet; its literals #ifndef in ui_qth.h/.c,
+#            this port's in malahit_layout.h (step 57)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_qth.c
 #
 # THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]
 # out of User/main.c by the script the host render uses for the same
@@ -661,6 +730,9 @@ LDFLAGS += -Wl,--wrap=rds_feed
 LDFLAGS += -Wl,--wrap=psk31_process
 # and STANAG's, for the same recorder (step 52)
 LDFLAGS += -Wl,--wrap=stanag_modo_mete
+# And FT8's sideband, lifted to upstream's level before its decimator - this
+# radio's is ~45 dB lower (demod.c, __wrap_ft8_modo_come(), step 57).
+LDFLAGS += -Wl,--wrap=ft8_modo_come
 LDFLAGS += -nostdlib -nostartfiles
 LDFLAGS += -Wl,--print-memory-usage
 # A RAM image is by definition both writable and executable, so the linker's
@@ -677,6 +749,7 @@ OBJECTS += $(BUILD_DIR)/up_encoder2.o   # the second knob; rule further down
 OBJECTS += $(addprefix $(BUILD_DIR)/,$(notdir $(ASM_SOURCES:.S=.o)))
 OBJECTS += $(addprefix $(BUILD_DIR)/up_,$(notdir $(UPSTREAM_SOURCES:.c=.o)))
 OBJECTS += $(addprefix $(BUILD_DIR)/dsp_,$(notdir $(DSP_SOURCES:.c=.o)))
+OBJECTS += $(addprefix $(BUILD_DIR)/ftx_,$(notdir $(FT8LIB_SOURCES:.c=.o)))
 vpath %.c $(sort $(dir $(C_SOURCES)))
 
 .PHONY: all ram flash size clean FORCE
@@ -729,12 +802,21 @@ $(BUILD_DIR)/up_ui_det.o:     CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
 $(BUILD_DIR)/up_ui_kbd.o:     CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
 $(BUILD_DIR)/up_ui_digi.o:    CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
 $(BUILD_DIR)/up_ui_hora.o:    CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
+# The QTH screen keeps its font_ui_18b - the locator's letters, the title,
+# the coordinates, the buttons - and its font_ui_14 goes to the menus' 10
+# (step 57; deepsdr-ui MALAHIT_FONTS_QTH is the same set).
+$(BUILD_DIR)/up_ui_qth.o:     CFLAGS_FONTS = -Dfont_ui_14=font_ui_10
 
 # ale_modo.c asserts that its table fits ft8_shared_ram_t - the waterfall
 # memory upstream lends it - so it includes ft8_shared_ram.h, which reaches
 # Ft8Lib's headers. Only a sizeof: nothing of FT8 is linked (step 51).
 $(BUILD_DIR)/up_ale_modo.o: CFLAGS_EXTRA_UPSTREAM += -I$(UPSTREAM_DIR)/../Ft8Lib
 $(BUILD_DIR)/up_ais_modo.o: CFLAGS_EXTRA_UPSTREAM += -I$(UPSTREAM_DIR)/../Ft8Lib
+# FT8 itself (step 57), and the port's files that hold its union
+# (src/prestamo.c) or read its state (src/digi.c, src/main.c, src/demod.c)
+$(BUILD_DIR)/up_ft8_%.o: CFLAGS_EXTRA_UPSTREAM += -I$(FT8LIB_DIR)
+$(BUILD_DIR)/prestamo.o $(BUILD_DIR)/digi.o $(BUILD_DIR)/main.o $(BUILD_DIR)/demod.o: CFLAGS += -I$(FT8LIB_DIR)
+$(BUILD_DIR)/menus.o $(BUILD_DIR)/qth.o: CFLAGS += -I$(FT8LIB_DIR)
 # ALE's AFC (User/ale_rx.c, 23/11/2026): off by default there, because the
 # DEEPSDR's flash has no room for it; on here.
 $(BUILD_DIR)/up_ale_rx.o: CFLAGS_EXTRA_UPSTREAM += -DALE_CAF=1
@@ -749,6 +831,13 @@ $(BUILD_DIR)/up_%.o: $(UPSTREAM_DIR)/%.c $(BUILD_RULES) | $(BUILD_DIR)
 vpath %.c $(sort $(dir $(DSP_SOURCES)))
 $(BUILD_DIR)/dsp_%.o: %.c $(BUILD_RULES) | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
+
+# ft8_lib, in place (FT8LIB_SOURCES above). Its own -I: it includes its
+# headers as "ft8/decode.h". _DEFAULT_SOURCE: message.c calls stpcpy(),
+# POSIX 2008, which -std=c11 hides in newlib's string.h (upstream gives no
+# -std: GCC's gnu17); the function itself is libc.a's, as strcpy is.
+$(BUILD_DIR)/ftx_%.o: $(FT8LIB_DIR)/ft8/%.c $(BUILD_RULES) | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) -I$(FT8LIB_DIR) -D_DEFAULT_SOURCE $< -o $@
 
 #
 # THE SECOND KNOB'S OBJECT, and it lives DOWN HERE for a reason that

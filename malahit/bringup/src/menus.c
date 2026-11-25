@@ -20,6 +20,8 @@
 #include "banco.h"         /* ../../User - upstream: the memory channels */
 #include "rtc_hw.h"        /* ../../User - upstream's contract, src/rtc_hw.c (step 56) */
 #include "hora.h"          /* src/ - the radio clock (step 56) */
+#include "qth.h"           /* src/ - the locator (step 57) */
+#include "ft8_decoder.h"   /* ../../User - the locator in force, for its cell */
 #include "rtc_hw_port.h"   /* src/ - rtc_hw_pon_anclado() */
 #include "bip.h"           /* ../../User - upstream: the pips */
 #include "board.h"         /* src/ - board_millis(), for the long press */
@@ -76,6 +78,7 @@ static const struct { int mode; uint8_t fam; const char *n; texto_t d; } k_modos
     { RADIO_MODE_PSK31,  FAM_DIG, "PSK31",  T("Charla en fase", "Phase-shift chat") },
     { RADIO_MODE_NAVTEX, FAM_DIG, "NAVTEX", T("Avisos marítimos", "Marine warnings") },
     { RADIO_MODE_DSC,    FAM_DIG, "DSC",    T("Llamada marítima", "Maritime DSC") },
+    { RADIO_MODE_FT8,    FAM_DIG, "FT8",    T("Digital de HF", "HF digital") },
     { RADIO_MODE_JTTY,   FAM_DIG, "JTTY",   T("Teletipo digital", "Digital teletype") },
     { RADIO_MODE_ALE,    FAM_DIG, "ALE",    T("Sondeos de HF", "HF soundings") },
     /* upstream's "Módem naval OTAN" / "NATO naval modem" are 92 and 93 px
@@ -342,7 +345,7 @@ typedef enum {
     AJ_TEMA, AJ_PALETA, AJ_ESTILO, AJ_VOL,
     AJ_SUAV, AJ_PUENTE, AJ_TRAZA,
     AJ_IDIOMA, AJ_BRILLO, AJ_ESTEREO,
-    AJ_HORA
+    AJ_HORA, AJ_QTH
 } aj_id_t;
 
 /*
@@ -384,6 +387,7 @@ static const struct { texto_t nombre; uint8_t pag; uint8_t id; } k_aj[] = {
     { T("Puente", "Bridge"),           AJ_PAG_ESPECTRO, AJ_PUENTE },
     { T("Traza", "Trace"),             AJ_PAG_ESPECTRO, AJ_TRAZA  },
     { T("Hora por radio", "Radio clock"), AJ_PAG_DIGITAL, AJ_HORA },  /* upstream's, step 56 */
+    { T("QTH", "QTH"),                 AJ_PAG_EQUIPO,   AJ_QTH    },   /* upstream's, step 57: before Idioma */
     { T("Idioma", "Language"),         AJ_PAG_EQUIPO,   AJ_IDIOMA },
 };
 #define N_AJ ((uint8_t)(sizeof k_aj / sizeof k_aj[0]))
@@ -486,6 +490,12 @@ static const char *aj_valor(uint8_t id)
     case AJ_TRAZA:  return spectrum_get_heatmap_trace_white() ? tr("Blanca", "White")
                                                               : tr("Del color", "Palette");
     case AJ_IDIOMA: return idioma_nombre();       /* each in its own: "English" */
+    case AJ_QTH: {
+        /* upstream's: the locator as it is, or that there is none - an
+         * empty cell would read as a broken one (its main.c, AJ_QTH) */
+        const char *g = ft8_decoder_get_own_grid();
+        return (g != 0 && g[0] != '\0') ? g : tr("sin poner", "not set");
+    }
     default:        return "";
     }
 }
@@ -633,6 +643,14 @@ static void aj_toca(uint8_t id)
         s_pressed = -1;
         s_open = MENU_HORA;
         hora_abre();
+        radio_act_refresh();
+        return;
+    case AJ_QTH:
+        /* An action too: upstream's opens its screen (src/qth.c). */
+        s_det = DET_NINGUNO;
+        s_pressed = -1;
+        s_open = MENU_QTH;
+        qth_abre();
         radio_act_refresh();
         return;
     case AJ_SQL:   det_open(DET_SQL); return;
@@ -1305,6 +1323,7 @@ menu_t menu_open_id(void) { return s_open; }
 static void dibuja(void)
 {
     if (s_open == MENU_HORA)         { hora_dibuja(); return; }
+    if (s_open == MENU_QTH)          { qth_dibuja(); return; }
     if (s_open == MENU_PASO)         { ui_grid_draw(&s_grid); }
     else if (s_open == MENU_TECLADO) { ui_kbd_draw(&s_kbd); }
     else                             { ui_cfg_draw(&s_cfg); }
@@ -1401,6 +1420,10 @@ int menu_touch_down(uint16_t x, uint16_t y, int nuevo)
         if (nuevo) { s_pressed = 0; hora_toque(x, y, 1U); }
         return 1;
     }
+    if (s_open == MENU_QTH) {
+        if (nuevo) { s_pressed = 0; qth_toque(x, y, 1U); }
+        return 1;
+    }
     if (!nuevo) { mem_largo_poll(); return 1; }
 
     /* Decided on the press and kept to the lift, as upstream's
@@ -1456,6 +1479,7 @@ void menu_touch_up(void)
     s_pressed = -1;
 
     if (s_open == MENU_HORA) { hora_toque(0U, 0U, 0U); return; }
+    if (s_open == MENU_QTH)  { qth_toque(0U, 0U, 0U); return; }
 
     if (s_open == MENU_TECLADO) {
         s_kbd.pressed = -1;
@@ -1532,7 +1556,7 @@ static void elige(int8_t h)
         int8_t  cur = s_cfg.cursor;
 
         aj_toca(id);
-        if (id == AJ_TEMA || id == AJ_IDIOMA || id == AJ_HORA
+        if (id == AJ_TEMA || id == AJ_IDIOMA || id == AJ_HORA || id == AJ_QTH
             || s_det != DET_NINGUNO) { return; }  /* drawn already */
         s_cfg.cel[h].valor = aj_valor(id);
         s_cfg.cursor = cur;
@@ -1592,6 +1616,7 @@ void menu_knob(int32_t d)
     if (s_open == MENU_NONE || d == 0) { return; }
     if (s_open == MENU_TECLADO) { return; }         /* upstream's: no knob */
     if (s_open == MENU_HORA) { hora_knob(d); return; }
+    if (s_open == MENU_QTH)  { qth_knob(d); return; }
     if (s_open == MENU_AJUSTES && s_det != DET_NINGUNO) { det_add(d); return; }
 
     if (s_open == MENU_PASO) {
@@ -1641,6 +1666,7 @@ void menu_knob_press(void)
 
     if (s_open == MENU_NONE || s_open == MENU_TECLADO) { return; }
     if (s_open == MENU_HORA) { hora_knob_press(); return; }
+    if (s_open == MENU_QTH)  { qth_knob_press(); return; }
     if (s_open == MENU_AJUSTES && s_det != DET_NINGUNO) { det_close(); return; }
     c = (s_open == MENU_PASO) ? s_grid.cursor : s_cfg.cursor;
     if (c < 0) { c = cursor_ini(); }

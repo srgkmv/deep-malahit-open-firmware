@@ -1,4 +1,5 @@
 #include <string.h>
+#include <math.h>         /* sqrtf: the FT8 level, __wrap_ft8_modo_come() */
 #include "demod.h"
 #include "am.h"           /* AM_IF_HZ, and am.c for the A/B */
 #include "sai1.h"
@@ -26,6 +27,7 @@
 #include "ident.h"        /* ../../User - demod_ident() */
 #include "ax25.h"         /* ../../User - demod_ax25() */
 #include "ais_modo.h"     /* ../../User - demod_ais() */
+#include "ft8_modo.h"     /* ../../User - demod_ft8() */
 
 /*
  * Upstream's call: 512 frames at 192 kHz in (with rf_doble), 512 stereo
@@ -92,6 +94,7 @@ void demod_init(void)
                             "r"(demod_wefax), "r"(demod_sstv), "r"(demod_hell),
                             "r"(demod_jtty), "r"(demod_ale), "r"(demod_stanag),
                             "r"(demod_ident), "r"(demod_ax25), "r"(demod_ais));
+    __asm__ volatile ("" :: "r"(demod_ft8));
 }
 
 void demod_block(const int16_t *rx, int16_t *tx, uint32_t frames)
@@ -240,6 +243,79 @@ void __wrap_stanag_modo_mete(const float *audio, uint16_t n)
     for (i = 0U; i < n && g_graba_n < GRABA_N; i++) { g_graba[g_graba_n++] = audio[i]; }
 #endif
     __real_stanag_modo_mete(audio, n);
+}
+
+/*
+ * FT8'S SIDEBAND, LIFTED TO UPSTREAM'S LEVEL - step 57, 25/11/2026.
+ *
+ * demod_am.c hands ft8_modo_come() s_ssb_dec, before the receiver's AGC.
+ * On this radio that is small: noise at sigma ~5 LSB (HackRF on the input,
+ * ATT 46), where upstream's benches put it at 1000. Upstream's decimator has
+ * an AGC of its own (ft8_decimator.c: peak to 8000, gain capped at 160 by a
+ * floor of 50) and RESETS it to unity at every slot edge; its release takes
+ * 1.67 s per e-fold, so from 8000 down to this radio's ~19 is ten seconds -
+ * two thirds of every slot spent 10 to 44 dB low, on the bottom step of the
+ * 4-bit spectrogram's fixed ladder (-35 dB, 3.4 dB a step). Measured on the
+ * radio: the AGC's peak read 4717, 752, 120, 19 at 3 s intervals after an
+ * edge. On the host (deepsdr-ui out/ft8radio, five messages at -8 dB): 18
+ * of 20 at sigma 5, none at 2.5, all from 10 up - this radio sat on the
+ * cliff, and an attenuator step or a quiet band would push it off.
+ *
+ * So the port lifts it, without touching upstream: the call is wrapped
+ * (--wrap=ft8_modo_come, as rds_feed is) and the block multiplied by a gain
+ * that brings its RMS to FT8_SIGMA_OBJ, upstream's bench level - there its
+ * reset costs nothing (sim/ft8_banda.c) and int16 still has 30 dB of room
+ * over the noise for a strong station. The gain follows the mean square
+ * slowly (30 s), not per slot: inside a slot it barely moves, so the
+ * decoder sees what upstream's sees; an attenuator change is followed in
+ * two slots. Primed from the first block when FT8 starts. 1 to 4096.
+ */
+#define FT8_SIGMA_OBJ  1000.0f
+#define FT8_G_MAX      4096.0f
+#define FT8_NIVEL_A    (1.0f / (12000.0f * 30.0f))
+static float   s_ft8_pot;               /* mean square of what comes in */
+static float   s_ft8_g = 1.0f;
+static uint8_t s_ft8_cebado;
+
+void __real_ft8_modo_come(const float *muestras, uint16_t n);
+void __wrap_ft8_modo_come(const float *muestras, uint16_t n)
+{
+    float    b[64];
+    uint16_t hecho = 0U, k, i;
+
+    if (!ft8_modo_activo() || muestras == 0) { return; }
+    while (hecho < n) {
+        k = (uint16_t)(n - hecho);
+        if (k > 64U) { k = 64U; }
+        if (!s_ft8_cebado) {
+            float acc = 0.0f;
+
+            for (i = 0U; i < k; i++) { acc += muestras[hecho + i] * muestras[hecho + i]; }
+            s_ft8_pot = acc / (float)k;
+            s_ft8_cebado = 1U;
+        }
+        for (i = 0U; i < k; i++) {
+            float x = muestras[hecho + i];
+
+            s_ft8_pot += (x * x - s_ft8_pot) * FT8_NIVEL_A;
+            b[i] = x * s_ft8_g;
+        }
+        {
+            float g = (s_ft8_pot > 0.0f) ? FT8_SIGMA_OBJ / sqrtf(s_ft8_pot) : FT8_G_MAX;
+
+            if (g > FT8_G_MAX) { g = FT8_G_MAX; }
+            if (g < 1.0f)      { g = 1.0f; }
+            s_ft8_g = g;
+        }
+        __real_ft8_modo_come(b, k);
+        hecho = (uint16_t)(hecho + k);
+    }
+}
+
+void demod_ft8_nivel(float *sigma, float *ganancia)
+{
+    if (sigma)    { *sigma = sqrtf(s_ft8_pot); }
+    if (ganancia) { *ganancia = s_ft8_g; }
 }
 
 /*
@@ -503,6 +579,22 @@ SWD_ENTRY void demod_ais(int on)
     if (on && !ok) {
         console_printf("  *** AIS did not start: the borrowed RAM is too small or taken (src/prestamo.c) ***\n");
     }
+}
+
+/*
+ * FT8 on or off - step 57. Upstream's mode change: ft8_modo_start() with the
+ * rate of the sideband it is fed (DEMOD_DEC_FS_HZ, 12 kHz - demod_am.c hands
+ * it s_ssb_dec), ft8_modo_stop() giving the union back. Its memory is
+ * upstream's union (src/prestamo.c), sized by it, so there is nothing to
+ * refuse: start() takes the loan and cannot fail.
+ */
+SWD_ENTRY void demod_ft8(int on)
+{
+    if ((uint8_t)(on != 0) == ft8_modo_activo()) { return; }
+    demod_quieto(1);
+    s_ft8_cebado = 0U;                  /* the level primed again (above) */
+    if (on) { ft8_modo_start(DEMOD_DEC_FS_HZ); } else { ft8_modo_stop(); }
+    demod_quieto(0);
 }
 
 /*

@@ -177,6 +177,23 @@ and each is recorded here so the divergence is never a surprise:
   disassembly identical on the host and for the Cortex-M4 (2417
   lines).** `deepsdr-ui/gfx2/` copies synced.
 
+- Step 57, 25/11/2026 (FT8 and the QTH screen), four more, each a
+  constant made configurable with upstream's value as the default:
+  `User/ui_digi.c` - FT8's columns as `UDG_COLS_FT8`, as JTTY's, ALE's,
+  IDENT's and AIS's were (steps 50-55); `User/ft8_waterfall_adapter.h` -
+  `FT8_ADAPTER_FREQ_OSR` under `#ifndef` (the port builds with 2);
+  `User/ft8_shared_ram.h`, `User/ft8_decimator.c` - the decimator's two
+  hand-off buffers as `FT8_DECI_BUFS` (the port builds with 8): the ring's
+  advance `(w + 1) % N` where it was `1 - w`, the same for N = 2 but 4
+  bytes more of Cortex-M4 code; `User/ui_qth.h`, `User/ui_qth.c` - the QTH
+  screen's geometry and its literals under `#ifndef`, `800` as `UIQ_W`.
+  **Verified: the DEEPSDR's `ui_qth.o` (code, relocations, data) identical
+  and its `qth.ppm` identical; its FT8 panels (`digi0`, `digi1`,
+  `digi_ft8`, `ft8_panel`) identical to the byte; the firmware builds and
+  fits; `ft8ranuras`, `ft8banda`, `ft8panel`, `prestamochk`, `qthreal`
+  green.** (Steps 50-56's upstream edits are recorded in PORTING.md and
+  in their commits, not yet here.)
+
 - `deepsdr-ui/tools/gen_temas.py` — 21/11/2026, for the port's English:
   it read k_temas[]'s `T("es", "en")` and kept only the Spanish; it now
   emits the English name and description too, as two fields appended at

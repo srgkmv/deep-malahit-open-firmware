@@ -266,11 +266,20 @@ out/malahit_ui_digi.o: ../User/ui_digi.c ../User/ui_digi.h $(MALAHIT_HDRS)
 	@mkdir -p out
 	$(CC) $(CFLAGS) $(GFX2) $(MALAHIT_LAYOUT) $(MALAHIT_FONTS_TOP) -c -o $@ $<
 
+# La pantalla del QTH (paso 57, 25/11/2026): su font_ui_18b SE QUEDA -las
+# letras del localizador, el titulo, las coordenadas y los botones- y su
+# font_ui_14 pasa a la de 10. Las mismas caras que le da a ui_qth.o
+# malahit/bringup/reglas.mk.
+MALAHIT_FONTS_QTH = -include font_ui_10.h -Dfont_ui_14=font_ui_10
+out/malahit_ui_qth.o: ../User/ui_qth.c ../User/ui_qth.h $(MALAHIT_HDRS)
+	@mkdir -p out
+	$(CC) $(CFLAGS) $(GFX2) $(MALAHIT_LAYOUT) $(MALAHIT_FONTS_QTH) -c -o $@ $<
+
 out/malahit_menus: out/malahit_menus.o sim/lcd_sim.c ../User/gfx.c ../User/spectrum.c \
                    gfx2/gfx2.c gfx2/spec_chrome.c gfx2/ui_act.c \
                    out/malahit_top.o out/malahit_fonts.o out/malahit_ui_cfg.o \
                    out/malahit_ui_grid.o out/malahit_ui_det.o out/malahit_ui_kbd.o \
-                   out/malahit_ui_digi.o \
+                   out/malahit_ui_digi.o out/malahit_ui_qth.o \
                    $(MALAHIT_HDRS)
 	@mkdir -p out
 	$(CC) $(CFLAGS) $(GFX2) $(MALAHIT_LAYOUT) $(MALAHIT_FONTS_COMMON) \

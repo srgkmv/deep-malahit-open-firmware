@@ -6364,3 +6364,25 @@ comprueba: wfmrev wfmcal
 ifneq ($(wildcard vendor/gfx.c),)
 comprueba: infoancho
 endif
+
+# FT8 COMO LO LLEVA LA RADIO, CONTRA CUALQUIER FICHERO (25/11/2026, port del
+# Malahit, paso 57). Ver sim/ft8_radio.c. Pide un fichero: fuera de
+# "comprueba". El fichero, de malahit/tools/hackrf_gen.py ft8 --audio.
+out/ft8radio: sim/ft8_radio.c \
+              $(FIRMWARE)/User/ft8_modo.c \
+              $(FIRMWARE)/User/ft8_decimator.c \
+              $(FIRMWARE)/User/ft8_waterfall_adapter.c \
+              $(FIRMWARE)/User/ft8_fft.c \
+              $(FIRMWARE)/User/ft8_tablas.c \
+              $(FIRMWARE)/User/ft8_decoder.c \
+              $(FIRMWARE)/User/ft8_snr.c \
+              $(FIRMWARE)/User/dxcc.c \
+              $(FIRMWARE)/Ft8Lib/ft8/decode.c \
+              $(FIRMWARE)/Ft8Lib/ft8/ldpc.c \
+              $(FIRMWARE)/Ft8Lib/ft8/message.c \
+              $(FIRMWARE)/Ft8Lib/ft8/crc.c \
+              $(FIRMWARE)/Ft8Lib/ft8/constants.c \
+              $(FIRMWARE)/Ft8Lib/ft8/text.c \
+              sim/waterfall_prestamo.c
+	@mkdir -p out
+	$(CC) $(CFLAGS) $(FT8RADIO_FLAGS) -I $(FIRMWARE)/User -I $(FIRMWARE)/Ft8Lib -Ihostinc -Isim -o $@ $^ $(LDLIBS) -Wl,--wrap=ft8_decoder_slot_paso

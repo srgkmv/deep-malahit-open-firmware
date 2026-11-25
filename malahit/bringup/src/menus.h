@@ -34,7 +34,8 @@ typedef enum {
     MENU_AJUSTES,
     MENU_TECLADO,       /* the frequency keypad: no button of its own */
     MENU_MEM,           /* the memory channels: the MEM chip in the header */
-    MENU_HORA           /* the radio clock, Settings > Digital (src/hora.c, step 56) */
+    MENU_HORA,          /* the radio clock, Settings > Digital (src/hora.c, step 56) */
+    MENU_QTH            /* the locator, Settings > Device (src/qth.c, step 57) */
 } menu_t;
 
 /* Which screen is up; MENU_NONE when the spectrum is showing. The main
@@ -129,7 +130,8 @@ uint32_t    menu_nr_strength(void);
 #define RADIO_MODE_APRS     20          /* DEMOD_MODE_NFM + ax25.c, 1200 Bd */
 #define RADIO_MODE_PKT300   21          /* DEMOD_MODE_LSB + ax25.c, 300 Bd */
 #define RADIO_MODE_AIS      22          /* DEMOD_MODE_NFM + ais_modo.c */
-#define RADIO_MODE_LAST     RADIO_MODE_AIS
+#define RADIO_MODE_FT8      23          /* DEMOD_MODE_USB + ft8_modo.c */
+#define RADIO_MODE_LAST     RADIO_MODE_FT8
 void        radio_mode_set(int mode);
 int         radio_mode_get(void);
 const char *radio_mode_name(int mode);

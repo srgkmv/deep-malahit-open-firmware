@@ -16,6 +16,7 @@ Test signals for the decoders, sent by a HackRF into the radio - 22/11/2026.
     tools/hackrf_gen.py ax25 --fm 3000 --out a.iq            (APRS, NFM)
     tools/hackrf_gen.py ax25 --hf --lsb --snr 15 --out p.iq  (PKT300, LSB)
     tools/hackrf_gen.py carrier --seconds 10 --out c.iq
+    tools/hackrf_gen.py ft8 --slots 4 --out f.iq             (FT8, from the dial)
     hackrf_transfer -t f.iq -f <carrier Hz - 200000> -s 2000000 -a 0 -x 47
 
 THE BENCH (PORTING.md step 42): HackRF -> 10 dB -> 40 dB -> the radio's
@@ -931,6 +932,200 @@ def carrier_baseband(a):
     return np.ones(int(a.seconds * FS_LO), dtype=np.complex128), 'carrier'
 
 
+# FT8 (WSJT-X 2.x, "The FT4 and FT8 Communication Protocols", QEX July/August
+# 2020, and WSJT-X's packjt77.f90 / genft8.f90 / gen_ft8wave.f90), written from
+# the protocol's description, not from ft8_lib's packer or upstream's
+# sim/ft8_gen.h (which uses ft8_lib's ftx_message_encode()):
+#   - 77 bits, type i3=1 "standard": c28 call1, r1, c28 call2, r1, R1, g15,
+#     i3 - the calls six characters with the digit third (" K1ABC"), after
+#     the special tokens and the 22-bit hashes (NTOKENS + MAX22 + n), the
+#     grid j1*1800 + j2*100 + j3*10 + j4, a report MAXGRID4 + 35 + dB;
+#   - a CRC-14 (poly 0x2757 and the leading 1) over the 77 bits and 5 zeros;
+#   - the (174,91) LDPC: the 91 bits then 83 parity bits, each the parity of
+#     a row of the GENERATOR matrix and the 91 bits. The matrix is the
+#     protocol's (WSJT-X's ldpc_174_91_c_generator.f90); it is read here
+#     from Ft8Lib/ft8/constants.c, where the decoder does NOT use it - ft8_lib
+#     decodes with the parity CHECKS (kFTX_LDPC_Nm), and every codeword made
+#     here is checked against those before it is sent;
+#   - 3 bits a symbol, Gray coded (0 1 3 2 5 6 4 7), 58 data symbols, the
+#     Costas array 3 1 4 0 6 5 2 at symbols 0, 36 and 72: 79 symbols of
+#     0.16 s, tones 6.25 Hz apart, GFSK with BT 2.0, the first and last
+#     symbols ramped over an eighth of a symbol;
+#   - sent from 0.5 s after the 15 s slot's edge (DT 0 in WSJT-X).
+FT8_COSTAS = [3, 1, 4, 0, 6, 5, 2]
+FT8_GRAY = [0, 1, 3, 2, 5, 6, 4, 7]
+FT8_NTOKENS = 2063592
+FT8_MAX22 = 4194304
+FT8_MAXGRID4 = 32400
+FT8_A1 = ' 0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+FT8_A2 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+FT8_A3 = '0123456789'
+FT8_A4 = ' ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+
+
+def ft8_c28(w):
+    """A callsign, or one of the tokens, as its 28 bits."""
+    if w == 'DE':
+        return 0
+    if w == 'QRZ':
+        return 1
+    if w == 'CQ':
+        return 2
+    c = w
+    if len(c) >= 3 and c[2].isdigit():
+        pass
+    elif len(c) >= 2 and c[1].isdigit():
+        c = ' ' + c
+    c = (c + '      ')[:6]
+    if (len(w) > 6 or not c[2].isdigit() or any(ch not in FT8_A4 for ch in c[3:])
+            or c[0] not in FT8_A1 or c[1] not in FT8_A2):
+        raise SystemExit(f'ft8: "{w}" is not a standard callsign (the digit second or third, '
+                         'at most three letters after it) - this generator packs only those')
+    n = FT8_A1.index(c[0])
+    n = n * 36 + FT8_A2.index(c[1])
+    n = n * 10 + FT8_A3.index(c[2])
+    n = n * 27 + FT8_A4.index(c[3])
+    n = n * 27 + FT8_A4.index(c[4])
+    n = n * 27 + FT8_A4.index(c[5])
+    return FT8_NTOKENS + FT8_MAX22 + n
+
+
+def ft8_pack77(text):
+    """A standard message, 'CALL1 CALL2 X' or 'CQ CALL2 GRID', as 77 bits
+    (a list of 0/1, the first sent first)."""
+    w = text.upper().split()
+    if len(w) == 2:
+        w.append('')
+    if len(w) != 3:
+        raise SystemExit(f'ft8: "{text}": three words, the third a grid, a report, RRR, RR73 or 73')
+    n28a, n28b = ft8_c28(w[0]), ft8_c28(w[1])
+    g, ir = w[2], 0
+    if g == '':
+        g15 = FT8_MAXGRID4 + 1
+    elif g == 'RRR':
+        g15 = FT8_MAXGRID4 + 2
+    elif g == 'RR73':
+        g15 = FT8_MAXGRID4 + 3
+    elif g == '73':
+        g15 = FT8_MAXGRID4 + 4
+    elif len(g) == 4 and 'A' <= g[0] <= 'R' and 'A' <= g[1] <= 'R' and g[2:].isdigit():
+        g15 = ((ord(g[0]) - 65) * 18 + (ord(g[1]) - 65)) * 100 + int(g[2:])
+    else:
+        if g.startswith('R') and len(g) > 1:
+            ir, g = 1, g[1:]
+        r = int(g)
+        if -50 <= r <= -31:
+            r += 101
+        g15 = FT8_MAXGRID4 + r + 35
+    bits = []
+    for v, n in ((n28a, 28), (0, 1), (n28b, 28), (0, 1), (ir, 1), (g15, 15), (1, 3)):
+        bits += [(v >> (n - 1 - i)) & 1 for i in range(n)]
+    return bits
+
+
+def ft8_crc14(bits):
+    """CRC-14 over the bits given, MSB first, init 0 - poly x^14 + 0x2757."""
+    r = 0
+    for b in bits:
+        top = ((r >> 13) & 1) ^ b
+        r = (r << 1) & 0x3FFF
+        if top:
+            r ^= 0x2757
+    return [(r >> (13 - i)) & 1 for i in range(14)]
+
+
+def ft8_tables():
+    """The generator rows and the parity checks out of Ft8Lib/ft8/constants.c."""
+    import os
+    import re
+    here = os.path.dirname(os.path.abspath(__file__))
+    src = open(os.path.join(here, '..', '..', 'Ft8Lib', 'ft8', 'constants.c')).read()
+
+    def block(name):
+        i = src.index(name)
+        return src[src.index('{', i):src.index('};', i)]
+    gen = []
+    for row in re.findall(r'\{([^{}]*)\}', block('kFTX_LDPC_generator')):
+        by = [int(v, 16) for v in re.findall(r'0x[0-9a-fA-F]+', row)]
+        gen.append([(by[j // 8] >> (7 - j % 8)) & 1 for j in range(91)])
+    nm = []
+    for row in re.findall(r'\{([^{}]*)\}', block('kFTX_LDPC_Nm')):
+        nm.append([int(v) for v in re.findall(r'\d+', row) if int(v) > 0])
+    assert len(gen) == 83 and len(nm) == 83, 'constants.c: not the tables expected'
+    return gen, nm
+
+
+def ft8_tones(text, tabs):
+    gen, nm = tabs
+    a91 = ft8_pack77(text)
+    a91 = a91 + ft8_crc14(a91 + [0] * 5)
+    cw = a91 + [sum(g * m for g, m in zip(row, a91)) & 1 for row in gen]
+    for chk in nm:                       # 1-based bit numbers
+        assert sum(cw[k - 1] for k in chk) % 2 == 0, 'ft8: a codeword fails a parity check'
+    data = [FT8_GRAY[cw[3 * i] * 4 + cw[3 * i + 1] * 2 + cw[3 * i + 2]] for i in range(58)]
+    return FT8_COSTAS + data[:29] + FT8_COSTAS + data[29:] + FT8_COSTAS
+
+
+def ft8_wave(tones, f0):
+    """gen_ft8wave's: the GFSK frequency of 79 symbols at FS_LO, complex,
+    tone 0 at f0 Hz, unit amplitude, ramped at both ends."""
+    from scipy.special import erf
+    sps = int(FS_LO * 0.16)              # 7680
+    t = (np.arange(3 * sps) - 1.5 * sps) / sps
+    c = np.pi * np.sqrt(2.0 / np.log(2.0))
+    pulse = 0.5 * (erf(c * 2.0 * (t + 0.5)) - erf(c * 2.0 * (t - 0.5)))
+    n = len(tones)
+    df = np.zeros((n + 2) * sps)
+    for j, tn in enumerate(tones):
+        df[j * sps:j * sps + 3 * sps] += tn * pulse
+    df[0:2 * sps] += tones[0] * pulse[sps:3 * sps]
+    df[n * sps:(n + 2) * sps] += tones[-1] * pulse[0:2 * sps]
+    f = f0 + 6.25 * df[sps:sps + n * sps]
+    x = np.exp(1j * 2 * np.pi * np.cumsum(f) / FS_LO)
+    r = sps // 8
+    x[:r] *= (1 - np.cos(np.pi * np.arange(r) / r)) / 2
+    x[-r:] *= (1 + np.cos(np.pi * np.arange(r) / r)) / 2
+    return x
+
+
+def ft8_slots(a):
+    """--slots slots of 15 s, each with every --msg at its --hz, from 0.5 s +
+    --dt after the edge; --lead s before the first edge. The dial (USB) is
+    at 0 Hz. Noise from 200 to 3800 Hz with the SNR of WSJT-X: the signal
+    against the noise in 2500 Hz, one figure per message (--snr)."""
+    import datetime as dt
+    tabs = ft8_tables()
+    msgs = a.msg or ['CQ YL2ABC KO26', 'R1ABC YL2ABC -12', 'YL2ABC OH2XYZ RR73']
+    hz = a.hz or [600.0 + 500.0 * i for i in range(len(msgs))]
+    snr = a.snr if a.snr else [-5.0]
+    if len(hz) < len(msgs) or (len(snr) != 1 and len(snr) < len(msgs)):
+        raise SystemExit('ft8: one --hz (and one --snr, or a single one) per --msg')
+    n = int((a.lead + 15.0 * a.slots) * FS_LO)
+    x = np.zeros(n, dtype=np.complex128)
+    for s_ in range(a.slots):
+        t0 = int((a.lead + 15.0 * s_ + 0.5 + a.dt) * FS_LO)
+        for i, m in enumerate(msgs):
+            if a.alternate and (s_ + i) % 2:
+                continue
+            w = ft8_wave(ft8_tones(m, tabs), hz[i])
+            amp = np.sqrt(10 ** ((snr[i] if len(snr) > 1 else snr[0]) / 10.0))
+            x[t0:t0 + len(w)] += amp * w[:max(0, n - t0)]
+    if not a.clean:
+        rng = np.random.default_rng(a.seed)
+        sigma2 = FS_LO / 2500.0          # noise power 1 in 2500 Hz
+        w = np.sqrt(sigma2 / 2) * (rng.standard_normal(n) + 1j * rng.standard_normal(n))
+        W = np.fft.fft(w)
+        f = np.fft.fftfreq(n, 1.0 / FS_LO)
+        W[(f < 200.0) | (f > 3800.0)] = 0
+        x = x + np.fft.ifft(W)
+    now = dt.datetime.now(dt.timezone.utc)
+    edge = now.replace(microsecond=0) + dt.timedelta(seconds=30)
+    edge += dt.timedelta(seconds=(15 - edge.second % 15) % 15)
+    what = ', '.join(f'"{m}" {hz[i]:.0f} Hz' for i, m in enumerate(msgs))
+    what = f'FT8 {a.slots} slots: {what}; SNR {snr} dB in 2500 Hz'
+    return x, edge, what
+
+
 def add_noise(x, a):
     """Complex white noise, `snr` dB below the carrier in 500 Hz, only
     within +/- noise_bw/2 of it. The carrier's power is 1."""
@@ -1065,6 +1260,36 @@ def write_am_long(env, a, what):
             ph0 = (ph0 + w * n_out) % (2 * np.pi)
     print(f'{a.out}: {len(env) / FS_LO:.1f} s at {a.rate} Hz, {what}, '
           f'offset {a.offset:.0f} Hz')
+
+
+def write_iq_long(x, a, what):
+    """A long complex baseband (at FS_LO) straight to int8 I/Q, in pieces, as
+    write_am_long(): interpolated linearly to the HackRF's rate (a multiple
+    of 48 kHz; the content is a few kHz wide, so the images at multiples of
+    48 kHz fall in the sinc's nulls) and moved to --offset with a
+    phase-continuous oscillator. Full scale is the file's peak."""
+    up = a.rate // FS_LO
+    assert up * FS_LO == a.rate, 'the rate must be a multiple of 48 kHz'
+    scale = 110.0 / float(np.max(np.abs(np.concatenate([x.real, x.imag]))))
+    w = 2 * np.pi * a.offset / a.rate
+    chunk = FS_LO
+    ph0 = 0.0
+    with open(a.out, 'wb') as f:
+        for i in range(0, len(x), chunk):
+            seg = x[i:i + chunk + 1]
+            if len(seg) < 2:
+                break
+            n_out = (len(seg) - 1) * up
+            xi = np.arange(n_out) / up
+            k = np.arange(len(seg))
+            y = (np.interp(xi, k, seg.real) + 1j * np.interp(xi, k, seg.imag)) * scale
+            y = y * np.exp(1j * (ph0 + w * np.arange(n_out)))
+            iq = np.empty(2 * n_out, dtype=np.int8)
+            iq[0::2] = np.clip(np.round(y.real), -127, 127)
+            iq[1::2] = np.clip(np.round(y.imag), -127, 127)
+            iq.tofile(f)
+            ph0 = (ph0 + w * n_out) % (2 * np.pi)
+    print(f'{a.out}: {len(x) / FS_LO:.1f} s at {a.rate} Hz, {what}, offset {a.offset:.0f} Hz')
 
 
 RDS_OFS = {'A': 0x0FC, 'B': 0x198, 'C': 0x168, "C'": 0x350, 'D': 0x1B4}
@@ -1379,6 +1604,29 @@ def main():
                         "upstream's WFM takes an unswept carrier for the LO's leakage")
     p.set_defaults(build=None)
 
+    p = sub.add_parser('ft8', help='FT8 slots, the dial at 0 Hz (USB): --msg/--hz/--snr each')
+    p.add_argument('--out', required=True)
+    p.add_argument('--offset', type=float, default=200e3)
+    p.add_argument('--rate', type=int, default=2_016_000,
+                   help='a multiple of 48 kHz, 2 MHz or more for the HackRF (default 2.016 MHz): '
+                        'minutes long, written in pieces')
+    p.add_argument('--msg', action='append', help="'CQ YL2ABC KO26', 'R1ABC YL2ABC -12', ... (repeat)")
+    p.add_argument('--hz', type=float, action='append', help='its audio frequency, tone 0 (repeat)')
+    p.add_argument('--snr', type=float, action='append',
+                   help='dB in 2500 Hz, WSJT-X\'s (one, or one per --msg; default -5)')
+    p.add_argument('--slots', type=int, default=4)
+    p.add_argument('--alternate', action='store_true',
+                   help='each message every other slot, as stations work')
+    p.add_argument('--dt', type=float, default=0.0, help='s late against the slot (DT)')
+    p.add_argument('--lead', type=float, default=5.0, help='s before the first slot edge')
+    p.add_argument('--clean', action='store_true', help='no noise')
+    p.add_argument('--seed', type=int, default=1)
+    p.add_argument('--audio', action='store_true',
+                   help='write the 12 kHz f32 audio of the USB branch, not I/Q')
+    p.add_argument('--level', type=float, default=1.0,
+                   help='--audio: multiply by this (the radio\'s scale)')
+    p.set_defaults(build=None)
+
     p = sub.add_parser('audio', help='any 12 kHz f32 audio file, sent as USB')
     common(p)
     p.add_argument('--in', dest='input', required=True, help='the f32 file at 12 kHz')
@@ -1387,6 +1635,22 @@ def main():
     a = ap.parse_args()
     if a.mode == 'rds':
         rds_long(a)
+        return
+    if a.mode == 'ft8':
+        x, edge, what = ft8_slots(a)
+        if a.audio:
+            r = resample_poly(np.real(x), 1, 4).astype(np.float32) * np.float32(a.level)
+            r.tofile(a.out)
+            print(f'{a.out}: {len(r) / 12000:.1f} s of audio at 12 kHz, {what}; '
+                  f'the first slot edge {a.lead:.1f} s in')
+        else:
+            if a.rate % FS_LO:
+                a.snr = None
+                write_iq(x, a, what)        # resample_poly, the whole file in memory
+            else:
+                write_iq_long(x, a, what)
+            print(f'start the transfer {a.lead:.1f} s before a slot edge (:00 :15 :30 :45), '
+                  f'e.g. {(edge).strftime("%H:%M:%S")} UTC')
         return
     if a.mode == 'wwv':
         env, t0, what = wwv_envelope(a)

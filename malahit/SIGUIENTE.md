@@ -4,6 +4,47 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
+## START HERE — 25/11/2026, late: step 57 (FT8 and the QTH screen) IN FLASH, NOT committed
+
+**In flash: the working tree's code** (step 57) - `build_flash/bringup.bin`,
+439 160 bytes, written with `swd.sh flashsrst` and verified; the owner's
+press started it (FT8 and the QTH from the FRAM). `PORTING.md` 57: upstream's
+FT8 with ft8_lib, its union as the borrowed RAM (now in AXI), the screen,
+and four things this radio needed - the level lifted before FT8
+(`__wrap_ft8_modo_come()`), FREQ_OSR=2, a byte a cell, eight hand-off
+buffers - plus upstream's QTH screen (src/qth.c, Settings > Device, FRAM v4
+bytes 39-44). Upstream edits, all `#ifndef` with upstream's default
+(PROCEDENCIA.md): ui_digi.c, ft8_waterfall_adapter.h, ft8_shared_ram.h +
+ft8_decimator.c, ui_qth.h/.c. Commits ededcc2 + f5502b9 (step 56) still NOT
+pushed; nothing of step 57 committed.
+
+**The radio's state**: 14.074 MHz FT8, ATT 46, preamp off, the HackRF on
+the input through 40 dB. **QTH = JN58td, a TEST value** set over SWD (the
+km column's check) - the owner is to set their own.
+
+**The owner's plan (25/11/2026)**: the outdoor HF antenna goes on only at
+the END of the port; then every decoder gets a live pass. Until then,
+HackRF benches. For that pass, FT8 wants: stations per slot against what
+WSJT-X would show, and whether TIME_OSR=2 is worth its cost (PORTING 57);
+and the 51 ppm the HackRF and the radio differ by today, against a known
+station.
+
+**Next, the owner's order**: WSPR, HFDL.
+
+**The bench for FT8**: `tools/hackrf_gen.py ft8 --slots 4 --snr -12 --msg
+'CQ YL2ABC KO26' --hz 500 ... --out f.iq` (standard messages only: the
+calls with the digit 2nd/3rd, a grid, a report, RRR, RR73, 73; one --hz per
+--msg, --snr one or one each), then a start 5 s before a slot edge:
+`hackrf_transfer -t f.iq -f <dial - 200000 + 719> -s 2016000 -a 0 -x 47`
+(719: today's offset; the file is at 2.016 MHz). `--audio --level 913` writes
+the 12 kHz file for `deepsdr-ui/out/ft8radio f.f32 5 1 [tick_ms]
+[ms_per_candidate]` (build it with FT8RADIO_FLAGS="-DFT8_ADAPTER_FREQ_OSR=2
+-DFT8_ADAPTER_MAG_BITS=8 -DFTX_MAG_4BITS=0" to be the radio). Console: `ft8:
+<fields>` per decode, `ft8 slot N: candidates, decoded, ms, lost, short, DT,
+dB, in <sigma> LSB x <gain>` at each slot's second 5. Over SWD:
+`s_polls_max_us` (worst decoders' pass), `qth_knob N` / `qth_knob_press`
+on the QTH screen.
+
 ## START HERE — 25/11/2026, evening: step 56 (the clock, by hand and by radio) IN FLASH, committed with it
 
 **In flash: this commit's code** (step 56, on top of ededcc2, ui_hora.c's #ifndef) -
@@ -16,8 +57,10 @@ RDS trusted only for a plainly wrong clock. WWV from the HackRF set the
 RTC to -0.04 s of the PC; the clock is now "On the minute" at 20:48:00
 (-0.18 s, the SWD tap), zone Helsinki +2:00.
 
-**The radio's state**: 90.7 MHz WFM (LR-1), ATT 46, preamp off, antenna
-on the input (the HackRF disconnected).
+**The radio's state**: 90.7 MHz WFM (LR-1), ATT 46, preamp off. **The
+HackRF is back on the input** through the 40 dB pad (the owner, end of
+25/11/2026) - the HackRF benches before used ATT 59 and the preamp on.
+Commits ededcc2 + f5502b9 are NOT pushed.
 
 **Open**: (1) a HardFault at 103.1 MHz during an SWD-driven scan, inside
 an interrupt, origin lost - fault.c now keeps the first record; (2) FM on

@@ -73,6 +73,8 @@
 #include "ident.h"        /* ../../User - upstream: IDENT, what signal is this */
 #include "ax25.h"         /* ../../User - upstream: AX.25, APRS and PKT300 */
 #include "ais_modo.h"     /* ../../User - upstream: AIS, the ships */
+#include "ft8_modo.h"     /* ../../User - upstream: FT8 */
+#include "ft8_decoder.h"  /* ../../User - the QTH it measures distances from */
 #include "rtty_scope.h"   /* ../../User - its spectrum, for navtex_espectro() */
 #include "config.h"       /* ../../User - CONFIG_RTTY_SHIFT_MIN/MAX_HZ */
 #include "nb.h"           /* ../../User - upstream: the blanker, cw_report() */
@@ -5959,7 +5961,8 @@ static int settings_same(const settings_t *a, const settings_t *b)
         && a->rtty_shift == b->rtty_shift && a->rtty_baud == b->rtty_baud
         && a->rtty_auto == b->rtty_auto && a->cw_aprende == b->cw_aprende
         && a->wfx_lpm == b->wfx_lpm
-        && a->huso == b->huso && a->huso_medido == b->huso_medido;
+        && a->huso == b->huso && a->huso_medido == b->huso_medido
+        && memcmp(a->qth, b->qth, sizeof a->qth) == 0;
 }
 
 static void settings_now(settings_t *out)
@@ -5979,6 +5982,16 @@ static void settings_now(settings_t *out)
     out->wfx_lpm    = (uint8_t)(wefax_get_lpm_idx() + 1U);
     out->huso       = hora_huso_byte();
     out->huso_medido = hora_medido_byte();
+    {
+        /* the locator in force (src/qth.c), zeros past its end or none */
+        const char *g = ft8_decoder_get_own_grid();
+        uint8_t i, fin = 0U;
+
+        for (i = 0U; i < (uint8_t)sizeof out->qth; i++) {
+            if (!fin && g[i] == '\0') { fin = 1U; }
+            out->qth[i] = fin ? '\0' : g[i];
+        }
+    }
     out->has_mode = 1U;
     menu_ajustes_get(out);              /* the settings screen's values */
 }
@@ -6329,7 +6342,8 @@ static int modo_demod(int mode)
         || mode == RADIO_MODE_DSC || mode == RADIO_MODE_WEFAX
         || mode == RADIO_MODE_SSTV || mode == RADIO_MODE_HELL
         || mode == RADIO_MODE_JTTY || mode == RADIO_MODE_ALE
-        || mode == RADIO_MODE_STANAG || mode == RADIO_MODE_IDENT) { return (int)DEMOD_MODE_USB; }
+        || mode == RADIO_MODE_STANAG || mode == RADIO_MODE_IDENT
+        || mode == RADIO_MODE_FT8) { return (int)DEMOD_MODE_USB; }
     if (mode == RADIO_MODE_SSTV_FM || mode == RADIO_MODE_APRS
         || mode == RADIO_MODE_AIS)                          { return (int)DEMOD_MODE_NFM; }
     if (mode == RADIO_MODE_RTTY_L || mode == RADIO_MODE_PKT300) { return (int)DEMOD_MODE_LSB; }
@@ -6362,17 +6376,18 @@ static void texto_modo(int mode)
     uint8_t ax = (uint8_t)((mode == RADIO_MODE_APRS) ? 1U
                          : (mode == RADIO_MODE_PKT300) ? 2U : 0U);
     uint8_t as = (uint8_t)(mode == RADIO_MODE_AIS);
+    uint8_t f8 = (uint8_t)(mode == RADIO_MODE_FT8);
     uint8_t era_cw = cw_get_enabled(), era_rv = s_rtty_var, era_pk = psk31_activo();
     uint8_t era_nx = navtex_activo(), era_ds = dsc_activo(), era_fx = wefax_activo();
     uint8_t era_sv = sstv_activo(), era_hl = hell_activo(), era_jt = jtty_modo_activo();
     uint8_t era_al = ale_modo_activo(), era_sg = stanag_modo_activo();
     uint8_t era_id = ident_modo_activo(), era_ax = s_ax25_var;
-    uint8_t era_as = ais_modo_activo();
+    uint8_t era_as = ais_modo_activo(), era_f8 = ft8_modo_activo();
 
     if (cw == era_cw && rv == era_rv && pk == era_pk && nx == era_nx
         && ds == era_ds && fx == era_fx && sv == era_sv && hl == era_hl
         && jt == era_jt && al == era_al && sg == era_sg && id == era_id
-        && ax == era_ax && as == era_as) { return; }
+        && ax == era_ax && as == era_as && f8 == era_f8) { return; }
     cw_linea_suelta();
     /* Every decoder off first, then the one wanted on: DSC and WEFAX borrow
      * the same RAM (src/prestamo.c), and the one leaving has to give it
@@ -6392,6 +6407,7 @@ static void texto_modo(int mode)
     if (!id) { demod_ident(0); }
     if (!ax) { demod_ax25(0); }
     if (!as) { demod_ais(0); }
+    if (!f8) { demod_ft8(0); }
     /*
      * NFM'S CHANNEL FILTER, WIDE FOR AIS AND SSTV-FM - step 55, 24/11/2026.
      * Upstream's mode change, one set of biquads for the three: 9 kHz
@@ -6425,9 +6441,14 @@ static void texto_modo(int mode)
         demod_ais(1);
         digi_ais_borra();
     }
+    if (f8)  { demod_ft8(1); digi_ft8_borra(); }
     s_rtty_var = rv;
     digi_pon((uint8_t)(cw || rv || pk || nx || ds || fx || sv || hl || jt || al || sg || id || ax
-                       || as));
+                       || as || f8));
+    if (f8 != era_f8) {
+        console_printf("  FT8 %s%s\n", f8 ? "on" : "off",
+                       (f8 && !ft8_modo_hay_hora()) ? " - NO CLOCK: set it, slots start at :00 :15 :30 :45" : "");
+    }
     if (as != era_as) {
         console_printf("  AIS %s\n", as ? (ais_modo_activo() ? "on" : "REFUSED") : "off");
     }
@@ -6716,6 +6737,14 @@ static void cw_poll(void)
             }
             vistas = n;
         }
+    }
+    if (ft8_modo_activo()) {
+        /* step 57: upstream's ft8_modo_tick() - each 40 ms sub-block's FFT
+         * and, when a slot closes, the decoder, a few candidates a pass (8
+         * ms of them, upstream's FT8_PASO_MS) - and each slot's decodes and
+         * its numbers to the console (src/digi.c) */
+        ft8_modo_tick();
+        digi_ft8_poll();
     }
     if (ais_modo_activo()) {
         /* step 55: upstream's ais_modo_poll() - the frames the interrupt
@@ -7348,7 +7377,7 @@ static const char *const k_mode_names[] = { "AM", "USB", "LSB", "NFM",
                                             "RTTY-U", "PSK31", "NAVTEX", "DSC",
                                             "WEFAX", "SSTV", "SSTV-FM", "HELL",
                                             "JTTY", "ALE", "STANAG", "IDENT",
-                                            "APRS", "PKT300", "AIS" };
+                                            "APRS", "PKT300", "AIS", "FT8" };
 _Static_assert(sizeof k_mode_names / sizeof k_mode_names[0]
                == (size_t)RADIO_MODE_LAST + 1U,
                "a name for every mode, upstream's and the decoders' (menus.h)");
@@ -7553,6 +7582,7 @@ int radio_mode_get(void)
     if (m == (int)DEMOD_MODE_USB && ident_modo_activo())  { return RADIO_MODE_IDENT; }
     if (m == (int)DEMOD_MODE_NFM && ax25_activo())        { return RADIO_MODE_APRS; }
     if (m == (int)DEMOD_MODE_NFM && ais_modo_activo())    { return RADIO_MODE_AIS; }
+    if (m == (int)DEMOD_MODE_USB && ft8_modo_activo())    { return RADIO_MODE_FT8; }
     if (m == (int)DEMOD_MODE_LSB && ax25_activo())        { return RADIO_MODE_PKT300; }
     return m;
 }
@@ -7918,7 +7948,7 @@ static void act_values(void)
     s_act.active[2] = (uint8_t)(m == MENU_PASO);
     s_act.active[3] = 0U;
     s_act.active[4] = nr_ss_get_enabled() ? 1U : 0U;
-    s_act.active[5] = (uint8_t)(m == MENU_AJUSTES || m == MENU_HORA);
+    s_act.active[5] = (uint8_t)(m == MENU_AJUSTES || m == MENU_HORA || m == MENU_QTH);
 }
 
 /*
@@ -9450,6 +9480,16 @@ int main(void)
     }
     /* WEFAX's line rate, byte 36 - upstream keeps it in CONFIG.CSV. */
     if (s_boot_have) { hora_huso_carga(s_boot_set.huso, s_boot_set.huso_medido); }
+    /* The QTH, bytes 39-44 (step 57): before FT8 can be entered, which reads
+     * it for each CQ's distance. Upstream puts IN80dk first; here none. */
+    if (s_boot_have && s_boot_set.qth[0] != '\0') {
+        uint8_t n = 0U;
+
+        while (n < (uint8_t)sizeof s_boot_set.qth && s_boot_set.qth[n] != '\0') { n++; }
+        ft8_decoder_set_own_grid(s_boot_set.qth, (int)n);
+        console_printf("QTH       : %s, from the FRAM%s\n", ft8_decoder_get_own_grid(),
+                       ft8_decoder_get_own_grid()[0] ? "" : " - NOT a locator, left unset");
+    }
     if (s_boot_have && s_boot_set.wfx_lpm >= 1U && s_boot_set.wfx_lpm <= WEFAX_LPM_N) {
         wefax_set_lpm_idx((uint8_t)(s_boot_set.wfx_lpm - 1U));
     }

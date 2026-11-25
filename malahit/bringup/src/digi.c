@@ -39,6 +39,9 @@
  *   AIS    Borrar | "N ships" bar (signal) | 161.975 | frames right
  *          / closed, a table over the whole area: MMSI Name Position
  *          Speed Course N, the channel in the title
+ *   FT8    Borrar | CQ | 14.074 |  | the slot's bar "Nc . DT" + "8/15"
+ *          and the dot, a table over the whole area: Time Hz dB DT
+ *          Message km Country, CQs in their colour, a finger scrolls it
  *   IDENT  Borrar                               | "measuring" /
  *          "listening" + dot, the names that fit, their notes and the
  *          five numbers measured, over the whole area
@@ -75,6 +78,8 @@
 #include "ident.h"
 #include "ax25.h"
 #include "ais_modo.h"
+#include "ft8_modo.h"
+#include "ft8_lista.h"     /* ../../User - the CQ filter and the finger's scroll */
 #include "menus.h"         /* radio_dial_go(), radio_dial_hz() - AIS's channel button */
 #include "board.h"         /* board_millis() - ALE's poll and its clock */
 #include "demod.h"         /* demod_quieto(): a decoder reconfigured, no block through it */
@@ -953,6 +958,242 @@ void digi_ais_poll(void)
 }
 
 /*
+ * FT8 - step 57, 25/11/2026. Upstream's digi_sync() FT8 branch and its
+ * ft8_chapa(): the table over the whole area, oldest first and stuck to the
+ * top, CQs in their colour (UDG_T_LLAMA), no zebra; the second layout of the
+ * header (barra_dcha): Borrar, the CQ filter, the frequency - upstream's nine
+ * FT8 dials, a tap goes to the next - and the bar of the slot on the right,
+ * its fill the second, "8/15" by the dot, and in the middle the candidates,
+ * then whichever diagnostic says something (sub-blocks lost, a decode over
+ * 7.5 s, the slot's dB range when nothing looked like FT8) and the mean DT.
+ * No clock: the bar says so. Upstream's fifth button, the Map, is left out
+ * (this port has no maps); its slot stays empty, as the bar's place is fixed.
+ * A tap on the bar squares the slot by hand (ft8_modo_cuadra()); a finger
+ * dragged on the rows scrolls the 48 kept (ft8_lista.c), as upstream's.
+ * Repainted whole when a decode comes or the view moves, the bar each
+ * second.
+ */
+typedef struct { uint32_t khz; } ft8_canal_t;
+/* upstream's k_ft8_canales[], checked there against sigidwiki (27/09/2026) */
+static const ft8_canal_t k_ft8_canales[] = {
+    {  1840UL }, {  3573UL }, {  7074UL }, { 10136UL }, { 14074UL },
+    { 18100UL }, { 21074UL }, { 24915UL }, { 28074UL },
+};
+#define FT8_CANALES ((uint8_t)(sizeof k_ft8_canales / sizeof k_ft8_canales[0]))
+#define FT8_BARRA_MS_AVISA 7500U        /* upstream's: half a slot */
+
+static char     s_ft8_barra[40];
+static char     s_ft8_ranura[8];
+static char     s_ft8_frec[12];
+static uint8_t  s_ft8_cq;               /* the CQ filter */
+static uint8_t  s_ft8_subidos;          /* rows the finger moved up */
+static uint32_t s_ft8_total_ant;        /* ft8_modo_metidas() last seen */
+static uint32_t s_ft8_visto = 0xFFFFFFFFUL;  /* ... when the panel was drawn */
+static uint8_t  s_ft8_vista_ant;        /* the view (filter, scroll) drawn */
+static uint8_t  s_ft8_seg_visto = 0xFFU;
+static char     s_ft8_barra_visto[40];
+static int16_t  s_ft8_acum, s_ft8_y;    /* the finger, in rows */
+static uint32_t s_ft8_log;              /* ft8_modo_total() logged */
+static uint32_t s_ft8_ranuras;          /* slots logged */
+static uint8_t  s_ft8_seg_log = 0xFFU;  /* the slot's second, last poll */
+
+/* upstream's ft8_punto(): " · " (U+00B7, in font_ui_10b) */
+static uint8_t ft8_punto(char *b, uint8_t i, uint8_t cap)
+{
+    return pega(b, i, cap, " \xC2\xB7 ");
+}
+
+static uint8_t ft8_num(char *b, uint8_t i, uint8_t cap, int32_t v)
+{
+    if (v < 0) { i = pega(b, i, cap, "-"); v = -v; }
+    return pega_u(b, i, cap, (uint32_t)v);
+}
+
+/* upstream's ft8_chapa(): the bar */
+static void ft8_barra(void)
+{
+    uint8_t i = 0U;
+    uint16_t c, ms, pd;
+    int16_t dt;
+
+    s_st.barra_on  = 1U;
+    s_st.barra_max = 15U;
+    s_st.chip = 0;                      /* the bar carries what it said */
+    if (!ft8_modo_hay_hora()) {
+        s_st.barra_v = 0U;
+        s_st.barra_txt = tr("pon el reloj en hora", "set the clock first");
+        s_st.barra_txt_dcha = 0;
+        s_st.enganchado = 0U;
+        return;
+    }
+    s_st.barra_v = ft8_modo_segundo();
+    i = ft8_num(s_ft8_ranura, 0U, (uint8_t)sizeof s_ft8_ranura, (int32_t)ft8_modo_segundo());
+    (void)pega(s_ft8_ranura, i, (uint8_t)sizeof s_ft8_ranura, "/15");
+    s_st.barra_txt_dcha = s_ft8_ranura;
+
+    c = ft8_modo_candidatos();
+    ms = ft8_modo_ms();
+    pd = ft8_modo_perdidos();
+    dt = ft8_modo_dt_ms();
+    i = ft8_num(s_ft8_barra, 0U, (uint8_t)sizeof s_ft8_barra, (int32_t)((c > 999U) ? 999U : c));
+    i = pega(s_ft8_barra, i, (uint8_t)sizeof s_ft8_barra, "c");
+    if (pd > 0U) {
+        i = ft8_punto(s_ft8_barra, i, (uint8_t)sizeof s_ft8_barra);
+        i = ft8_num(s_ft8_barra, i, (uint8_t)sizeof s_ft8_barra, (int32_t)((pd > 99U) ? 99U : pd));
+        i = pega(s_ft8_barra, i, (uint8_t)sizeof s_ft8_barra, "p");
+    } else if (ms >= FT8_BARRA_MS_AVISA) {
+        i = ft8_punto(s_ft8_barra, i, (uint8_t)sizeof s_ft8_barra);
+        i = ft8_num(s_ft8_barra, i, (uint8_t)sizeof s_ft8_barra, (int32_t)((ms > 9999U) ? 9999U : ms));
+        i = pega(s_ft8_barra, i, (uint8_t)sizeof s_ft8_barra, " ms");
+    } else if (c == 0U) {
+        int16_t lo = 0, hi = 0;
+
+        ft8_modo_db(&lo, &hi);
+        if (lo < -99) { lo = -99; }
+        if (lo >  99) { lo =  99; }
+        if (hi < -99) { hi = -99; }
+        if (hi >  99) { hi =  99; }
+        i = ft8_punto(s_ft8_barra, i, (uint8_t)sizeof s_ft8_barra);
+        i = ft8_num(s_ft8_barra, i, (uint8_t)sizeof s_ft8_barra, (int32_t)lo);
+        i = pega(s_ft8_barra, i, (uint8_t)sizeof s_ft8_barra, (hi >= 0) ? "/+" : "/");
+        i = ft8_num(s_ft8_barra, i, (uint8_t)sizeof s_ft8_barra, (int32_t)hi);
+        i = pega(s_ft8_barra, i, (uint8_t)sizeof s_ft8_barra, " dB");
+    }
+    /* the mean DT, in seconds with one figure, as WSJT-X */
+    i = ft8_punto(s_ft8_barra, i, (uint8_t)sizeof s_ft8_barra);
+    if (dt > 9999) { dt = 9999; }
+    if (dt < -9999) { dt = -9999; }
+    i = pega(s_ft8_barra, i, (uint8_t)sizeof s_ft8_barra, (dt < 0) ? "-" : "+");
+    if (dt < 0) { dt = (int16_t)(-dt); }
+    i = pega_u(s_ft8_barra, i, (uint8_t)sizeof s_ft8_barra, (uint32_t)(dt / 1000));
+    i = pega(s_ft8_barra, i, (uint8_t)sizeof s_ft8_barra, ",");
+    i = pega_u(s_ft8_barra, i, (uint8_t)sizeof s_ft8_barra, (uint32_t)((dt / 100) % 10));
+    (void)pega(s_ft8_barra, i, (uint8_t)sizeof s_ft8_barra, " s");
+    s_st.barra_txt = s_ft8_barra;
+    s_st.enganchado = 1U;
+}
+
+static void ft8_sync(void)
+{
+    uint8_t n = JTTY_FILAS, k, hay, guardados = 0U, i;
+    uint8_t idx[FT8_MODO_LINEAS];
+    uint32_t khz = radio_dial_hz() / 1000U, total = ft8_modo_metidas();
+
+    if (n > (uint8_t)FT8_MODO_LINEAS) { n = (uint8_t)FT8_MODO_LINEAS; }
+    memset(&s_st, 0, sizeof s_st);
+    s_st.y       = (int16_t)DIGI_SCOPE_Y;
+    s_st.h       = (int16_t)(FAX_Y + FAX_ALTO - DIGI_SCOPE_Y);
+    s_st.filas   = n;
+    s_st.btn     = tr("Borrar", "Clear");
+    s_st.btn3    = "CQ";
+    s_st.btn3_press = s_ft8_cq;
+    s_st.barra_dcha = 1U;
+    s_st.cols    = ui_digi_cols_ft8;
+    s_st.ncols   = UI_DIGI_COLS_FT8_N;
+    s_st.titulos = tr("Hora\tHz\tdB\tDT\tMensaje\tkm\tPaís",
+                      "Time\tHz\tdB\tDT\tMessage\tkm\tCountry");
+
+    /* upstream's ft8_frec_rotulo(): kHz with a thousands point */
+    i = pega_u(s_ft8_frec, 0U, (uint8_t)sizeof s_ft8_frec, khz / 1000U);
+    i = pega(s_ft8_frec, i, (uint8_t)sizeof s_ft8_frec, ".");
+    s_ft8_frec[i++] = (char)('0' + ((khz / 100U) % 10U));
+    s_ft8_frec[i++] = (char)('0' + ((khz / 10U) % 10U));
+    s_ft8_frec[i++] = (char)('0' + (khz % 10U));
+    s_ft8_frec[i] = '\0';
+    s_st.btn4 = s_ft8_frec;
+
+    /* the rows: all those kept are looked at (the CQ filter would otherwise
+     * search half a list), the window kept where the finger left it while
+     * new ones come in at the top - upstream's, through ft8_lista.c */
+    while (guardados < (uint8_t)FT8_MODO_LINEAS && ft8_modo_linea(guardados)[0] != '\0') {
+        guardados++;
+    }
+    if (total < s_ft8_total_ant) { s_ft8_total_ant = total; }      /* mode re-entered */
+    if (s_ft8_subidos != 0U && total > s_ft8_total_ant) {
+        uint32_t ins = total - s_ft8_total_ant;
+        uint16_t sube;
+
+        if (ins > (uint32_t)FT8_MODO_LINEAS) { ins = (uint32_t)FT8_MODO_LINEAS; }
+        sube = (uint16_t)((uint16_t)s_ft8_subidos
+                          + (uint16_t)ft8_lista_nuevos(ft8_modo_linea, (uint8_t)ins, s_ft8_cq));
+        s_ft8_subidos = (sube > 255U) ? 255U : (uint8_t)sube;
+    }
+    s_ft8_total_ant = total;
+    hay = ft8_lista_escoge(ft8_modo_linea, guardados, s_ft8_cq, n, &s_ft8_subidos, idx);
+    for (k = 0U; k < hay; k++) {
+        s_st.fila[k] = ft8_modo_linea(idx[k]);
+        s_st.fila_tinta[k] = ft8_lista_es_cq(s_st.fila[k]) ? UDG_T_LLAMA : UDG_T_NORMAL;
+    }
+    ft8_barra();
+}
+
+void digi_ft8_borra(void)
+{
+    s_ft8_subidos = 0U;
+    s_ft8_acum = 0;
+    s_ft8_total_ant = ft8_modo_metidas();
+    s_ft8_log = ft8_modo_total();
+    s_ft8_ranuras = 0U;
+}
+
+/*
+ * From the main loop, FT8 on: each decode to the console as it comes - its
+ * fields with '|' for the tabs - and once a slot, its numbers: candidates,
+ * decodes, ms the decode took, sub-blocks lost, slots decoded short, the
+ * mean DT and the slot's dB range. The last line is the level
+ * check this port needs: upstream's 4-bit spectrogram is a fixed ladder
+ * (-35 dB + 3.4 dB a step after FT8_ADAPTER_DB_OFFSET), so the radio's
+ * audio level decides where its noise sits on it.
+ */
+void digi_ft8_poll(void)
+{
+    uint32_t total = ft8_modo_total();
+
+    if (total < s_ft8_log) { s_ft8_log = 0UL; }
+    if (total != s_ft8_log) {
+        uint32_t nuevos = total - s_ft8_log, k;
+
+        if (nuevos > (uint32_t)FT8_MODO_LINEAS) { nuevos = (uint32_t)FT8_MODO_LINEAS; }
+        s_ft8_log = total;
+        for (k = nuevos; k > 0U; k--) {
+            const char *l = ft8_modo_linea((uint8_t)(k - 1U));
+            char t[FT8_MODO_LARGO + 4U];
+            uint32_t j;
+
+            if (l[0] == '\0') { continue; }
+            for (j = 0U; l[j] != '\0' && j < sizeof t - 1U; j++) { t[j] = (l[j] == '\t') ? '|' : l[j]; }
+            t[j] = '\0';
+            console_printf("  ft8: %s\n", t);
+        }
+    }
+    /* and the slot's numbers once a slot, at its second 5: the decode of
+     * the slot before has started at its edge and, at the 8 ms a pass it
+     * is given, ended (it takes well under a second). Keyed on the second
+     * and not on the decode's end, which can begin and finish inside one
+     * ft8_modo_tick() and leave nothing to see from here. */
+    if (ft8_modo_hay_hora()) {
+        uint8_t seg = ft8_modo_segundo();
+
+        if (seg >= 5U && s_ft8_seg_log < 5U) {
+            int16_t lo = 0, hi = 0;
+            float sg = 0.0f, g = 0.0f;
+
+            s_ft8_ranuras++;
+            ft8_modo_db(&lo, &hi);
+            demod_ft8_nivel(&sg, &g);
+            console_printf("  ft8 slot %u: %u candidates, %u decoded, %u ms, lost %u, short %u, "
+                           "DT %d ms, dB %d..%d, in %u.%u LSB x %u\n",
+                           s_ft8_ranuras, (uint32_t)ft8_modo_candidatos(),
+                           (uint32_t)ft8_modo_ultima(), (uint32_t)ft8_modo_ms(),
+                           (uint32_t)ft8_modo_perdidos(), (uint32_t)ft8_modo_cortas(),
+                           (int)ft8_modo_dt_ms(), (int)lo, (int)hi,
+                           (uint32_t)sg, (uint32_t)(sg * 10.0f) % 10U, (uint32_t)(g + 0.5f));
+        }
+        s_ft8_seg_log = seg;
+    }
+}
+
+/*
  * IDENT - step 53, 23/11/2026. Upstream's digi_sync() IDENT branch: rows
  * over the whole area, no columns (a name, its note, the five numbers -
  * phrases, not fields), Borrar, no waveform button (here nothing is
@@ -1380,6 +1621,18 @@ void digi_repinta(void)
         s_eng_visto = s_st.enganchado;
         return;
     }
+    if (ft8_modo_activo()) {
+        ft8_sync();
+        ui_digi_olvida();
+        if (ui_digi_draw_texto(&s_st)) {
+            s_ft8_visto = ft8_modo_metidas();
+            s_ft8_vista_ant = (uint8_t)(s_ft8_cq | (uint8_t)(s_ft8_subidos << 1));
+            s_ft8_seg_visto = s_st.barra_v;
+            strcpy(s_ft8_barra_visto, s_st.barra_txt ? s_st.barra_txt : "");
+            s_todo = 0U;
+        }
+        return;
+    }
     if (hell_activo()) {
         fax_limpia();
         hell_reinicia();
@@ -1463,6 +1716,23 @@ void digi_dibuja(void)
             s_eng_visto = s_st.enganchado;
             ui_digi_draw_barra(&s_st);
             ui_digi_draw_chip(&s_st);
+        }
+        return;
+    }
+    if (ft8_modo_activo()) {
+        /* upstream's: the list when a message comes (once a slot at most)
+         * or the view moves, the bar when the second or its text does */
+        if (s_todo || ft8_modo_metidas() != s_ft8_visto
+            || (uint8_t)(s_ft8_cq | (uint8_t)(s_ft8_subidos << 1)) != s_ft8_vista_ant) {
+            digi_repinta();
+            return;
+        }
+        ft8_sync();
+        if (s_st.barra_v != s_ft8_seg_visto
+            || strcmp(s_ft8_barra_visto, s_st.barra_txt ? s_st.barra_txt : "") != 0) {
+            s_ft8_seg_visto = s_st.barra_v;
+            strcpy(s_ft8_barra_visto, s_st.barra_txt ? s_st.barra_txt : "");
+            ui_digi_draw_barra(&s_st);
         }
         return;
     }
@@ -1588,6 +1858,50 @@ uint8_t digi_toque(uint16_t x, uint16_t y, uint8_t nuevo)
      * if it finds none - the same search that moves the centre by itself,
      * so a tap only matters where that one cannot decide.
      */
+    if (ft8_modo_activo()) {
+        ft8_sync();
+        if (y >= (uint16_t)(DIGI_SCOPE_Y + UDG_HDR_H)) {
+            /* the rows: a finger dragged scrolls them, upstream's
+             * ft8_lista_arrastra() - down brings the older ones */
+            if (nuevo) {
+                s_ft8_acum = 0;
+            } else {
+                (void)ft8_lista_arrastra(&s_ft8_acum, (int16_t)((int16_t)y - s_ft8_y),
+                                         (uint8_t)UDG_LINE_H, &s_ft8_subidos);
+            }
+            s_ft8_y = (int16_t)y;
+            return 1U;
+        }
+        if (!nuevo) { return 1U; }
+        if (ui_digi_boton_hit(&s_st, x, y)) {
+            ft8_modo_borra();           /* upstream's: the list, not the capture */
+            digi_ft8_borra();
+            s_todo = 1U;
+            console_printf("  digi: FT8 cleared\n");
+        } else if (ui_digi_boton3_hit(&s_st, x, y)) {
+            s_ft8_cq = (uint8_t)!s_ft8_cq;
+            s_ft8_subidos = 0U;         /* other rows: shown from the newest */
+            console_printf("  digi: FT8 %s\n", s_ft8_cq ? "CQ only" : "all messages");
+        } else if (ui_digi_boton4_hit(&s_st, x, y)) {
+            /* upstream's ft8_frec_siguiente(): the next of the nine, or the
+             * first from anywhere else */
+            uint32_t khz = radio_dial_hz() / 1000U;
+            uint8_t  sig = 0U, c;
+
+            for (c = 0U; c < FT8_CANALES; c++) {
+                if (k_ft8_canales[c].khz == khz) { sig = (uint8_t)((c + 1U) % FT8_CANALES); break; }
+            }
+            (void)radio_dial_go(k_ft8_canales[sig].khz * 1000U);
+            s_todo = 1U;
+            console_printf("  digi: FT8 dial %u kHz\n", k_ft8_canales[sig].khz);
+        } else if (ui_digi_barra_hit(&s_st, x, y)) {
+            /* upstream's: the slot's zero is NOW, the clock untouched */
+            ft8_modo_cuadra();
+            s_ft8_seg_visto = 0xFFU;
+            console_printf("  digi: FT8 slot squared by hand\n");
+        }
+        return 1U;
+    }
     if (ais_modo_activo()) {
         ais_sync();
         if (ui_digi_boton_hit(&s_st, x, y)) {

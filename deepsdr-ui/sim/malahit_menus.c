@@ -20,6 +20,7 @@
 
 #include "ui_cfg.h"
 #include "ui_grid.h"
+#include "ui_qth.h"
 #include "bandas_tabla.h"
 #include "temas_tabla.h"
 #include <string.h>
@@ -955,9 +956,154 @@ static void digi_ais(const char *nombre, uint8_t en)
     escribe(nombre);
 }
 
+/*
+ * FT8 - paso 57 del port, 25/11/2026: la tabla con las columnas de
+ * malahit_layout.h (UDG_COLS_FT8), la segunda disposicion de la cabecera
+ * (Borrar, CQ, la frecuencia, la barra de la ranura a la derecha), como la
+ * arma src/digi.c. Se mide cada campo contra su columna con los mas anchos
+ * que pueden salir: el pais mas largo de dxcc.c, cinco cifras de km, el dB
+ * con signo, y la barra con sus tres numeros a tope.
+ */
+static void digi_ft8(const char *nombre, uint8_t en, uint8_t sin_hora)
+{
+    static const char *const k_filas[] = {
+        "21:47\t0263\t+12\t+0,3\tCQ DX DL5AN JN49\t1395\tAlemania",
+        "21:47\t2987\t-24\t-1,2\tCQ R1TEST KO26\t\tRusia europea",
+        "21:47\t1520\t-08\t+0,1\tPJ4/K1ABC W9XYZ R-15\t\tAntillas Hol.",
+        "21:47\t0800\t-17\t+2,5\t<PJ4/K1ABC> W9XYZ RR73\t\tNeth. Antilles",
+        "21:47\t2400\t+05\t-0,4\tCQ VK3ABC QF22\t15622\tAustralia",
+        "21:48\t1100\t-20\t+0,0\tTNX BOB 73 GL\t\t",
+        "21:48\t0333\t-11\t+0,2\tZL1ABC OH2XYZ KP20\t99999\tDominican Rep.",
+    };
+    ui_digi_state_t st;
+    uint8_t i, k;
+    int16_t h = (int16_t)(DIGI_PANEL_Y + DIGI_PANEL_H - DIGI_SCOPE_Y);
+
+    fondo_principal();
+    memset(&st, 0, sizeof st);
+    st.y = DIGI_SCOPE_Y;
+    st.h = h;
+    st.filas = (uint8_t)((h - UDG_HDR_H) / UDG_LINE_H - 1);
+    st.btn = en ? "Clear" : "Borrar";
+    st.btn3 = "CQ";
+    st.btn3_press = 1U;
+    st.btn4 = "14.074";
+    st.barra_dcha = 1U;
+    st.cols = ui_digi_cols_ft8;
+    st.ncols = UI_DIGI_COLS_FT8_N;
+    st.titulos = en ? "Time\tHz\tdB\tDT\tMessage\tkm\tCountry"
+                    : "Hora\tHz\tdB\tDT\tMensaje\tkm\tPaís";
+    st.barra_on = 1U;
+    st.barra_max = 15U;
+    if (sin_hora) {
+        st.barra_txt = en ? "set the clock first" : "pon el reloj en hora";
+    } else {
+        st.barra_v = 14U;
+        st.barra_txt = "999c \xC2\xB7 9999 ms \xC2\xB7 -9,9 s";
+        st.barra_txt_dcha = "14/15";
+        st.enganchado = 1U;
+    }
+    for (i = 0; i < sizeof k_filas / sizeof k_filas[0]; i++) {
+        const char *p = k_filas[i];
+        int16_t fin_km = 0;
+
+        st.fila[i] = k_filas[i];
+        st.fila_tinta[i] = strstr(k_filas[i], "\tCQ ") ? UDG_T_LLAMA : UDG_T_NORMAL;
+        for (k = 0; k < UI_DIGI_COLS_FT8_N && *p; k++) {
+            char campo[40];
+            uint8_t n = 0;
+            int16_t x = ui_digi_cols_ft8[k], hasta;
+
+            while (*p && *p != '\t' && n < sizeof campo - 1U) { campo[n++] = *p++; }
+            campo[n] = '\0';
+            if (*p == '\t') { p++; }
+            if (x < 0) {
+                /* pegado a la derecha: no se recorta, asi que lo que se
+                 * mide es que no pise al de su izquierda */
+                int16_t w = gfx2_text_w(campo, &font_ui_10b);
+
+                if (k == 5U) { fin_km = (int16_t)(-x - w); }
+                if (k == 6U) {
+                    int16_t tope = (int16_t)(-ui_digi_cols_ft8[5] + 4);
+                    if (n > 0U && (int16_t)(-x - w) < tope) {
+                        printf("  SE SALE  ft8 pais \"%s\" empieza en %d, km acaba en %d\n",
+                               campo, -x - w, tope - 4);
+                        s_fallos++;
+                    }
+                }
+                continue;
+            }
+            if (ui_digi_cols_ft8[k + 1U] >= 0) { hasta = (int16_t)(ui_digi_cols_ft8[k + 1U] - x - 4); }
+            else { hasta = (int16_t)(-ui_digi_cols_ft8[k + 1U] - UDG_COL_RESERVA - x - 4); }
+            cabe("ft8", campo, &font_ui_10b, hasta);
+        }
+        (void)fin_km;
+    }
+    printf("  digi ft8: btn3 x %d, btn4 x %d w %d, barra x %d w %d hueco %d\n",
+           ui_digi_btn3_x_dbg(&st), ui_digi_btn4_x_dbg(&st), ui_digi_btn4_w_dbg(&st),
+           ui_digi_barra_x_dbg(&st), ui_digi_barra_w_dbg(&st), ui_digi_barra_hueco_dbg(&st));
+    cabe("boton4", st.btn4, &font_ui_10b, ui_digi_btn4_w_dbg(&st) - 8);
+    cabe("barra", st.barra_txt, &font_ui_10b, ui_digi_barra_hueco_dbg(&st));
+    cabe("km", "99999", &font_ui_10b, UDG_COL_RESERVA);
+    ui_digi_draw_texto(&st);
+    escribe(nombre);
+}
+
+/*
+ * EL QTH - paso 57 del port, 25/11/2026: las seis casillas de upstream con
+ * la geometria de malahit_layout.h (UIQ_*) y las caras que le da reglas.mk
+ * (la 18b se queda, la 14 pasa a la de 10). Se mide el pie, las
+ * coordenadas mas largas y los rotulos contra su sitio, en los dos idiomas.
+ */
+extern const gfx2_font_t font_ui_18b;
+extern const gfx2_font_t font_ui_10;
+static void qth(const char *nombre, uint8_t en, uint8_t sel)
+{
+    static const char *const k_pista[UIQ_N] = { "A-R", "A-R", "0-9", "0-9", "a-x", "a-x" };
+    ui_qth_state_t st;
+    int16_t tit_w;
+    uint8_t i;
+
+    fondo_principal();
+    memset(&st, 0, sizeof st);
+    st.titulo = "QTH";
+    st.pie = en ? "your locator: the map cross and the distances come from this"
+                : "tu localizador: de aquí salen el aspa de los mapas y las distancias";
+    memcpy(st.loc, "KO26dx", 7);
+    for (i = 0; i < UIQ_N; i++) { st.pista[i] = k_pista[i]; }
+    st.coord = "-89,9792 S   -179,9583 W";        /* lo mas largo que sale */
+    st.rot[UIQ_HIT_MENOS] = "-";
+    st.rot[UIQ_HIT_MAS] = "+";
+    st.rot[UIQ_HIT_APLICAR] = en ? "Apply" : "Aplicar";
+    st.rot[UIQ_HIT_SALIR] = en ? "Exit" : "Salir";
+    st.sel = sel;
+    st.cambiado = 1U;
+    st.pressed = -1;
+    tit_w = gfx2_text_w(st.titulo, &font_ui_18b);
+    cabe("qth pie", st.pie, &font_ui_10, (int16_t)(UIQ_W - 2 * UIQ_PAD - tit_w - 8));
+    cabe("qth crd", st.coord, &font_ui_18b, UIQ_W);
+    for (i = 0; i < UIQ_BTN_N; i++) { cabe("qth btn", st.rot[i], &font_ui_18b, UIQ_BTN_W - 8); }
+    cabe("qth pis", "a-x", &font_ui_10, UIQ_CAJA_W - 4);
+    if (UIQ_BTN_Y + UIQ_BTN_H + UIQ_HIT_BTN_AIRE > UIG_Y + UIG_H) {
+        printf("  SE SALE  qth: el toque de los botones llega a la barra de abajo\n");
+        s_fallos++;
+    }
+    if (UIQ_CAJA_Y + UIQ_CAJA_H + UIQ_COORD_DY + 22 > UIQ_BTN_Y - UIQ_HIT_BTN_AIRE) {
+        printf("  SE SALE  qth: las coordenadas tocan los botones\n");
+        s_fallos++;
+    }
+    ui_qth_draw(&st);
+    escribe(nombre);
+}
+
 int main(void)
 {
     printf("menus del Malahit, 480 x 320\n");
+    qth("qth", 0U, 0U);
+    qth("qth_en", 1U, 4U);
+    digi_ft8("ft8", 0U, 0U);
+    digi_ft8("ft8_en", 1U, 0U);
+    digi_ft8("ft8_sin_hora", 0U, 1U);
     digi_ais("ais", 0U);
     digi_ais("ais_en", 1U);
     digi_ident("ident", 0U);
