@@ -10,12 +10,35 @@
 /* Ver ui_hora.h para por que esta pantalla ensena dos barras y no un
  * "sincronizando..." a secas. */
 
-#define BARRA_X    60
-#define BARRA_W   (800 - 2 * BARRA_X)
-#define BARRA_H    22
-#define BARRA1_Y  (UIH_Y + 96)
-#define BARRA2_Y  (BARRA1_Y + BARRA_H + 34)
-#define ROT_W      68                 /* hueco del rotulo a la izquierda */
+/* #ifndef desde el 24/11/2026: ver ui_hora.h. Los valores de siempre. */
+#ifndef UIH_BARRA_X
+#define UIH_BARRA_X    60
+#define UIH_BARRA_H    22
+#define UIH_BARRA1_DY  96             /* la primera, desde UIH_Y */
+#define UIH_BARRA_GAP  34             /* entre las dos */
+#define UIH_ROT_W      68             /* hueco del rotulo a la izquierda */
+#define UIH_ROT_DY      3             /* el rotulo, desde lo alto de la barra */
+#define UIH_ROT_PAD     8             /* del rotulo a la barra */
+#define UIH_BARRA_R     6             /* radio de las esquinas */
+#endif
+#ifndef UIH_TIT_DY
+#define UIH_TIT_DY     14             /* el titulo, desde UIH_Y */
+#define UIH_EST_DY     48             /* el estado */
+#define UIH_DET_DY     68             /* el detalle */
+#endif
+#ifndef UIH_BTN_R
+#define UIH_BTN_R       8             /* radio de las esquinas de un boton */
+#define UIH_BTN_TXT     12            /* lo que se le deja al texto de margen */
+#define UIH_BTN_MARGEN  10            /* de la pantalla al primer boton */
+#define UIH_HIT_AIRE    16            /* lo que se lleva el toque arriba y abajo */
+#endif
+
+#define BARRA_X    UIH_BARRA_X
+#define BARRA_W   (UIH_W - 2 * BARRA_X)
+#define BARRA_H    UIH_BARRA_H
+#define BARRA1_Y  (UIH_Y + UIH_BARRA1_DY)
+#define BARRA2_Y  (BARRA1_Y + BARRA_H + UIH_BARRA_GAP)
+#define ROT_W      UIH_ROT_W          /* hueco del rotulo a la izquierda */
 
 static void barra(gfx2_surf_t *s, int16_t y, const char *rotulo,
                   uint8_t pct, uint8_t encendida)
@@ -27,19 +50,19 @@ static void barra(gfx2_surf_t *s, int16_t y, const char *rotulo,
     if (pct > 100U) { pct = 100U; }
     llena = (int16_t)(((int32_t)w * (int32_t)pct) / 100);
 
-    gfx2_text_in(s, BARRA_X, (int16_t)(y + 3), ROT_W - 8, rotulo,
+    gfx2_text_in(s, BARRA_X, (int16_t)(y + UIH_ROT_DY), ROT_W - UIH_ROT_PAD, rotulo,
                  &font_ui_14, gfx2_rgb(PAL_INK_MUTE), GFX2_ALIGN_R);
 
-    gfx2_rrect(s, x, y, w, BARRA_H, 6, gfx2_rgb(PAL_SURF_2));
+    gfx2_rrect(s, x, y, w, BARRA_H, UIH_BARRA_R, gfx2_rgb(PAL_SURF_2));
     if (llena > 4) {
         /* Encendida = el acento; apagada = un gris que se ve pero no llama.
          * Esa diferencia es el latido: con señal buena, la barra de marca se
          * enciende una vez por segundo y eso se reconoce de un vistazo desde
          * el otro lado de la mesa. */
-        gfx2_rrect(s, x, y, llena, BARRA_H, 6,
+        gfx2_rrect(s, x, y, llena, BARRA_H, UIH_BARRA_R,
                    encendida ? gfx2_rgb(PAL_ACCENT) : gfx2_rgba(PAL_ACCENT, 90));
     }
-    gfx2_rrect_outline(s, x, y, w, BARRA_H, 6, 1, gfx2_rgb(PAL_LINE));
+    gfx2_rrect_outline(s, x, y, w, BARRA_H, UIH_BARRA_R, 1, gfx2_rgb(PAL_LINE));
 }
 
 static void boton(gfx2_surf_t *s, int16_t x, const char *txt,
@@ -64,15 +87,15 @@ static void boton(gfx2_surf_t *s, int16_t x, const char *txt,
      * huso-, asi que pueden llegar a cero. No se comprueba aqui: lo hacen las
      * tres funciones de texto de gfx2.c, que es donde cubre a TODAS las
      * pantallas y no solo a esta. Ver el comentario de gfx2_text_w(). */
-    gfx2_rrect(s, x, UIH_BTN_Y, UIH_BTN_W, UIH_BTN_H, 8, fondo);
-    gfx2_rrect_outline(s, x, UIH_BTN_Y, UIH_BTN_W, UIH_BTN_H, 8, 1, borde);
+    gfx2_rrect(s, x, UIH_BTN_Y, UIH_BTN_W, UIH_BTN_H, UIH_BTN_R, fondo);
+    gfx2_rrect_outline(s, x, UIH_BTN_Y, UIH_BTN_W, UIH_BTN_H, UIH_BTN_R, 1, borde);
     /* La fuente se elige por lo que MIDE el texto, no por el boton: el
      * rotulo de la emisora ("DCF77 - 77,5 kHz, Alemania") no cabe en 18b y
      * los otros dos si. Medir y decidir evita tener que acordarse. */
     {
         const gfx2_font_t *f = &font_ui_18b;
 
-        if (gfx2_text_w(txt, f) > UIH_BTN_W - 12) { f = &font_ui_14b; }
+        if (gfx2_text_w(txt, f) > UIH_BTN_W - UIH_BTN_TXT) { f = &font_ui_14b; }
 
         /*
          * Y SI TAMPOCO CABE EN LA PEQUENA, SE PARTE EN DOS RENGLONES.
@@ -99,7 +122,7 @@ static void boton(gfx2_surf_t *s, int16_t x, const char *txt,
          * esta. No se pierde una letra.
          */
         if (f == &font_ui_14b
-            && gfx2_text_w(txt, f) > (int16_t)(UIH_BTN_W - 12)) {
+            && gfx2_text_w(txt, f) > (int16_t)(UIH_BTN_W - UIH_BTN_TXT)) {
             uint8_t i = 0U, corte = 0U;
 
             while (txt[i] != '\0') {
@@ -133,8 +156,8 @@ static int16_t btn_x(uint8_t i)
     /* Los UIH_BTN_N repartidos a lo ancho: el hueco sale de la cuenta,
      * 800 - 2*margen - N*ancho repartido en los N-1 huecos. Asi pasar de
      * tres botones a cuatro fue cambiar UIH_BTN_W y ya. */
-    const int16_t margen = 10;
-    const int16_t hueco  = (int16_t)((800 - 2 * margen - UIH_BTN_N * UIH_BTN_W)
+    const int16_t margen = UIH_BTN_MARGEN;
+    const int16_t hueco  = (int16_t)((UIH_W - 2 * margen - UIH_BTN_N * UIH_BTN_W)
                                      / (UIH_BTN_N - 1));
     return (int16_t)(margen + i * (UIH_BTN_W + hueco));
 }
@@ -148,17 +171,17 @@ static void draw_all(gfx2_surf_t *s, void *ctx)
 {
     const ui_hora_state_t *st = (const ui_hora_state_t *)ctx;
 
-    gfx2_fill(s, 0, UIH_Y, 800, UIH_H, gfx2_rgb(PAL_SURF_0));
+    gfx2_fill(s, 0, UIH_Y, UIH_W, UIH_H, gfx2_rgb(PAL_SURF_0));
 
-    gfx2_text_in(s, 0, (int16_t)(UIH_Y + 14), 800, st->titulo,
+    gfx2_text_in(s, 0, (int16_t)(UIH_Y + UIH_TIT_DY), UIH_W, st->titulo,
                  &font_ui_18b, gfx2_rgb(PAL_INK), GFX2_ALIGN_C);
 
     if (st->estado) {
-        gfx2_text_in(s, 0, (int16_t)(UIH_Y + 48), 800, st->estado,
+        gfx2_text_in(s, 0, (int16_t)(UIH_Y + UIH_EST_DY), UIH_W, st->estado,
                      &font_ui_14b, gfx2_rgb(PAL_ACCENT), GFX2_ALIGN_C);
     }
     if (st->detalle) {
-        gfx2_text_in(s, 0, (int16_t)(UIH_Y + 68), 800, st->detalle,
+        gfx2_text_in(s, 0, (int16_t)(UIH_Y + UIH_DET_DY), UIH_W, st->detalle,
                      &font_ui_14, gfx2_rgb(PAL_INK_MUTE), GFX2_ALIGN_C);
     }
 
@@ -194,10 +217,10 @@ static void draw_all(gfx2_surf_t *s, void *ctx)
 
         if (hueco > alto) { y0 = (int16_t)(y0 + ((hueco - alto) / 2)); }
 
-        gfx2_text_in(s, 0, y0, 800, st->hora,
+        gfx2_text_in(s, 0, y0, UIH_W, st->hora,
                      &font_num_44, gfx2_rgb(PAL_INK), GFX2_ALIGN_C);
         if (st->fecha) {
-            gfx2_text_in(s, 0, (int16_t)(y0 + font_num_44.line_h - 2), 800,
+            gfx2_text_in(s, 0, (int16_t)(y0 + font_num_44.line_h - 2), UIH_W,
                          st->fecha,
                          &font_ui_14, gfx2_rgb(PAL_INK_MUTE), GFX2_ALIGN_C);
         }
@@ -234,7 +257,7 @@ void ui_hora_pinta_en(gfx2_surf_t *s, const ui_hora_state_t *st)
 
 void ui_hora_draw(const ui_hora_state_t *st)
 {
-    gfx2_render(0, UIH_Y, 800, UIH_H, draw_all, (void *)st);
+    gfx2_render(0, UIH_Y, UIH_W, UIH_H, draw_all, (void *)st);
 }
 
 int8_t ui_hora_hit(uint16_t x, uint16_t y)
@@ -243,7 +266,7 @@ int8_t ui_hora_hit(uint16_t x, uint16_t y)
      * franja no hay nada mas que tocar. */
     uint8_t i;
 
-    if (y < UIH_BTN_Y - 16 || y >= UIH_BTN_Y + UIH_BTN_H + 16) { return UIH_HIT_NONE; }
+    if (y < UIH_BTN_Y - UIH_HIT_AIRE || y >= UIH_BTN_Y + UIH_BTN_H + UIH_HIT_AIRE) { return UIH_HIT_NONE; }
     for (i = 0U; i < UIH_BTN_N; i++) {
         if ((int16_t)x >= btn_x(i) && (int16_t)x < btn_x(i) + UIH_BTN_W) {
             return (int8_t)i;

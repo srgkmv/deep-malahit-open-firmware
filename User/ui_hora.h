@@ -33,8 +33,18 @@
  * minutos que tarda una sincronizacion.
  */
 
+/* #ifndef desde el 24/11/2026, como las de ui_kbd.h y ui_digi.c: el port
+ * del Malahit (480 x 320) pone las suyas en malahit/compat/malahit_layout.h.
+ * Aqui, las de siempre. */
+#ifndef UIH_Y
 #define UIH_Y      104
+#endif
+#ifndef UIH_H
 #define UIH_H      318                  /* 104..421, igual que la rejilla */
+#endif
+#ifndef UIH_W
+#define UIH_W      800                  /* el ancho de la pantalla */
+#endif
 
 /*
  * CUATRO BOTONES DESDE EL 10/10/2026, Y POR ESO 180 EN VEZ DE 240.
@@ -42,9 +52,16 @@
  * que hace falta: el que ve una hora que no es la suya la esta viendo en
  * ESTA pantalla. 2*10 + 4*180 = 740, con 20 de hueco entre cada dos.
  */
+#ifndef UIH_BTN_H
 #define UIH_BTN_H   56
+#endif
+#ifndef UIH_BTN_W
 #define UIH_BTN_W  180
-#define UIH_BTN_Y  (UIH_Y + UIH_H - UIH_BTN_H - 12)
+#endif
+#ifndef UIH_BTN_AIRE
+#define UIH_BTN_AIRE 12                 /* de los botones al fondo */
+#endif
+#define UIH_BTN_Y  (UIH_Y + UIH_H - UIH_BTN_H - UIH_BTN_AIRE)
 
 #define UIH_HIT_NONE     (-1)
 #define UIH_HIT_EMISORA    0
