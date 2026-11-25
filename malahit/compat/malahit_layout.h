@@ -500,6 +500,42 @@
 #define UIK_UNI_GAP           6
 
 /*
+ * THE RADIO CLOCK - ui_hora.c, step 56 (24/11/2026). Upstream's screen in
+ * the menus' place, 53..289, its literals #ifndef in ui_hora.h/.c with
+ * upstream's values. Faces: MALAHIT_FONTS_MENU (title font_ui_11, state
+ * font_ui_10b, detail font_ui_10, the time font_num_31, all 13-14 px but
+ * the time's 37).
+ *
+ *   title 57   state 73   detail 87   bars 105..119, 133..147
+ *   time and date centred in 147..253   buttons 253..285
+ *
+ * Four buttons of 112: 4 + 4*112 + 3*8 + 4 = 480. A station's label
+ * ("DCF77 - 77,5 kHz, Alemania") splits at its " - " into two lines of
+ * 13 px, which upstream's boton() does when the small face is too wide.
+ */
+#define UIH_Y               UIG_Y                       /* 53 */
+#define UIH_H               UIG_H                       /* 236 */
+#define UIH_W               480
+#define UIH_BTN_H            32
+#define UIH_BTN_W           112
+#define UIH_BTN_AIRE          4
+#define UIH_BARRA_X          24
+#define UIH_BARRA_H          14
+#define UIH_BARRA1_DY        52
+#define UIH_BARRA_GAP        14
+#define UIH_ROT_W            44
+#define UIH_ROT_DY            1
+#define UIH_ROT_PAD           6
+#define UIH_BARRA_R           4
+#define UIH_TIT_DY            4
+#define UIH_EST_DY           20
+#define UIH_DET_DY           34
+#define UIH_BTN_R             6
+#define UIH_BTN_TXT           8
+#define UIH_BTN_MARGEN        4
+#define UIH_HIT_AIRE          4     /* 249..289: the action bar starts at 290 */
+
+/*
  * THE DECODERS' PANEL - ui_digi.c, step 42 (22/11/2026). Upstream's
  * arrangement, the owner's choice: in a text mode the spectrum and the
  * waterfall give their place to the tone scope on top and the text

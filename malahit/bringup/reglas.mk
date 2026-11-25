@@ -498,6 +498,22 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ais_rx.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ais_msg.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ais_modo.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_digi.c
+# rtc_cal.c the calendar's arithmetic - BCD, days since 1970, the weekday,
+#            "is this date possible" - which upstream keeps apart from its
+#            GD32 rtc_hw.c so a bench can test it; src/rtc_hw.c is this
+#            board's RTC under the same contract (step 56)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/rtc_cal.c
+# dcf77.c, hora_rbu.c, hora_wwv.c, hora_comun.c, husos.c, ui_hora.c  the
+#            radio clock: DCF77/MSF/ALS162 on the AM envelope or its
+#            phase, RBU on the phase, WWV/BPM on the envelope, the zone
+#            and the summer rules, upstream's table of fifty cities, and
+#            upstream's screen with its literals #ifndef (step 56)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/dcf77.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hora_rbu.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hora_wwv.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hora_comun.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/husos.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_hora.c
 #
 # THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]
 # out of User/main.c by the script the host render uses for the same
@@ -712,6 +728,7 @@ $(BUILD_DIR)/up_ui_grid.o:    CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
 $(BUILD_DIR)/up_ui_det.o:     CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
 $(BUILD_DIR)/up_ui_kbd.o:     CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
 $(BUILD_DIR)/up_ui_digi.o:    CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
+$(BUILD_DIR)/up_ui_hora.o:    CFLAGS_FONTS = $(MALAHIT_FONTS_MENU)
 
 # ale_modo.c asserts that its table fits ft8_shared_ram_t - the waterfall
 # memory upstream lends it - so it includes ft8_shared_ram.h, which reaches

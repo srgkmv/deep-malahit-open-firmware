@@ -4,6 +4,38 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
+## START HERE — 25/11/2026, evening: step 56 (the clock, by hand and by radio) IN FLASH, committed with it
+
+**In flash: this commit's code** (step 56, on top of ededcc2, ui_hora.c's #ifndef) -
+`build_flash/bringup.bin`, 398 472 bytes, written with `swd.sh flashsrst`
+and verified. `PORTING.md` 56: the RTC (src/rtc_hw.c) with a learnt smooth
+calibration (CALR now -50.5 ppm, from +50 ppm measured over a day), the
+keypad of the time, and upstream's radio clock (src/hora.c, Settings >
+Digital) with each decoder's latency taken off, the zone in the FRAM, and
+RDS trusted only for a plainly wrong clock. WWV from the HackRF set the
+RTC to -0.04 s of the PC; the clock is now "On the minute" at 20:48:00
+(-0.18 s, the SWD tap), zone Helsinki +2:00.
+
+**The radio's state**: 90.7 MHz WFM (LR-1), ATT 46, preamp off, antenna
+on the input (the HackRF disconnected).
+
+**Open**: (1) a HardFault at 103.1 MHz during an SWD-driven scan, inside
+an interrupt, origin lost - fault.c now keeps the first record; (2) FM on
+the antenna overloaded (20 dB of the add-on's PE4312 helps; the ATT pill
+drives only the MSi001's baseband) - not a regression; (3) the dial's 100
+kHz floor keeps DCF77/MSF/RBU off their frequencies; (4) calibration: the
+next good setting 22 h after 20:48 25/11 (On the minute) teaches CALR.
+
+**Next, the owner's order**: FT8, WSPR, HFDL.
+
+**Benches**: `tools/hackrf_gen.py wwv --minutes 4 --lead 5 --rate 2016000`
+then hackrf_transfer at -f <dial - 200 kHz>, started `--lead` s before the
+printed minute; `rds --minutes 3 --lead 5` likewise at 99.8 MHz for a 100
+MHz dial, `-a 1 -x 47` (weaker loses to the radio's LO leakage). RTC over
+SWD: `mdw 0x58004028` SSR, `0x58004000` TR, `0x58004004` DR, `0x5800403C`
+CALR, `0x58004050` BKP0-3. rds.c's state: `s_info` (nm), blocks ok/bad at
++8.
+
 ## START HERE — 24/11/2026, evening: step 55 (AIS) IN FLASH, committed with it
 
 **In flash: this commit's code** (step 55) -

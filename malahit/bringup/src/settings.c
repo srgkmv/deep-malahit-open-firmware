@@ -135,7 +135,11 @@ _Static_assert(sizeof(slot_t) == SLOT_BYTES, "the extension fills the slot");
  *  33  RTTY speed, upstream's index + 1 (45.45/50/75/100); 0 = not stored (50)
  *  34  RTTY automatic: 1 off, 2 on; 0 = not stored (on)
  *  35  CW learning: 1 off, 2 on; 0 = not stored (off)
- *  36..59  zero - room. A field added there reads 0 from a record
+ *  36  WEFAX line rate, upstream's index + 1; 0 = not stored (120)
+ *  37  the time zone in quarter hours + 64 (1..120: -12:00..+14:00);
+ *      0 = not stored (upstream's +1:00) - step 56
+ *  38  the zone's source: 2 a station measured it, 1 a city; 0 = not stored
+ *  39..59  zero - room. A field added there reads 0 from a record
  *          written before it, so it must mean "not stored" at 0, or
  *          the version goes to 5 (the owner's word allows it).
  *  60  CRC-32 of bytes 0-59
@@ -178,7 +182,9 @@ typedef struct {
     uint8_t  rtty_auto;     /* 1 off, 2 on; 0 = written before it */
     uint8_t  cw_aprende;    /* 1 off, 2 on; 0 = written before it */
     uint8_t  wfx_lpm;       /* WEFAX lpm index + 1; 0 = written before it */
-    uint8_t  rsv[23];
+    uint8_t  huso;          /* the zone, quarter hours + 64; 0 = written before it */
+    uint8_t  huso_medido;   /* 2 measured, 1 a city; 0 = written before it */
+    uint8_t  rsv[21];
     uint32_t crc;
 } rec4_t;
 
@@ -366,6 +372,8 @@ int settings_load(settings_t *out)
     out->rtty_auto  = p->rtty_auto;
     out->cw_aprende = p->cw_aprende;
     out->wfx_lpm    = p->wfx_lpm;
+    out->huso       = p->huso;
+    out->huso_medido = p->huso_medido;
     out->has_rf = out->has_mode = out->has_aj = 1U;
     out->has_sqlnr = out->has_suav = 1U;
     return 1;
@@ -405,6 +413,8 @@ int settings_save(const settings_t *s)
     w.rtty_auto  = s->rtty_auto;
     w.cw_aprende = s->cw_aprende;
     w.wfx_lpm    = s->wfx_lpm;
+    w.huso       = s->huso;
+    w.huso_medido = s->huso_medido;
     w.crc      = crc32_of((const uint8_t *)&w, V4_BYTES - 4U);
 
     fram_write(v4_addr(slot), (const uint8_t *)&w, sizeof w);

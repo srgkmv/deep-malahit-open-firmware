@@ -2097,6 +2097,102 @@ Each step should end with something visible on the radio.
    the HackRF moved +1 / -1 / +2 / -2 kHz: 6, 8, 7, 8. The ship's row
    complete (name from message 5). DEEPSDR: make all, its 29 checks green.
    Flash image 361 936 bytes.
+56. **The clock - the RTC, by hand, and by radio.** *24/11/2026, from
+   flash* - FT8 and WSPR need the time of day to the second (15 s slots,
+   even minutes), and until now `rtc_hw_get()` (src/reloj.c, gone) gave the
+   uptime. `src/rtc_hw.c` is upstream's contract (User/rtc_hw.h) on the
+   H743: the RTC on the 32.768 kHz crystal X2 in the backup domain, which
+   CPU_VBAT keeps from the battery while the radio is off (the owner).
+   Upstream's decisions kept: a running calendar is not touched at start
+   (INITS, the GD32's YCM), a dead one is seeded 2026-01-01 00:00:00 on
+   purpose, "ever set" is a magic in backup register 0 and the epoch of
+   the last setting in 1, an impossible date is refused, prescalers 128 x
+   256 for the 1/256 s shift. One difference: the crystal is not waited
+   for - rtc_hw_init() switches it on (drive medium-high) and returns,
+   rtc_hw_poll() from the main loop finishes when LSERDY comes or gives up
+   at 5 s, so a dead crystal costs no boot time; until then
+   rtc_hw_lxtal_failed() says "do not believe this clock", as upstream's
+   callers expect. upstream's rtc_cal.c (the calendar's arithmetic)
+   compiled as it is. The time kept is upstream's: LOCAL.
+   The header's corner shows the RTC's hh:mm (the uptime only while the
+   crystal starts). A tap on it opens upstream's keypad of the time
+   (src/menus.c, its KBD_HORA): HHMM with a dash for each digit not yet
+   typed, "Set the clock" and "On the minute" - the second says the tap
+   is the minute's edge, and from then the keypad's unit slot ticks the
+   seconds. The date is not the keypad's, as upstream's.
+   **On the radio**: first start, the crystal ran (RCC_BDCR 0x810B: LSE
+   on and ready, LSEDRV 01, RTCSEL LSE, RTCEN) and the calendar was seeded
+   and counted at 1 Hz; typed 2016 and "On the minute" at the PC's
+   20:16:00 (EET, NTP) - the RTC 0.18 s behind the PC (the tap's way
+   through SWD), backup registers "RTC1" and the epoch. Off with the
+   button, a minute or two, on: "Clock : RTC kept by VBAT, 2026-01-01
+   20:22:07 local, set 367 s ago", the time right (the owner). Boot still
+   2362 ms.
+   **A day later** (25/11/2026, 22.9 h after "On the minute"): 3.96 s
+   fast - **+50 ppm**, 4.3 s a day; C71/C72 are not this crystal's loads.
+   So the smooth calibration (CALR, 0.954 ppm steps, in the backup
+   domain): set by hand to -50.5 ppm (CALM 53) from that measurement, and
+   learnt from then on - `rtc_hw_pon_anclado()` reads how far the RTC
+   walked since the last setting that knew the second (a station, the
+   keypad's On the minute; backup registers 2 and 3) and, when that was
+   long enough ago for the two settings' errors to be under ~5 ppm
+   ((err1 + err2) x 200 s: 11 h for two stations, 22 h with a hand),
+   moves CALR by it. A walk over 2 minutes teaches nothing.
+   **The radio clock** - upstream's "Hora por radio", Settings > Digital
+   (a fifth page, as upstream's): `src/hora.c` is upstream's hora_*(), the
+   sweep, GRID_HUSO and rds_poll() from its main.c on this port's calls,
+   in menus.c's MENU_HORA; upstream's dcf77.c, hora_rbu.c, hora_wwv.c,
+   hora_comun.c and husos.c compiled as they are (their stubs gone);
+   upstream's ui_hora.c with its literals made `#ifndef` (upstream's
+   values; the DEEPSDR's object identical byte for byte) and this
+   screen's in malahit_layout.h. The station button cycles DCF77, MSF,
+   ALS162, RBU, WWV 10/15, BPM, RDS and the sweep; the zone button opens
+   upstream's fifty cities with their summer rules, plus "Measure" against
+   a station that sends UTC; the zone goes to the FRAM (v4 bytes 37-38).
+   Leaving the screen gives back the mode, filter and dial; the FRAM is
+   not written while it is up.
+   What this port does differently, each from a measurement:
+   - **each decoder's latency is taken off.** Upstream counts the
+     "atraso" from when it saw DCF_LISTO. Measured on upstream's own
+     benches (their generators, the radio's rates), from the minute's true
+     edge to the decoder's new minute: DCF77 +29 ms, MSF +421, RBU +190,
+     WWV +1107, BPM +1086 (the rise of second 01's subcarrier closes the
+     minute), ALS162 -898 (it knows the minute in second 59). WWV
+     uncorrected set the RTC 1.41 s late;
+   - **the second's fraction is written** by the RTC's shift (1/256 s),
+     not lost to a whole-second write;
+   - **RDS only fixes a plainly wrong clock.** Riga's stations against the
+     PC's NTP: LR-1 (90.7) 5.75 s late, SWH ROCK (89.2) 2.1 s late, MIX FM
+     (102.7) and LR-2 (91.5) no clock-time at all - the standard says
+     +-0.1 s. So RDS sets the clock when it was never set or is over 15 s
+     off, else at most the date, and never teaches the crystal; upstream's
+     anchors to every group.
+   `tools/hackrf_gen.py wwv` (NIST SP 432's time code as AM, minutes long,
+   written in one-second pieces) and `rds` (wide FM: pilot, RDS 0A with
+   the PS and 4A placed to END on each minute's edge, IEC 62106's blocks
+   and CRC; a 1 kHz tone, because upstream's WFM takes an unswept carrier
+   for its own LO's leakage).
+   **On the air**: WWV 10 MHz from the HackRF, zone Helsinki +2:00:
+   "Time received and confirmed 19:17 25/11/26", Apply - with the
+   latencies, **RTC - PC = -0.04 s** (without, -1.41). RDS from the
+   HackRF set the clock from a clean 4A group (its 2.5 kHz subcarrier
+   decoded at only 25-35 % of blocks on this bench - through 40 dB of pad
+   the HackRF is weaker than the radio's own LO leakage; the host decodes
+   the same file at 100 %); on an antenna, LR-1 then SWH set it 5.75 and
+   2.1 s late, which is what changed the RDS rule; after it, LR-1's -5.6 s
+   was left alone ("se deja"). DCF77, MSF and RBU are under the dial's
+   100 kHz floor (RADIO_TUNE_MIN_HZ): they tune 100 kHz for now - whether
+   the MSi001 and the add-on board hear 60-78 kHz is for a night with an
+   antenna.
+   **Found on the way, not this step's**: FM on the antenna crackles today
+   on many stations, step 41's image too (so not a regression): the
+   front end is overloaded - 20 dB of the add-on board's PE4312, ahead of
+   the MSi001, takes the pilot's SNR from ~0 to 12 dB. And one HardFault,
+   at 103.1 MHz while a scan drove the dial over SWD every 3 s: inside an
+   interrupt, and fault.c's return into fault_park() faulted again 394
+   million times, each pass writing over the record - which now keeps the
+   first fault. Not reproduced at 103.1 since.
+   Flash image 398 472 bytes.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

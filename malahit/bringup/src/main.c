@@ -4946,11 +4946,9 @@ static uint8_t rf_autorange(void)
  *          dbm_valid is 0 for the same reason, so no dBm number is
  *          claimed.
  *
- *   STUB   the clock, which counts UPTIME because this port has no RTC
- *          driver, and the battery, which reads 0 because nothing has
- *          been written for the ADC on PA0 yet. Both are drawn rather
- *          than hidden so that the layout gets tested at full width,
- *          and both are listed on the console at startup.
+ *   REAL   since step 56, the clock: the RTC on the 32.768 kHz crystal
+ *          (src/rtc_hw.c), uptime only while the crystal starts or if it
+ *          never does. The battery reads too (adc.c).
  *
  *   HONEST ZEROS   mode is AM because the RF path is set up for AM and
  *          there is no demodulator to contradict it; AGC is OFF and
@@ -4968,6 +4966,9 @@ static uint8_t rf_autorange(void)
 
 #include "fram.h"
 #include "settings.h"
+#include "rtc_hw.h"       /* ../../User/rtc_hw.h - upstream's contract */
+#include "rtc_hw_port.h"  /* src/rtc_hw.c's own two (step 56) */
+#include "hora.h"         /* src/hora.c - the radio clock (step 56) */
 
 /*
  * WHAT IS SOLDERED AT D11 - 21/11/2026.
@@ -5703,10 +5704,9 @@ static void ui_s_units(float db, uint8_t *units, uint8_t *over)
     *units = (uint8_t)f;
 }
 
-/* Uptime as mm:ss, in the slot where a clock will go. See the note at
- * the top of this section: it counts up, and it is labelled as such on
- * the console, because a wrong time of day is a lie and an uptime is
- * not. */
+/* Uptime as mm:ss - the clock's slot while the RTC has no crystal (it is
+ * starting, or it never did): it counts up, and the console says which,
+ * because a wrong time of day is a lie and an uptime is not. */
 static void ui_fmt_uptime(uint32_t ms, char *out)
 {
     uint32_t s = (ms / 1000U) % 3600U;
@@ -5716,6 +5716,24 @@ static void ui_fmt_uptime(uint32_t ms, char *out)
     out[2] = ':';
     out[3] = (char)('0' + ((s % 60U) / 10U));
     out[4] = (char)('0' + ((s % 60U) % 10U));
+    out[5] = '\0';
+}
+
+/* THE CLOCK - step 56: the RTC's hh:mm, local, as upstream's
+ * time_display_draw(); before the crystal runs, the uptime as before.
+ * A calendar never set shows the seed counting from 00:00 - upstream's
+ * choice too: a time that looks wrong rather than one that looks good. */
+static void ui_fmt_reloj(char *out)
+{
+    rtc_hw_datetime_t dt;
+
+    if (rtc_hw_lxtal_failed()) { ui_fmt_uptime(board_millis(), out); return; }
+    rtc_hw_get(&dt);
+    out[0] = (char)('0' + (dt.hour / 10U));
+    out[1] = (char)('0' + (dt.hour % 10U));
+    out[2] = ':';
+    out[3] = (char)('0' + (dt.minute / 10U));
+    out[4] = (char)('0' + (dt.minute % 10U));
     out[5] = '\0';
 }
 
@@ -5738,7 +5756,7 @@ static void ui_init_state(uint32_t tuned_hz)
 
     s_tuned_hz = tuned_hz;
     ui_fmt_khz(tuned_hz, s_freq_txt, sizeof s_freq_txt);
-    ui_fmt_uptime(board_millis(), s_clock_txt);
+    ui_fmt_reloj(s_clock_txt);
 
     s_top.freq       = s_freq_txt;
     s_top.freq_digit = -1;          /* nothing is tuning: no cursor */
@@ -5940,7 +5958,8 @@ static int settings_same(const settings_t *a, const settings_t *b)
         && a->aj_estereo == b->aj_estereo && a->cw_bw == b->cw_bw
         && a->rtty_shift == b->rtty_shift && a->rtty_baud == b->rtty_baud
         && a->rtty_auto == b->rtty_auto && a->cw_aprende == b->cw_aprende
-        && a->wfx_lpm == b->wfx_lpm;
+        && a->wfx_lpm == b->wfx_lpm
+        && a->huso == b->huso && a->huso_medido == b->huso_medido;
 }
 
 static void settings_now(settings_t *out)
@@ -5958,6 +5977,8 @@ static void settings_now(settings_t *out)
     out->rtty_auto  = (uint8_t)(rtty_auto_get() ? 2U : 1U);
     out->cw_aprende = (uint8_t)(cw_get_aprende() ? 2U : 1U);
     out->wfx_lpm    = (uint8_t)(wefax_get_lpm_idx() + 1U);
+    out->huso       = hora_huso_byte();
+    out->huso_medido = hora_medido_byte();
     out->has_mode = 1U;
     menu_ajustes_get(out);              /* the settings screen's values */
 }
@@ -5967,6 +5988,9 @@ static void settings_tick(void)
     settings_t cur;
 
     if (!SETTINGS_LIVE) { return; }
+    /* The radio clock tunes a station and changes the mode for as long as
+     * it is up, and gives them back after: that is not a setting. */
+    if (menu_open_id() == MENU_HORA) { return; }
 
     settings_now(&cur);
     if (!settings_same(&cur, &s_set_seen)) {
@@ -6788,6 +6812,7 @@ static void rds_limpia(void)
     s_top.rds = s_rds_txt;
     s_top.rds_nombre = s_rds_nom;
     s_top.rds_off = 0;
+    hora_rds_reinicia();                /* another station's time is another's */
 }
 
 /*
@@ -7839,6 +7864,12 @@ void radio_act_refresh(void)
     ui_act_draw(&s_act);
 }
 
+void radio_reloj_repinta(void)
+{
+    ui_fmt_reloj(s_clock_txt);
+    ui_top_draw_hora(&s_top);
+}
+
 /* Only the Volumen button: the small knob turns it a detent at a time,
  * and the whole bar is 43 kB of SPI where one button is 7. */
 static void act_volume_refresh(void)
@@ -7887,7 +7918,7 @@ static void act_values(void)
     s_act.active[2] = (uint8_t)(m == MENU_PASO);
     s_act.active[3] = 0U;
     s_act.active[4] = nr_ss_get_enabled() ? 1U : 0U;
-    s_act.active[5] = (uint8_t)(m == MENU_AJUSTES);
+    s_act.active[5] = (uint8_t)(m == MENU_AJUSTES || m == MENU_HORA);
 }
 
 /*
@@ -8293,6 +8324,11 @@ static void ui_touch(void)
                 menu_teclado_open();
                 return;
             }
+            /* The clock: upstream's keypad of the time (step 56). */
+            if (h == UI_TOP_HIT_NONE && ui_top_clock_hit(x, y)) {
+                menu_hora_open();
+                return;
+            }
 
             /*
              * THE KNOB PILL NO LONGER REPORTS TOUCHES - 22/11/2026.
@@ -8505,6 +8541,32 @@ int main(void)
                    "so the\n", spi3_hz());
     console_printf("            tests below can ask for a hand on the "
                    "screen.\n");
+
+    /*
+     * THE CLOCK - step 56. The RTC on the 32.768 kHz crystal, which VBAT
+     * keeps from the battery: after the first start it is running already
+     * and this costs nothing; a cold crystal is switched on and left to
+     * the main loop (rtc_hw_poll()), so a dead one costs no boot time.
+     */
+    rtc_hw_init();
+    if (rtc_hw_lxtal_failed()) {
+        console_printf("Clock     : the 32.768 kHz crystal is starting - "
+                       "uptime until it runs\n");
+    } else {
+        rtc_hw_datetime_t dt;
+
+        rtc_hw_get(&dt);
+        console_printf("Clock     : RTC %s, %04u-%02u-%02u %02u:%02u:%02u local, ",
+                       rtc_hw_frio() ? "SEEDED (the backup domain was cold)"
+                                     : "kept by VBAT",
+                       (uint32_t)dt.year, (uint32_t)dt.month, (uint32_t)dt.day,
+                       (uint32_t)dt.hour, (uint32_t)dt.minute, (uint32_t)dt.second);
+        if (rtc_hw_has_ever_synced()) {
+            console_printf("set %u s ago\n", rtc_hw_get_seconds_since_sync());
+        } else {
+            console_printf("never set\n");
+        }
+    }
 
     /*
      * THE PANEL ON DMA, from its first picture - 21/11/2026.
@@ -9387,6 +9449,7 @@ int main(void)
         cw_set_aprende((uint8_t)(s_boot_set.cw_aprende == 2U));
     }
     /* WEFAX's line rate, byte 36 - upstream keeps it in CONFIG.CSV. */
+    if (s_boot_have) { hora_huso_carga(s_boot_set.huso, s_boot_set.huso_medido); }
     if (s_boot_have && s_boot_set.wfx_lpm >= 1U && s_boot_set.wfx_lpm <= WEFAX_LPM_N) {
         wefax_set_lpm_idx((uint8_t)(s_boot_set.wfx_lpm - 1U));
     }
@@ -9462,7 +9525,8 @@ int main(void)
                    " demod_report.\n\n");
 
     console_printf("  WHAT IS A STUB, AND WHY:\n");
-    console_printf("    the clock counts UPTIME (no RTC driver). Mode,\n");
+    console_printf("    the clock is the RTC (step 56), uptime until its\n");
+    console_printf("    crystal runs. Mode,\n");
     console_printf("    AGC, ATT and the six buttons are drawn at their\n");
     console_printf("    real values, which are 'nothing yet'.\n");
     console_printf("  THE BATTERY IS REAL: %u mV at the cell, %u %%,\n",
@@ -9584,6 +9648,8 @@ int main(void)
             uint32_t pu;
 
             cw_poll();                  /* the text decoders' text, CW and RTTY */
+            hora_poll();                /* the radio clock's screen, step 56 */
+            hora_rds_poll();            /* FM with RDS sets the clock, step 56 */
             pu = us_desde(p0);
             if (pu > s_polls_max_us) { s_polls_max_us = pu; }
         }
@@ -9945,9 +10011,11 @@ int main(void)
          */
         if ((int32_t)(board_millis() - clock_at) >= 0) {
             clock_at = board_millis() + 1000U;
-            ui_fmt_uptime(board_millis(), s_clock_txt);
+            rtc_hw_poll();              /* the crystal's start, step 56 */
+            ui_fmt_reloj(s_clock_txt);
             s_top.batt_pct = adc_bat_pct();
             ui_top_draw_hora(&s_top);
+            menu_hora_tic();
         }
 
         ui_touch();

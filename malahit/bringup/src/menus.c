@@ -18,6 +18,9 @@
 #include "ui_kbd.h"        /* ../../User - upstream: the frequency keypad */
 #include "idioma.h"        /* ../../User - upstream: tr(), T(), idioma() */
 #include "banco.h"         /* ../../User - upstream: the memory channels */
+#include "rtc_hw.h"        /* ../../User - upstream's contract, src/rtc_hw.c (step 56) */
+#include "hora.h"          /* src/ - the radio clock (step 56) */
+#include "rtc_hw_port.h"   /* src/ - rtc_hw_pon_anclado() */
 #include "bip.h"           /* ../../User - upstream: the pips */
 #include "board.h"         /* src/ - board_millis(), for the long press */
 #include "backlight.h"     /* ../../User - upstream's API, src/backlight.c */
@@ -338,7 +341,8 @@ typedef enum {
     AJ_AGC, AJ_BW, AJ_NOTCH, AJ_SQL, AJ_NR, AJ_NB, AJ_PRE, AJ_ATT,
     AJ_TEMA, AJ_PALETA, AJ_ESTILO, AJ_VOL,
     AJ_SUAV, AJ_PUENTE, AJ_TRAZA,
-    AJ_IDIOMA, AJ_BRILLO, AJ_ESTEREO
+    AJ_IDIOMA, AJ_BRILLO, AJ_ESTEREO,
+    AJ_HORA
 } aj_id_t;
 
 /*
@@ -353,11 +357,12 @@ typedef enum {
  *
  * Idioma goes where upstream has it: its own page, Equipo / Device.
  */
-enum { AJ_PAG_RADIO = 0, AJ_PAG_PANTALLA, AJ_PAG_ESPECTRO, AJ_PAG_EQUIPO, AJ_PAGS };
+enum { AJ_PAG_RADIO = 0, AJ_PAG_PANTALLA, AJ_PAG_ESPECTRO, AJ_PAG_DIGITAL,
+       AJ_PAG_EQUIPO, AJ_PAGS };
 
 static const texto_t k_aj_pags[AJ_PAGS] = {
     T("Radio", "Radio"), T("Pantalla", "Display"), T("Espectro", "Spectrum"),
-    T("Equipo", "Device")
+    T("Digital", "Digital"), T("Equipo", "Device")
 };
 
 static const struct { texto_t nombre; uint8_t pag; uint8_t id; } k_aj[] = {
@@ -378,6 +383,7 @@ static const struct { texto_t nombre; uint8_t pag; uint8_t id; } k_aj[] = {
     { T("Suavizado", "Smoothing"),     AJ_PAG_ESPECTRO, AJ_SUAV   },   /* upstream's place: before Puente */
     { T("Puente", "Bridge"),           AJ_PAG_ESPECTRO, AJ_PUENTE },
     { T("Traza", "Trace"),             AJ_PAG_ESPECTRO, AJ_TRAZA  },
+    { T("Hora por radio", "Radio clock"), AJ_PAG_DIGITAL, AJ_HORA },  /* upstream's, step 56 */
     { T("Idioma", "Language"),         AJ_PAG_EQUIPO,   AJ_IDIOMA },
 };
 #define N_AJ ((uint8_t)(sizeof k_aj / sizeof k_aj[0]))
@@ -621,6 +627,14 @@ void menu_refresh_det(void)
 static void aj_toca(uint8_t id)
 {
     switch (id) {
+    case AJ_HORA:
+        /* An action, not a value: upstream's opens its screen. */
+        s_det = DET_NINGUNO;
+        s_pressed = -1;
+        s_open = MENU_HORA;
+        hora_abre();
+        radio_act_refresh();
+        return;
     case AJ_SQL:   det_open(DET_SQL); return;
     case AJ_AGC:   radio_agc_cycle(); break;
     case AJ_BW:    radio_bw_cycle();  break;
@@ -967,9 +981,11 @@ void menu_mem_init(void)
  * edge, as upstream's does to its own (radio_dial_go()). The big knob
  * does nothing here, as upstream's does nothing (its comment, 23/09/2026:
  * a knob that fell through repainted the radio over invisible keys).
- * Upstream's clock keypad is the same module and is not wired: this
- * radio has no clock setting yet.
+ * Upstream's clock keypad is the same module, and since step 56 it is
+ * wired too: a tap on the clock opens it (menu_hora_open(), below).
  */
+static void suelta_hora(void);   /* below, with menu_close() */
+
 #define FE_MAX_DIGITS  9U       /* upstream's FREQ_ENTRY_MAX_DIGITS */
 #define FE_NO_POINT    0xFFU    /* upstream's FREQ_ENTRY_NO_POINT */
 
@@ -1095,10 +1111,181 @@ static void kbd_accept(uint32_t mult)
     menu_close();
 }
 
+/*
+ * THE CLOCK'S KEYPAD - step 56, upstream's (KBD_HORA in its main.c): the
+ * same grid, four digits HHMM shown each in its own place with dashes for
+ * the ones not typed (upstream's kbd_lectura_hora(): "0","4","2" must not
+ * read as 00:42), and two keys to apply, because they say two different
+ * things (upstream's note on k_kbd_hora_rot[]):
+ *   "Set the clock"   WHAT time it is; nothing about the second;
+ *   "On the minute"   WHEN: the tap is the minute's edge, hh:mm:00 now.
+ * Both put hh:mm:00 in the RTC at the tap, as upstream's rtc_pon_hora()
+ * does; the second one also says the second is good, and from then the
+ * keypad's unit slot shows it ticking (upstream's kbd_segundero_hora()),
+ * ":--" until then. The date is not the keypad's: it stays what the RTC
+ * holds, as upstream's. Only four digits apply, and an impossible time
+ * (25:70) is refused by rtc_hw_set() - said on the console here.
+ */
+#define HE_MAX_DIGITS  4U       /* upstream's TIME_ENTRY_MAX_DIGITS */
+
+static uint8_t  s_kbd_hora;     /* the keypad open is the clock's */
+static uint16_t s_he_value;
+static uint8_t  s_he_digits;
+static char     s_kbd_seg[4];
+
+static const texto_t k_kbd_hora_rot[UIK_KEYS] = {   /* upstream's */
+    T("1","1"), T("2","2"), T("3","3"), T("Borrar","Delete"),
+    T("4","4"), T("5","5"), T("6","6"), T("Vaciar","Clear"),
+    T("7","7"), T("8","8"), T("9","9"), T("Volver","Back"),
+    T(0,0),     T("0","0"), T("Poner en hora","Set the clock"), T("En punto","On the minute"),
+};
+static const uint8_t k_kbd_hora_tipo[UIK_KEYS] = {
+    UIK_DIGITO, UIK_DIGITO, UIK_DIGITO, UIK_BORRA,
+    UIK_DIGITO, UIK_DIGITO, UIK_DIGITO, UIK_BORRA,
+    UIK_DIGITO, UIK_DIGITO, UIK_DIGITO, UIK_VUELVE,
+    UIK_NADA,   UIK_DIGITO, UIK_ACEPTA, UIK_ACEPTA,
+};
+
+static void hora_lectura(void)
+{
+    static const uint16_t k_pot10[HE_MAX_DIGITS] = { 1U, 10U, 100U, 1000U };
+    uint8_t i;
+
+    s_kbd.lectura = s_kbd_lectura;
+    if (s_he_digits == 0U) {
+        s_kbd_lectura[0] = '\0';
+    } else {
+        for (i = 0U; i < HE_MAX_DIGITS; i++) {
+            uint8_t slot = (i < 2U) ? i : (uint8_t)(i + 1U);    /* 2 is ':' */
+
+            if (i < s_he_digits) {
+                uint16_t div = k_pot10[s_he_digits - 1U - i];
+
+                s_kbd_lectura[slot] = (char)('0' + (char)((s_he_value / div) % 10U));
+            } else {
+                s_kbd_lectura[slot] = '-';
+            }
+        }
+        s_kbd_lectura[2] = ':';
+        s_kbd_lectura[5] = '\0';
+    }
+    s_kbd_seg[0] = ':';
+    if (!hora_anclada() || rtc_hw_lxtal_failed()) {
+        s_kbd_seg[1] = '-'; s_kbd_seg[2] = '-';
+    } else {
+        rtc_hw_datetime_t dt;
+
+        rtc_hw_get(&dt);
+        s_kbd_seg[1] = (char)('0' + (char)(dt.second / 10U));
+        s_kbd_seg[2] = (char)('0' + (char)(dt.second % 10U));
+    }
+    s_kbd_seg[3] = '\0';
+    s_kbd.unidad = s_kbd_seg;
+}
+
+static void hora_acepta(uint8_t en_punto)
+{
+    rtc_hw_datetime_t dt;
+    uint8_t hh, mm;
+    uint32_t seq;
+
+    if (s_he_digits != HE_MAX_DIGITS) { return; }       /* upstream's rule */
+    hh = (uint8_t)(s_he_value / 100U);
+    mm = (uint8_t)(s_he_value % 100U);
+    if (rtc_hw_lxtal_failed()) {
+        console_printf("  reloj: %02u:%02u no se pone - el cristal de 32.768 Hz no va\n",
+                       (uint32_t)hh, (uint32_t)mm);
+        menu_close();
+        return;
+    }
+    rtc_hw_get(&dt);
+    dt.hour = hh; dt.minute = mm; dt.second = 0U;
+    seq = rtc_hw_get_set_seq();
+    /* On the minute is an edge a person timed - within ~0.3 s (0.18
+     * measured over SWD, 24/11/2026): good enough to teach the crystal
+     * over a day (src/rtc_hw.c). Set the clock says nothing of the second. */
+    if (en_punto) { rtc_hw_pon_anclado(&dt, 0U, 300U); }
+    else          { rtc_hw_set(&dt); }
+    if (rtc_hw_get_set_seq() == seq) {
+        console_printf("  reloj: %02u:%02u no existe - no se pone\n", (uint32_t)hh, (uint32_t)mm);
+        return;                                         /* stays open to retype */
+    }
+    hora_anclada_pon(en_punto);
+    console_printf("  reloj: puesto a %02u:%02u:00%s\n", (uint32_t)hh, (uint32_t)mm,
+                   en_punto ? ", en punto (el segundo vale)" : "");
+    radio_reloj_repinta();
+    menu_close();
+}
+
+static void hora_apply(uint8_t i)
+{
+    uint8_t d = k_kbd_digito[i];
+
+    if (d != 0xFFU) {
+        if (s_he_digits < HE_MAX_DIGITS) {
+            s_he_value = (uint16_t)(s_he_value * 10U + d);
+            s_he_digits++;
+            hora_lectura();
+            ui_kbd_draw_lectura(&s_kbd);
+        }
+        return;
+    }
+    switch (i) {
+    case 3U:
+        if (s_he_digits > 0U) { s_he_value /= 10U; s_he_digits--; }
+        hora_lectura(); ui_kbd_draw_lectura(&s_kbd);
+        break;
+    case 7U:
+        s_he_value = 0U; s_he_digits = 0U;
+        hora_lectura(); ui_kbd_draw_lectura(&s_kbd);
+        break;
+    case 11U: menu_close();      break;
+    case 14U: hora_acepta(0U);   break;
+    case 15U: hora_acepta(1U);   break;
+    default:                     break;
+    }
+}
+
+void menu_hora_open(void)
+{
+    uint8_t i;
+
+    suelta_hora();
+    s_det       = DET_NINGUNO;
+    s_pressed   = -1;
+    s_he_value  = 0U;
+    s_he_digits = 0U;
+    s_kbd_hora  = 1U;
+    memset(&s_kbd, 0, sizeof s_kbd);
+    s_kbd.titulo  = tr("Hora", "Time");
+    s_kbd.pista   = tr("HHMM. En punto: el toque es el cambio de minuto",
+                       "HHMM. On the minute: the tap is the minute change");
+    s_kbd.pressed = -1;
+    s_kbd.cursor  = -1;
+    for (i = 0U; i < UIK_KEYS; i++) {
+        s_kbd.tecla[i] = k_kbd_hora_rot[i][idioma()];
+        s_kbd.tipo[i]  = k_kbd_hora_tipo[i];
+    }
+    hora_lectura();
+    s_open = MENU_TECLADO;
+    ui_kbd_draw(&s_kbd);
+    radio_act_refresh();
+    console_printf("  menu -> Teclado de la hora\n");
+}
+
+/* Once a second from the main loop: the keypad's ticking second. */
+void menu_hora_tic(void)
+{
+    if (s_open != MENU_TECLADO || !s_kbd_hora || !hora_anclada()) { return; }
+    hora_lectura();
+    ui_kbd_draw_lectura(&s_kbd);
+}
+
 static void kbd_apply(uint8_t i)
 {
     uint8_t d = k_kbd_digito[i];
 
+    if (s_kbd_hora) { hora_apply(i); return; }
     if (d != 0xFFU) { kbd_digit(d); return; }
     switch (i) {
     case 3U:  kbd_del();            break;
@@ -1117,6 +1304,7 @@ menu_t menu_open_id(void) { return s_open; }
 
 static void dibuja(void)
 {
+    if (s_open == MENU_HORA)         { hora_dibuja(); return; }
     if (s_open == MENU_PASO)         { ui_grid_draw(&s_grid); }
     else if (s_open == MENU_TECLADO) { ui_kbd_draw(&s_kbd); }
     else                             { ui_cfg_draw(&s_cfg); }
@@ -1124,9 +1312,17 @@ static void dibuja(void)
 
 static void menu_dibuja(void) { dibuja(); }
 
+/* Leaving the radio clock gives the radio back as it was: mode, filter,
+ * dial (upstream's hora_suelta()) - whichever way it is left. */
+static void suelta_hora(void)
+{
+    if (s_open == MENU_HORA) { hora_suelta(); }
+}
+
 void menu_close(void)
 {
     if (s_open == MENU_NONE) { return; }
+    suelta_hora();
     s_open    = MENU_NONE;
     s_pressed = -1;
     radio_screen_restore();
@@ -1142,6 +1338,7 @@ void menu_toggle(menu_t m)
     }
     s_det = DET_NINGUNO;
     if (s_open == m) { menu_close(); return; }
+    suelta_hora();
 
     s_pressed = -1;
     switch (m) {
@@ -1171,11 +1368,13 @@ void menu_teclado_open(void)
 {
     uint8_t i;
 
+    suelta_hora();
     s_det       = DET_NINGUNO;
     s_pressed   = -1;
     s_fe_value  = 0U;
     s_fe_digits = 0U;
     s_fe_point  = FE_NO_POINT;
+    s_kbd_hora  = 0U;
     memset(&s_kbd, 0, sizeof s_kbd);
     s_kbd.titulo  = tr("Frecuencia", "Frequency");
     s_kbd.pista   = tr("teclea y elige la unidad", "type it and pick the unit");
@@ -1198,6 +1397,10 @@ int menu_touch_down(uint16_t x, uint16_t y, int nuevo)
 
     if (s_open == MENU_NONE) { return 0; }
     if (y < UIG_Y || y >= UIG_Y + UIG_H) { return 0; }
+    if (s_open == MENU_HORA) {
+        if (nuevo) { s_pressed = 0; hora_toque(x, y, 1U); }
+        return 1;
+    }
     if (!nuevo) { mem_largo_poll(); return 1; }
 
     /* Decided on the press and kept to the lift, as upstream's
@@ -1251,6 +1454,8 @@ void menu_touch_up(void)
 
     if (h < 0 || s_open == MENU_NONE) { return; }
     s_pressed = -1;
+
+    if (s_open == MENU_HORA) { hora_toque(0U, 0U, 0U); return; }
 
     if (s_open == MENU_TECLADO) {
         s_kbd.pressed = -1;
@@ -1327,7 +1532,8 @@ static void elige(int8_t h)
         int8_t  cur = s_cfg.cursor;
 
         aj_toca(id);
-        if (id == AJ_TEMA || id == AJ_IDIOMA || s_det != DET_NINGUNO) { return; }  /* drawn already */
+        if (id == AJ_TEMA || id == AJ_IDIOMA || id == AJ_HORA
+            || s_det != DET_NINGUNO) { return; }  /* drawn already */
         s_cfg.cel[h].valor = aj_valor(id);
         s_cfg.cursor = cur;
         ui_cfg_draw_one(&s_cfg, h);
@@ -1385,6 +1591,7 @@ void menu_knob(int32_t d)
 
     if (s_open == MENU_NONE || d == 0) { return; }
     if (s_open == MENU_TECLADO) { return; }         /* upstream's: no knob */
+    if (s_open == MENU_HORA) { hora_knob(d); return; }
     if (s_open == MENU_AJUSTES && s_det != DET_NINGUNO) { det_add(d); return; }
 
     if (s_open == MENU_PASO) {
@@ -1433,6 +1640,7 @@ void menu_knob_press(void)
     int8_t c;
 
     if (s_open == MENU_NONE || s_open == MENU_TECLADO) { return; }
+    if (s_open == MENU_HORA) { hora_knob_press(); return; }
     if (s_open == MENU_AJUSTES && s_det != DET_NINGUNO) { det_close(); return; }
     c = (s_open == MENU_PASO) ? s_grid.cursor : s_cfg.cursor;
     if (c < 0) { c = cursor_ini(); }

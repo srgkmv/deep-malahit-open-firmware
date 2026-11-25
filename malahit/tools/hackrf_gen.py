@@ -962,6 +962,218 @@ def write_audio(x, a):
           f'carrier at {a.tone:.0f} Hz, snr {a.snr}')
 
 
+def wwv_frame(t):
+    """The 60 symbols of WWV's time code for the minute that BEGINS at t
+    (UTC), NIST SP 432 (the IRIG-H variant on 100 Hz): 0, 1, 2 = marker,
+    3 = second 0's hole. Bits are BCD, least significant first, each digit
+    in its own group: year units 4-7, minutes 10-13/15-17, hours
+    20-23/25-26, day of year 30-33/35-38/40-41, year tens 51-54; DST 2 and
+    55, leap second 3, DUT1 50/56-58 (all 0 here); markers at 9, 19, ...,
+    59."""
+    s = [0] * 60
+    s[0] = 3
+    for k in (9, 19, 29, 39, 49, 59):
+        s[k] = 2
+
+    def bcd(v, pos):
+        for i, p in enumerate(pos):
+            s[p] = (v >> i) & 1
+    y = t.year % 100
+    doy = t.timetuple().tm_yday
+    bcd(y % 10, (4, 5, 6, 7))
+    bcd(t.minute % 10, (10, 11, 12, 13))
+    bcd(t.minute // 10, (15, 16, 17))
+    bcd(t.hour % 10, (20, 21, 22, 23))
+    bcd(t.hour // 10, (25, 26))
+    bcd(doy % 10, (30, 31, 32, 33))
+    bcd((doy // 10) % 10, (35, 36, 37, 38))
+    bcd(doy // 100, (40, 41))
+    bcd(y // 10, (51, 52, 53, 54))
+    return s
+
+
+def wwv_envelope(a):
+    """WWV's AM envelope at FS_LO: the 100 Hz subcarrier at 18 % for 170,
+    470 or 770 ms from 30 ms into the second and at 3 % the rest, none in
+    second 0; the 5 ms tick of 1000 Hz at the top of each second (none at
+    29 and 59, as the station does); the 500 Hz tone at 50 % if --tone500.
+    --lead seconds of ticks and the low subcarrier before the first minute,
+    which starts at --start (UTC, HH:MM; the next minute plus one by
+    default)."""
+    import datetime as dt
+    now = dt.datetime.now(dt.timezone.utc).replace(second=0, microsecond=0)
+    if a.start:
+        hh, mm = (int(v) for v in a.start.split(':'))
+        t0 = now.replace(hour=hh, minute=mm)
+        if t0 <= now:
+            t0 += dt.timedelta(days=1)
+    else:
+        t0 = now + dt.timedelta(minutes=2)
+    n_s = FS_LO
+    syms = [-1] * int(a.lead)
+    for m in range(a.minutes):
+        syms += wwv_frame(t0 + dt.timedelta(minutes=m))
+    env = np.empty(len(syms) * n_s, dtype=np.float32)
+    tt = np.arange(n_s) / FS_LO
+    for k, sym in enumerate(syms):
+        sec = (k - int(a.lead)) % 60
+        ms = tt * 1000.0
+        m100 = np.full(n_s, 0.03)
+        if sym in (0, 1, 2):
+            alto = {0: 170.0, 1: 470.0, 2: 770.0}[sym]
+            m100[(ms >= 30.0) & (ms < 30.0 + alto)] = 0.18
+        if sym == 3:
+            m100[:] = 0.0
+        tabs = (k * n_s + np.arange(n_s)) / FS_LO
+        e = 1.0 + m100 * np.sin(2 * np.pi * 100.0 * tabs)
+        if a.tone500:
+            e += 0.5 * np.sin(2 * np.pi * 500.0 * tabs)
+        if sec not in (29, 59):
+            tick = ms < 5.0
+            e[tick] += 1.0 * np.sin(2 * np.pi * 1000.0 * tabs[tick])
+        env[k * n_s:(k + 1) * n_s] = e
+    first = t0.strftime('%Y-%m-%d %H:%M UTC')
+    return env, t0, (f'WWV time code, {a.minutes} min from {first} (day {t0.timetuple().tm_yday}), '
+                     f'{a.lead:.0f} s lead')
+
+
+def write_am_long(env, a, what):
+    """A long AM signal straight to int8 I/Q, in pieces: the envelope (real,
+    at FS_LO) interpolated linearly to the HackRF's rate - its content is
+    under 1.5 kHz, so the images at multiples of 48 kHz fall in sinc
+    nulls - and moved to --offset with a phase-continuous oscillator. All
+    of it at once would be gigabytes."""
+    up = a.rate // FS_LO
+    assert up * FS_LO == a.rate, 'the rate must be a multiple of 48 kHz'
+    scale = 110.0 / float(np.max(np.abs(env)))
+    w = 2 * np.pi * a.offset / a.rate
+    chunk = FS_LO                       # a second of envelope at a time
+    ph0 = 0.0
+    with open(a.out, 'wb') as f:
+        for i in range(0, len(env), chunk):
+            seg = env[i:i + chunk + 1]
+            if len(seg) < 2:
+                break
+            n_out = (len(seg) - 1) * up
+            xi = np.arange(n_out) / up
+            y = np.interp(xi, np.arange(len(seg)), seg) * scale
+            ph = ph0 + w * np.arange(n_out)
+            iq = np.empty(2 * n_out, dtype=np.int8)
+            iq[0::2] = np.clip(np.round(y * np.cos(ph)), -127, 127)
+            iq[1::2] = np.clip(np.round(y * np.sin(ph)), -127, 127)
+            iq.tofile(f)
+            ph0 = (ph0 + w * n_out) % (2 * np.pi)
+    print(f'{a.out}: {len(env) / FS_LO:.1f} s at {a.rate} Hz, {what}, '
+          f'offset {a.offset:.0f} Hz')
+
+
+RDS_OFS = {'A': 0x0FC, 'B': 0x198, 'C': 0x168, "C'": 0x350, 'D': 0x1B4}
+
+
+def rds_block(data, ofs):
+    """16 bits of data and the 10-bit check (IEC 62106: g(x) = x^10 + x^8 +
+    x^7 + x^5 + x^4 + x^3 + 1) plus the block's offset word, MSB first."""
+    reg = data << 10
+    for i in range(25, 9, -1):
+        if reg & (1 << i):
+            reg ^= 0x5B9 << (i - 10)
+    chk = (reg & 0x3FF) ^ RDS_OFS[ofs]
+    w = (data << 10) | chk
+    return [(w >> (25 - k)) & 1 for k in range(26)]
+
+
+def rds_group(a_, b_, c_, d_):
+    return rds_block(a_, 'A') + rds_block(b_, 'B') + rds_block(c_, 'C') + rds_block(d_, 'D')
+
+
+def rds_g0a(pi, ps, seg, tp=0, pty=0):
+    b_ = (0 << 12) | (0 << 11) | (tp << 10) | (pty << 5) | (0 << 4) | (1 << 3) | (0 << 2) | seg
+    d_ = (ord(ps[2 * seg]) << 8) | ord(ps[2 * seg + 1])
+    return rds_group(pi, b_, 0xE0CD, d_)              # AF: none (224), filler (205)
+
+
+def rds_g4a(pi, t, half_hours, tp=0, pty=0):
+    """Clock-time: MJD, UTC hour and minute, the local offset in half hours
+    - the time of the minute that begins where this group ends."""
+    import datetime as dt
+    mjd = (t.date() - dt.date(1858, 11, 17)).days
+    b_ = (4 << 12) | (0 << 11) | (tp << 10) | (pty << 5) | ((mjd >> 15) & 3)
+    c_ = ((mjd & 0x7FFF) << 1) | ((t.hour >> 4) & 1)
+    sign = 1 if half_hours < 0 else 0
+    d_ = ((t.hour & 0xF) << 12) | (t.minute << 6) | (sign << 5) | (abs(half_hours) & 0x1F)
+    return rds_group(pi, b_, c_, d_)
+
+
+def rds_long(a):
+    """Wide FM with a 19 kHz pilot and RDS at 57 kHz, no audio, straight to
+    int8 I/Q in one-second pieces: 0A groups with the PS, and a 4A
+    clock-time group placed so it ENDS at each minute's edge, which the
+    standard asks to within 0.1 s (and which rds.c's rds_hora_atraso_ms()
+    counts from). The bits differentially coded, biphase, at 1187.5 bit/s,
+    shaped at 152 kHz (128 samples a bit) and interpolated up."""
+    import datetime as dt
+    from scipy.signal import firwin, lfilter
+    now = dt.datetime.now(dt.timezone.utc).replace(second=0, microsecond=0)
+    t0 = now + dt.timedelta(minutes=2)
+    if a.start:
+        hh, mm = (int(v) for v in a.start.split(':'))
+        t0 = now.replace(hour=hh, minute=mm)
+        if t0 <= now:
+            t0 += dt.timedelta(days=1)
+    bps = 1187.5
+    total_s = a.lead + 60.0 * a.minutes + 2.0
+    n_grp = int(total_s * bps / 104) + 1
+    kind = ['0A'] * n_grp
+    when = {}
+    for i in range(a.minutes + 1):
+        edge = a.lead + 60.0 * i
+        g = int(round(edge * bps / 104.0)) - 1      # the group that ends nearest the edge
+        if 0 <= g < n_grp:
+            kind[g] = '4A'
+            when[g] = t0 + dt.timedelta(minutes=i)
+    bits, seg = [], 0
+    ps = (a.ps + ' ' * 8)[:8]
+    for g in range(n_grp):
+        if kind[g] == '4A':
+            bits += rds_g4a(a.pi, when[g], a.half_hours)
+        else:
+            bits += rds_g0a(a.pi, ps, seg)
+            seg = (seg + 1) & 3
+    e, prev = [], 0
+    for b in bits:                                   # differential coding
+        prev ^= b
+        e.append(prev)
+    sps = 128
+    fs_b = bps * sps                                 # 152 kHz
+    half = np.concatenate([np.ones(sps // 2), -np.ones(sps // 2)])
+    bb = np.concatenate([(1.0 if v else -1.0) * half for v in e])
+    bb = lfilter(firwin(301, 2600.0, fs=fs_b), 1.0, bb)
+    bb = np.roll(bb, -150)                           # the FIR's delay out
+    bb /= np.max(np.abs(bb))
+    w_off = 2 * np.pi * a.offset / a.rate
+    ph = 0.0
+    n_tot = int(total_s * a.rate)
+    with open(a.out, 'wb') as f:
+        for i0 in range(0, n_tot, a.rate):
+            n = np.arange(i0, min(i0 + a.rate, n_tot))
+            t = n / a.rate
+            rds = np.interp(t * fs_b, np.arange(len(bb)), bb, right=0.0)
+            m = a.dev_pilot * np.cos(2 * np.pi * 19000.0 * t) \
+                + a.dev_rds * rds * np.cos(2 * np.pi * 57000.0 * t) \
+                + a.dev_audio * np.sin(2 * np.pi * 1000.0 * t)
+            inc = 2 * np.pi * m / a.rate + w_off
+            phase = ph + np.cumsum(inc)
+            ph = float(phase[-1]) % (2 * np.pi)
+            iq = np.empty(2 * len(n), dtype=np.int8)
+            iq[0::2] = np.round(110.0 * np.cos(phase)).astype(np.int8)
+            iq[1::2] = np.round(110.0 * np.sin(phase)).astype(np.int8)
+            iq.tofile(f)
+    first = t0.strftime('%Y-%m-%d %H:%M UTC')
+    print(f'{a.out}: {total_s:.1f} s at {a.rate} Hz, WFM + RDS PI {a.pi:04X} PS "{ps}", '
+          f'4A from {first}, local offset {a.half_hours / 2:+.1f} h, offset {a.offset:.0f} Hz')
+    print(f'start the transfer {a.lead:.0f} s before {t0.strftime("%H:%M:%S")} UTC')
+
+
 def write_iq(x, a, what):
     """int8 I/Q interleaved, for hackrf_transfer -t."""
     y = resample_poly(x, a.rate // 1000, FS_LO // 1000)
@@ -1138,12 +1350,49 @@ def main():
     p.add_argument('--lead', type=float, default=1.0)
     p.set_defaults(build=ais_baseband, tone=0.0)
 
+    p = sub.add_parser('wwv', help='WWV time code (NIST SP 432) as AM, minutes long')
+    p.add_argument('--out', required=True)
+    p.add_argument('--offset', type=float, default=200e3)
+    p.add_argument('--rate', type=int, default=1_968_000,
+                   help='a multiple of 48 kHz (default 1.968 MHz)')
+    p.add_argument('--minutes', type=int, default=4)
+    p.add_argument('--lead', type=float, default=5.0,
+                   help='seconds of ticks before the first minute (default 5)')
+    p.add_argument('--start', default=None, help='UTC HH:MM of the first minute')
+    p.add_argument('--tone500', action='store_true', help='add the 500 Hz tone at 50 %%')
+    p.set_defaults(build=None)
+
+    p = sub.add_parser('rds', help='wide FM with RDS: PS (0A) and the clock-time (4A)')
+    p.add_argument('--out', required=True)
+    p.add_argument('--offset', type=float, default=200e3)
+    p.add_argument('--rate', type=int, default=2_016_000)
+    p.add_argument('--minutes', type=int, default=3)
+    p.add_argument('--lead', type=float, default=5.0)
+    p.add_argument('--start', default=None, help='UTC HH:MM of the first minute edge after the lead')
+    p.add_argument('--pi', type=lambda v: int(v, 16), default=0xC0DE)
+    p.add_argument('--ps', default='MALAHIT')
+    p.add_argument('--half-hours', type=int, default=4, help='local offset, half hours (+4 = +2:00)')
+    p.add_argument('--dev-pilot', type=float, default=6750.0)
+    p.add_argument('--dev-rds', type=float, default=2500.0)
+    p.add_argument('--dev-audio', type=float, default=50000.0,
+                   help='a 1 kHz mono tone: a station is never quite silent, and '
+                        "upstream's WFM takes an unswept carrier for the LO's leakage")
+    p.set_defaults(build=None)
+
     p = sub.add_parser('audio', help='any 12 kHz f32 audio file, sent as USB')
     common(p)
     p.add_argument('--in', dest='input', required=True, help='the f32 file at 12 kHz')
     p.set_defaults(build=audio_baseband, tone=1800.0)
 
     a = ap.parse_args()
+    if a.mode == 'rds':
+        rds_long(a)
+        return
+    if a.mode == 'wwv':
+        env, t0, what = wwv_envelope(a)
+        write_am_long(env, a, what)
+        print(f'start the transfer {a.lead:.0f} s before {t0.strftime("%H:%M:%S")} UTC')
+        return
     x, what = a.build(a)
     if a.fm > 0.0:
         # the audio an SSB receiver would hear, as the modulation of an FM

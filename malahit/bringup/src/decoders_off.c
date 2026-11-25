@@ -81,14 +81,7 @@ uint8_t hfdl_modo_activo(void) { return 0U; }
 void    hfdl_modo_mete(const float *i_in, const float *q_in, uint32_t n)
 { (void)i_in; (void)q_in; (void)n; }
 
-/* The time-signal decoder. Off means demod_am.c never asks the other
- * four, but they have to exist for it to link. */
-uint8_t        dcf77_activo(void) { return 0U; }
-void           dcf77_feed(float m) { (void)m; }
-float          dcf77_fase_iq(float i, float q) { (void)i; (void)q; return 0.0f; }
-uint8_t        dcf77_usa_fase(hora_emisora_t e) { (void)e; return 0U; }
-uint8_t        dcf77_submuestras(hora_emisora_t e) { (void)e; return 1U; }
-hora_emisora_t dcf77_emisora(void) { return (hora_emisora_t)0; }
+/* dcf77_*: the real ones since 24/11/2026 (dcf77.c, hora_*.c, step 56) */
 
 /*
  * Upstream asks this at the top of every block: sdr_rx.c on the DEEPSDR

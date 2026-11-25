@@ -79,6 +79,10 @@ typedef struct {
     uint8_t  cw_aprende;    /* v4: CW learning, 1 off, 2 on; 0 = not stored (off) */
     uint8_t  wfx_lpm;       /* v4: WEFAX line rate, upstream's index + 1;
                                0 = not stored (its default, 120) */
+    uint8_t  huso;          /* v4: the time zone, quarter hours + 64 (1..120);
+                               0 = not stored (upstream's +1:00) - step 56 */
+    uint8_t  huso_medido;   /* v4: 2 = a station measured it, 1 = a city;
+                               0 = not stored */
 } settings_t;
 
 #define SET_AJ_NB_MASK      0x03U   /* blanker level 0-3 */

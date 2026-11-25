@@ -33,7 +33,8 @@ typedef enum {
     MENU_PASO,
     MENU_AJUSTES,
     MENU_TECLADO,       /* the frequency keypad: no button of its own */
-    MENU_MEM            /* the memory channels: the MEM chip in the header */
+    MENU_MEM,           /* the memory channels: the MEM chip in the header */
+    MENU_HORA           /* the radio clock, Settings > Digital (src/hora.c, step 56) */
 } menu_t;
 
 /* Which screen is up; MENU_NONE when the spectrum is showing. The main
@@ -48,6 +49,8 @@ void menu_close(void);
 /* A tap on the frequency in the header: upstream's keypad (ui_kbd.c),
  * the entry empty. Over another screen it takes its place. */
 void menu_teclado_open(void);
+void menu_hora_open(void);      /* a tap on the clock: upstream's KBD_HORA (step 56) */
+void menu_hora_tic(void);       /* once a second: the keypad's ticking second */
 
 /* The memory channels (upstream's banco.c, MEM.CSV in the FRAM): load
  * them at boot. The screen is menu_toggle(MENU_MEM). */
@@ -183,5 +186,8 @@ void        radio_screen_restore(void);
 
 /* The action bar's state changed (which screen is open). */
 void        radio_act_refresh(void);
+
+/* The clock was set: the header's corner now, not at the next second. */
+void        radio_reloj_repinta(void);
 
 #endif /* MALAHIT_MENUS_H */

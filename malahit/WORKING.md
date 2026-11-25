@@ -43,15 +43,21 @@ Console: UART7 at 115200 on package pins 37 (PE7, RX) and 38 (PE8, TX).
 There is no J6 header on this unit; the leads go to the pins.
 
 ```bash
-stty -F /dev/ttyUSB0 115200 raw -echo -crtscts
-cat /dev/ttyUSB0
+CON=/dev/serial/by-id/usb-Prolific_Technology_Inc._USB-Serial_Controller-if00-port0
+stty -F $CON 115200 raw -echo -crtscts
+cat $CON
 ```
+
+**By its by-id name, never ttyUSBn** (the owner, 24/11/2026): a USB
+re-enumeration moved the adapter from ttyUSB0 to ttyUSB2, the reader on
+ttyUSB0 died without a word and a boot went unlogged. The by-id link
+follows the adapter. (`ttyUSB0` in older notes below is this adapter.)
 
 **ONE reader at a time.** Two `cat`s on the port split the bytes
 between them and both logs come out with every other character gone -
 which looks exactly like a firmware fault. A `timeout N cat` left
 running from the previous capture is the usual second reader:
-`pkill -f '^timeout [0-9]+ cat /dev/ttyUSB0$'` before starting one.
+`pkill -f '^timeout [0-9]+ cat /dev/(ttyUSB0|serial/by-id/.*Prolific.*)$'` before starting one.
 
 Set `stty` **every time**. The port reverts to its defaults when the
 last reader closes, and the next `cat` then reads at the wrong rate —

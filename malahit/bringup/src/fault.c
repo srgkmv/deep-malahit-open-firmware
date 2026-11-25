@@ -60,6 +60,23 @@ void fault_record(uint32_t *frame, uint32_t exc_return)
 
     uint32_t prev = (r->magic == FAULT_MAGIC) ? r->count : 0U;
 
+    /*
+     * A FAULT IN THE PARK KEEPS THE FIRST ONE - 25/11/2026. A fault taken
+     * inside an interrupt handler returns to Handler mode, and landing
+     * fault_park() there can fault again (INVPC); it did, 394 million
+     * times, at 103.1 MHz, and each pass wrote fault_park over the record
+     * of what had really crashed. A fault whose PC is in fault_park only
+     * counts, and parks without returning: the first record stays.
+     */
+    if (r->magic == FAULT_MAGIC
+        && frame[6] >= ((uint32_t)(void *)fault_park & ~1UL)
+        && frame[6] <  ((uint32_t)(void *)fault_park & ~1UL) + 0x100UL) {
+        r->count = prev + 1U;
+        __DSB();
+        __disable_irq();
+        for (;;) { IWDG1->KR = 0xAAAAU; }
+    }
+
     r->magic      = FAULT_MAGIC;
     r->ipsr       = __get_IPSR();
     r->exc_return = exc_return;
