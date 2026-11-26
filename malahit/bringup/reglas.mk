@@ -409,7 +409,16 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_kbd.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/spec_snap.c
 # banco.c  the memory channels: four banks of fifteen, upstream's table
 #          and its MEM.CSV, kept in the FRAM by src/memfram.c (22/11/2026)
+#          - still there since the SPI flash came (step 60): banco.c's
+#          two calls to the disk are renamed, for it and for memfram.c
+#          alone, so upstream's real spi_flash.c can link beside them.
+#          The same -D on both sides keeps memfram.c's definitions
+#          checked against upstream's prototypes in spi_flash.h.
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/banco.c
+MEMFRAM_RENAME  = -Dspi_flash_read_file_by_name=memfram_read_file_by_name
+MEMFRAM_RENAME += -Dspi_flash_write_or_update_file=memfram_write_or_update_file
+$(BUILD_DIR)/up_banco.o: CFLAGS_EXTRA_UPSTREAM += $(MEMFRAM_RENAME)
+$(BUILD_DIR)/memfram.o:  CFLAGS += $(MEMFRAM_RENAME)
 # rds.c, rds_pi.c  RDS on WFM: the decoder upstream's WFM hook feeds, and
 #                  its table of networks by PI code (22/11/2026)
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/rds.c
@@ -623,6 +632,63 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_hora.c
 #            each only its alphabet; its literals #ifndef in ui_qth.h/.c,
 #            this port's in malahit_layout.h (step 57)
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_qth.c
+# spi_flash.c  the SPI NOR flash, upstream's whole driver - commands,
+#              erase/program, the FAT12 volume, the async save - over
+#              this port's bus: src/spi_nor.c (SPI2, shared with the
+#              FRAM, CS PB0), put in place of upstream's bit-banged one
+#              by its #ifndef SPI_FLASH_TRANSPORTE (step 60)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/spi_flash.c
+$(BUILD_DIR)/up_spi_flash.o: CFLAGS_EXTRA_UPSTREAM += '-DSPI_FLASH_TRANSPORTE="spi_nor_up.h"'
+# With the bus replaced the file needs nothing of the GD32's header, and
+# compat/gd32f4xx.h would bring stm32h7xx.h - whose FLASH_SECTOR_SIZE is
+# the H7's own 128 kB, redefined to the NOR's 4 kB at spi_flash.c:37. Its
+# guard defined, the include is empty (the RM68120_EXMC_H trick, above).
+$(BUILD_DIR)/up_spi_flash.o: CFLAGS_EXTRA_UPSTREAM += -DGD32F4XX_H
+# disco.c    the volume as 512-byte blocks (the USB disk's view, and the
+#            formatter's): the chip less upstream's top megabyte
+# formato.c  upstream's formatter: FAT12, 4 kB clusters, two FATs
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/disco.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/formato.c
+# zona_alta.c  the high zone's directory: BD.BIN's sections, their sums
+# emisoras.c   the broadcast stations' database, read off the high zone
+# icao24_db.c  HFDL's aircraft models, in place of its stub (decoders_off.c)
+#              - all three opened by src/bd.c, upstream main.c's way
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/zona_alta.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/emisoras.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/icao24_db.c
+#
+# THE USB DISK (step 60): GigaDevice's USB library as upstream carries it,
+# usb/GD32F4xx_usb_library - the DWC2 driver, the device core, the MSC
+# class - and upstream's bootloader's glue to the disk, boot/disco_msc.c,
+# all in place; objects gdusb_*. The STM32H743's OTG_FS is the same
+# Synopsys core. compat/usb_malahit.h is forced in: the H7's base address,
+# its serial number's and its GCCFG, through the #ifndefs upstream's
+# library now has (PROCEDENCIA.md). -I../../boot first: its usbd_conf.h
+# is the disk's (usb/'s is the application's serial port). usb_conf.h's
+# FIFO split is upstream's: 320 words, which the H7's 1024 hold.
+# src/usbdisco.c is the hardware - PLL3 at 48 MHz, PA11/PA12, the
+# interrupt - and the mode; it needs the same headers.
+#
+USB_DIR     = ../../usb
+USBLIB_DIR  = $(USB_DIR)/GD32F4xx_usb_library
+USB_SOURCES  = $(USBLIB_DIR)/driver/Source/drv_usb_core.c
+USB_SOURCES += $(USBLIB_DIR)/driver/Source/drv_usb_dev.c
+USB_SOURCES += $(USBLIB_DIR)/driver/Source/drv_usbd_int.c
+USB_SOURCES += $(USBLIB_DIR)/device/core/Source/usbd_core.c
+USB_SOURCES += $(USBLIB_DIR)/device/core/Source/usbd_enum.c
+USB_SOURCES += $(USBLIB_DIR)/device/core/Source/usbd_transc.c
+USB_SOURCES += $(USBLIB_DIR)/device/class/msc/Source/usbd_msc_core.c
+USB_SOURCES += $(USBLIB_DIR)/device/class/msc/Source/usbd_msc_bbb.c
+USB_SOURCES += $(USBLIB_DIR)/device/class/msc/Source/usbd_msc_scsi.c
+USB_SOURCES += ../../boot/disco_msc.c
+USB_CFLAGS  = -I../../boot -I$(USB_DIR)
+USB_CFLAGS += -I$(USBLIB_DIR)/driver/Include -I$(USBLIB_DIR)/device/core/Include
+USB_CFLAGS += -I$(USBLIB_DIR)/ustd/common -I$(USBLIB_DIR)/device/class/msc/Include
+USB_CFLAGS += -I$(USBLIB_DIR)/ustd/class/msc
+USB_CFLAGS += -DUSE_USB_FS -include usb_malahit.h
+# GigaDevice's callbacks take parameters they do not use (upstream builds
+# without -Wextra): two dozen warnings that say nothing.
+USB_CFLAGS += -Wno-unused-parameter
 #
 # THE BAND TABLE IS UPSTREAM'S, GENERATED, NOT COPIED: k_band_presets[]
 # out of User/main.c by the script the host render uses for the same
@@ -790,6 +856,7 @@ OBJECTS += $(addprefix $(BUILD_DIR)/,$(notdir $(ASM_SOURCES:.S=.o)))
 OBJECTS += $(addprefix $(BUILD_DIR)/up_,$(notdir $(UPSTREAM_SOURCES:.c=.o)))
 OBJECTS += $(addprefix $(BUILD_DIR)/dsp_,$(notdir $(DSP_SOURCES:.c=.o)))
 OBJECTS += $(addprefix $(BUILD_DIR)/ftx_,$(notdir $(FT8LIB_SOURCES:.c=.o)))
+OBJECTS += $(addprefix $(BUILD_DIR)/gdusb_,$(notdir $(USB_SOURCES:.c=.o)))
 vpath %.c $(sort $(dir $(C_SOURCES)))
 
 .PHONY: all ram flash size clean FORCE
@@ -880,6 +947,18 @@ $(BUILD_DIR)/dsp_%.o: %.c $(BUILD_RULES) | $(BUILD_DIR)
 # -std: GCC's gnu17); the function itself is libc.a's, as strcpy is.
 $(BUILD_DIR)/ftx_%.o: $(FT8LIB_DIR)/ft8/%.c $(BUILD_RULES) | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) -I$(FT8LIB_DIR) -D_DEFAULT_SOURCE $< -o $@
+
+# The USB library and boot/disco_msc.c (USB_SOURCES above): five source
+# directories, so a pattern rule per directory.
+$(BUILD_DIR)/gdusb_%.o: $(USBLIB_DIR)/driver/Source/%.c $(BUILD_RULES) | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $(USB_CFLAGS) $< -o $@
+$(BUILD_DIR)/gdusb_%.o: $(USBLIB_DIR)/device/core/Source/%.c $(BUILD_RULES) | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $(USB_CFLAGS) $< -o $@
+$(BUILD_DIR)/gdusb_%.o: $(USBLIB_DIR)/device/class/msc/Source/%.c $(BUILD_RULES) | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $(USB_CFLAGS) $< -o $@
+$(BUILD_DIR)/gdusb_%.o: ../../boot/%.c $(BUILD_RULES) | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $(USB_CFLAGS) $< -o $@
+$(BUILD_DIR)/usbdisco.o: CFLAGS += $(USB_CFLAGS)
 
 #
 # THE SECOND KNOB'S OBJECT, and it lives DOWN HERE for a reason that

@@ -459,7 +459,11 @@ g_pfnVectors:
     .word Default_Handler
     .endr
     .word UART7_IRQHandler          /* 82 - the console's transmit ring */
-    .rept 150 - 82 - 1              /* 83..149 */
+    .rept 101 - 82 - 1              /* 83..100 */
+    .word Default_Handler
+    .endr
+    .word OTG_FS_IRQHandler         /* 101 - the USB disk (usbdisco.c) */
+    .rept 150 - 101 - 1             /* 102..149 */
     .word Default_Handler
     .endr
 
@@ -490,3 +494,4 @@ g_pfnVectors:
     weak_handler DMA1_Stream0_IRQHandler
     weak_handler SPI3_IRQHandler
     weak_handler UART7_IRQHandler
+    weak_handler OTG_FS_IRQHandler

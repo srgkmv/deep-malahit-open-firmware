@@ -11,6 +11,10 @@
  *   PB14  SPI2_FRAM_MISO  AF5
  *   PB15  SPI2_FRAM_MOSI  AF5
  *
+ * Since 26/11/2026 the bus has a second chip, the owner's W25Q64 SPI NOR
+ * flash stacked on this one with its /CS on PB0 (spi_nor.h). fram_init()
+ * drives that select high too: this file owns the bus.
+ *
  * /WP and /HOLD are tied to 3.3V on the board, so neither is ours to
  * drive: hardware write protection is off, and nothing can pause a
  * transfer.
@@ -71,5 +75,16 @@ void fram_write(uint32_t addr, const uint8_t *buf, uint32_t n);
 
 /* SPI waits that ran out - each one a byte that did not move. 0. */
 uint32_t fram_timeouts(void);
+
+/*
+ * THE BUS AGAINST AN INTERRUPT (step 60). The USB disk's interrupt reads
+ * and writes the SPI flash on this bus (usbdisco.h); fram_bus_irq() names
+ * it while the disk is on (-1 when off), and every transaction started
+ * from thread mode - this file's, and spi_nor.c's - masks it from select
+ * to deselect with fram_bus_coge()/fram_bus_suelta().
+ */
+void fram_bus_irq(int32_t irqn);
+void fram_bus_coge(void);
+void fram_bus_suelta(void);
 
 #endif /* MALAHIT_FRAM_H */

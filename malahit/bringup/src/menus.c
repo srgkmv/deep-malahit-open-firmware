@@ -27,6 +27,7 @@
 #include "board.h"         /* src/ - board_millis(), for the long press */
 #include "backlight.h"     /* ../../User - upstream's API, src/backlight.c */
 #include "estereo.h"      /* src/ - FM stereo: Auto / Mono */
+#include "usbdisco.h"     /* src/ - the USB disk, Device page (step 60) */
 
 /* What ui_cfg.c draws the range line in, defined once in fonts_menu.c. */
 extern const gfx2_font_t font_ui_10;
@@ -349,7 +350,7 @@ typedef enum {
     AJ_TEMA, AJ_PALETA, AJ_ESTILO, AJ_VOL,
     AJ_SUAV, AJ_PUENTE, AJ_TRAZA,
     AJ_IDIOMA, AJ_BRILLO, AJ_ESTEREO,
-    AJ_HORA, AJ_QTH
+    AJ_HORA, AJ_QTH, AJ_USB
 } aj_id_t;
 
 /*
@@ -393,6 +394,10 @@ static const struct { texto_t nombre; uint8_t pag; uint8_t id; } k_aj[] = {
     { T("Hora por radio", "Radio clock"), AJ_PAG_DIGITAL, AJ_HORA },  /* upstream's, step 56 */
     { T("QTH", "QTH"),                 AJ_PAG_EQUIPO,   AJ_QTH    },   /* upstream's, step 57: before Idioma */
     { T("Idioma", "Language"),         AJ_PAG_EQUIPO,   AJ_IDIOMA },
+    /* this port's own (step 60): upstream's USB disk is in its
+     * bootloader; here a tap switches it on and off (usbdisco.h). Not
+     * kept in the FRAM: every power-on starts with it off. */
+    { T("Disco USB", "USB disk"),      AJ_PAG_EQUIPO,   AJ_USB    },
 };
 #define N_AJ ((uint8_t)(sizeof k_aj / sizeof k_aj[0]))
 
@@ -500,6 +505,10 @@ static const char *aj_valor(uint8_t id)
         const char *g = ft8_decoder_get_own_grid();
         return (g != 0 && g[0] != '\0') ? g : tr("sin poner", "not set");
     }
+    case AJ_USB:
+        return !usbdisco_activo() ? tr("Apagado", "Off")
+             : usbdisco_con_pc()  ? tr("Con el PC", "PC")
+                                  : tr("Esperando", "Waiting");
     default:        return "";
     }
 }
@@ -657,6 +666,10 @@ static void aj_toca(uint8_t id)
         qth_abre();
         radio_act_refresh();
         return;
+    case AJ_USB:
+        /* Off: detaches - the PC should have ejected it first. */
+        if (usbdisco_activo()) { usbdisco_cierra(); } else { usbdisco_abre(); }
+        break;
     case AJ_SQL:   det_open(DET_SQL); return;
     case AJ_AGC:   radio_agc_cycle(); break;
     case AJ_BW:    radio_bw_cycle();  break;

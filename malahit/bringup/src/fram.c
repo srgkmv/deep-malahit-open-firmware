@@ -20,6 +20,7 @@
 
 #define CS_PORT     GPIOB
 #define CS_PIN      12U
+#define NOR_CS_PIN  0U          /* PB0, the flash's - see fram_init() */
 
 #define WAIT_LIMIT  2000000U
 
@@ -27,8 +28,36 @@ static uint32_t s_timeouts;
 
 uint32_t fram_timeouts(void) { return s_timeouts; }
 
+/* The interrupt that may use SPI2 too - the USB disk's - or -1. */
+static volatile int32_t s_bus_irq = -1;
+
+void fram_bus_irq(int32_t irqn) { s_bus_irq = irqn; }
+
+/*
+ * Masked for the length of one transaction, from thread mode only: from
+ * an interrupt the bus is already ours (that interrupt is the lowest
+ * priority, so nothing else on SPI2 runs under it). Transactions do not
+ * nest, so a plain disable/enable pair is enough - and between two of
+ * them the bus is idle, both selects high, which is all the disk's
+ * interrupt needs to find.
+ */
+void fram_bus_coge(void)
+{
+    int32_t n = s_bus_irq;
+
+    if (n >= 0 && __get_IPSR() == 0U) { NVIC_DisableIRQ((IRQn_Type)n); }
+}
+
+void fram_bus_suelta(void)
+{
+    int32_t n = s_bus_irq;
+
+    if (n >= 0 && __get_IPSR() == 0U) { NVIC_EnableIRQ((IRQn_Type)n); }
+}
+
 static void cs_low(void)
 {
+    fram_bus_coge();
     CS_PORT->BSRR = (1UL << (CS_PIN + 16U));
 }
 
@@ -42,6 +71,7 @@ static void cs_high(void)
 {
     CS_PORT->BSRR = (1UL << CS_PIN);
     for (uint32_t i = 0; i < 8U; i++) { (void)CS_PORT->IDR; }
+    fram_bus_suelta();
 }
 
 /*
@@ -79,6 +109,16 @@ void fram_init(uint32_t mbr)
     CS_PORT->OTYPER &= ~(1UL << CS_PIN);
     CS_PORT->MODER  = (CS_PORT->MODER & ~(3UL << (CS_PIN * 2U)))
                     | (1UL << (CS_PIN * 2U));
+
+    /* And the bus's other chip, the SPI NOR flash on PB0 (spi_nor.h),
+     * driven high the same way before the bus first moves - whether or
+     * not anything ever talks to it, it must not hear the FRAM's READ
+     * (its own READ) or WREN + WRITE (its page program). Its 10k pull-up
+     * holds it until here. */
+    GPIOB->BSRR   = (1UL << NOR_CS_PIN);
+    GPIOB->OTYPER &= ~(1UL << NOR_CS_PIN);
+    GPIOB->MODER  = (GPIOB->MODER & ~(3UL << (NOR_CS_PIN * 2U)))
+                  | (1UL << (NOR_CS_PIN * 2U));
 
     gpio_af(13U, 0U);       /* SCK  */
     gpio_af(14U, 1U);       /* MISO - pulled up: nobody driving reads 0xFF */

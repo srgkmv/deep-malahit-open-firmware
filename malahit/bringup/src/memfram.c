@@ -25,6 +25,13 @@
  * a read takes the newest slot whose CRC checks. A power cut in the middle
  * of a write leaves the other slot whole, so the bank comes back one save
  * behind rather than empty.
+ *
+ * SINCE THE SPI FLASH CAME (step 60, 26/11/2026) upstream's real
+ * spi_flash.c is linked too, with these two names. This file and banco.c
+ * are compiled with -Dspi_flash_read_file_by_name=memfram_read_file_by_name
+ * (and the write's likewise, reglas.mk MEMFRAM_RENAME): the functions
+ * below are memfram_*() in the object, and banco.c still reaches them,
+ * not the flash. MEM.CSV stays in the FRAM.
  */
 #define MEMF_ADDR     0x4200U
 #define MEMF_SLOT     0x0C00U                   /* 3 kB */

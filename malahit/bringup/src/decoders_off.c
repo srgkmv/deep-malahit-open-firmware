@@ -81,21 +81,8 @@ OFF_U32(analiz_activo,      analiz_feed)
 
 /* dcf77_*: the real ones since 24/11/2026 (dcf77.c, hora_*.c, step 56) */
 
-/*
- * HFDL's aircraft models (step 59): upstream reads them out of ICAO24.BIN on
- * the external flash volume (User/icao24_db.c, over fat32.c and spi_flash.c).
- * This radio has no external flash, so the honest answer is "not found",
- * and HFDL's Model column stays empty - which is what upstream shows when
- * the file is missing. The database could live in the H743's own bank 2.
- */
-#include <stdbool.h>
-#include "icao24_db.h"
-bool icao24_db_lookup(uint32_t icao24, char *out, uint32_t out_len)
-{
-    (void)icao24;
-    if (out != (char *)0 && out_len > 0U) { out[0] = '\0'; }
-    return false;
-}
+/* icao24_db_lookup: the real one since step 60 (icao24_db.c, over BD.BIN's
+ * aircraft section in the SPI flash's high zone - src/bd.c) */
 
 /*
  * Upstream asks this at the top of every block: sdr_rx.c on the DEEPSDR

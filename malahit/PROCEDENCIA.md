@@ -205,6 +205,40 @@ and each is recorded here so the divergence is never a surprise:
   `hfdlcols` green.** And `User/hfdl_ram.c` is now compiled here as it is
   (it was replaced by src/prestamo.c's own three calls until step 58).
 
+- Step 60, 26/11/2026 (the SPI flash and the USB disk):
+  - `User/spi_flash.c` - its bit-banged GD32 bus (the delay, the pins,
+    `spi_xfer_byte()`, the GPIO part of `spi_flash_init()`) under `#ifndef
+    SPI_FLASH_TRANSPORTE`; the port defines it as `"spi_nor_up.h"`, which
+    puts `src/spi_nor.c` (SPI2) in its place. **The DEEPSDR's object
+    identical** (disassembly, data, section sizes).
+  - `usb/GD32F4xx_usb_library/driver/Include/drv_usb_regs.h` -
+    `USBFS_REG_BASE` / `USBHS_REG_BASE` under `#ifndef`;
+    `device/core/Include/usbd_enum.h` - `DEVICE_ID1..3` and `DEVICE_ID`
+    (the serial number's addresses) under `#ifndef`;
+    `driver/Source/drv_usb_core.c` - turning the embedded PHY on goes
+    through `USB_PHY_ENCIENDE()` when it is defined (the STM32H7's GCCFG
+    gives bits 18, 19 and 21 other meanings);
+    `device/core/Source/usbd_core.c` - `USB_MODO_ESPERA()` after
+    `usb_curmode_set()` in `usbd_init()` when it is defined (the core
+    takes up to 25 ms to change mode and drops device-register writes
+    until then; the H7's core starts as a host). The port's values are in
+    `compat/usb_malahit.h`. **The DEEPSDR's application and its three
+    bootloaders (customboot, _470, _f470vg) identical to the byte**, after
+    each of these edits.
+  - Compiled in place, unmodified otherwise: `User/spi_flash.c`,
+    `User/disco.c`, `User/formato.c`, `User/zona_alta.c`,
+    `User/emisoras.c`, `User/icao24_db.c` (BD.BIN's high zone; upstream
+    main.c's loading of it is rewritten in `src/bd.c`, with the same
+    calls); GigaDevice's USB library as upstream
+    carries it - `drv_usb_core.c`, `drv_usb_dev.c`, `drv_usbd_int.c`,
+    `usbd_core.c`, `usbd_enum.c`, `usbd_transc.c`, `usbd_msc_core.c`,
+    `usbd_msc_bbb.c`, `usbd_msc_scsi.c` (BSD-3-Clause, Copyright (c) 2026
+    GigaDevice Semiconductor Inc., stated in each file; its headers
+    `usb/usb_conf.h` and `boot/usbd_conf.h` too) - and upstream's
+    `boot/disco_msc.c`. `User/banco.c` and `src/memfram.c` are compiled
+    with its two disk calls renamed (`MEMFRAM_RENAME`), as `encoder.c`'s
+    second copy is below: not a modification.
+
 - `deepsdr-ui/tools/gen_temas.py` — 21/11/2026, for the port's English:
   it read k_temas[]'s `T("es", "en")` and kept only the Spanish; it now
   emits the English name and description too, as two fields appended at

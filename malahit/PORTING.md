@@ -197,6 +197,10 @@ Later: a W25Q128 fits on the existing SPI2 bus beside the FRAM, needing only a
 second chip select from one of the free pins on header J6. Upstream already
 sizes the chip at boot, so no recompile is needed once it is there.
 
+**Done 26/11/2026 (step 60):** a W25Q64 (8 MB) stacked on the FRAM, its
+/CS on PB0 - this unit has no J6. Upstream's driver and formatter, a 7 MB
+FAT12 volume, and the USB disk as a mode of the application.
+
 ### 3.4 The H7 itself
 
 Things the M4 did not have and that will bite:
@@ -2365,6 +2369,101 @@ Each step should end with something visible on the radio.
    42.7 ms in USB, 14.7 in HFDL on noise, 15.8 worst during bursts, no SAI
    overrun; the main loop's worst decoders' pass 83 ms (the Viterbi).
    Flash image 477 232 bytes.
+60. **The SPI flash, and the USB disk.** *26/11/2026, from flash.* The
+   owner soldered a Winbond W25Q64CV (8 MB, a part salvaged off a PC
+   board - it held a Phoenix BIOS image, NVRAM store "EVSA" at 0x701000)
+   stacked on the FRAM D11, every pin in parallel but /CS, which goes to
+   PB0 (LQFP 34) with its own 10k pull-up - measured over SWD: PB0 reads
+   1 against the H7's internal pull-down. Before a line was written the
+   chip was read over SWD by driving SPI2 by hand on the running radio
+   (halted, both selects checked high first): JEDEC EF 40 17, SR1 00 (no
+   block protection), SFDP present, serial ca62a031 43603035.
+   **The driver is upstream's whole User/spi_flash.c** - commands, erase
+   and program, the FAT12 volume, the async save - compiled in place; its
+   bit-banged GD32 bus is swapped under an `#ifndef SPI_FLASH_TRANSPORTE`
+   (upstream edit; the DEEPSDR's object identical) for `src/spi_nor.c`:
+   SPI2 at fram_init()'s 15 MHz, ENDLESS runs (TSIZE 0) from select to
+   deselect, CSUSP/SUSP to end one - the sequence checked over SWD first.
+   fram.c owns the bus and now drives PB0 high too, before the bus first
+   moves. 691 kB/s reading (the wire's ceiling is 1830: a byte's register
+   polling costs more than its clocks - enough for files and for USB full
+   speed; 30 MHz for the NOR alone is the obvious next step if a use needs
+   it). The boot log says JEDEC, size, serial, SR1/SR2 (block protection
+   loudly), the volume's state, and runs upstream's repair of a write a
+   power cut interrupted. `banco.c`'s two disk calls go on to MEM.CSV in
+   the FRAM (src/memfram.c), renamed for those two objects
+   (`MEMFRAM_RENAME`): the owner's channels stay where they are.
+   **The chip, tested whole** (`nor_prueba`, over SWD): erase 8 MB in 14.4
+   s (128 blocks of 64 kB), blank check, a pattern hashed from each word's
+   address programmed into all 32 768 pages (48 s) and read back: 0 bad
+   bytes; erased again, blank. Then upstream's formatter (`formato.c`,
+   `nor_formatea`): 7 MB FAT12, 14 336 blocks of 512, 4 kB clusters, two
+   FATs, writable; `formato_comprueba()` wrote PRUEBA.TXT through the FAT
+   and read it back. Free 7148 kB. The top megabyte is upstream's high
+   zone (BD.BIN, the map), still empty.
+   **The USB disk** - upstream keeps it in its BOOTLOADER (boot/boot_main.c,
+   boot/disco_msc.c); this radio's bootloader is ST's ROM, so here it is a
+   mode of the application (`src/usbdisco.c`). GigaDevice's USB library as
+   upstream carries it, in place (objects gdusb_*): the STM32H743's OTG_FS
+   is the same Synopsys DWC2 core as the GD32's USBFS. Three upstream
+   `#ifndef`s, each defaulting to the GD32 (all four DEEPSDR binaries
+   identical, the application and three bootloaders): the core's base
+   address (drv_usb_regs.h), the chip's serial number's (usbd_enum.h -
+   the GD32's address is a bus fault on the H7), and turning the PHY on
+   (drv_usb_core.c: in the H7's GCCFG bits 18/19 are charger detection,
+   which takes D+/D- over, and 21 SENSES VBUS where the GD32's ignores it;
+   here PWRDWN alone and the B-session forced valid, as ST's driver does
+   without VBUS sensing - VBUS reaches PA9 only through JP2).
+   `compat/usb_malahit.h`, forced into those objects, says the H7's
+   values. The hardware: PLL3 (free) 22/11 x 240 / 10 = 48 MHz, the USB
+   supply detector, PA11/PA12 AF10, OTG_FS_IRQ the LOWEST priority (the
+   class reads and writes the flash inside it, ~70 ms for a 4 kB write;
+   audio, SysTick, the panel and the console preempt it). The interrupt
+   shares SPI2 with the FRAM: fram.c masks it from select to deselect of
+   every transaction started from thread mode (`fram_bus_irq()`), and
+   spi_nor.c does the same. usbd_init()'s waits have no way out, so
+   usbdisco_abre() starts nothing unless PLL3 locked and the USB supply
+   said ready.
+   **The first run did not enumerate**, and the registers said why:
+   DCTL 0x00000002 (soft disconnect still set), DCFG's speed 00, GINTSTS
+   "mode mismatch". GigaDevice's usbd_init() forces device mode and writes
+   the device registers at once; the DWC2 core takes up to 25 ms to switch,
+   drops what comes before, and the H7's core leaves reset as a HOST (PA10,
+   ID, is not its input here). Set by hand over SWD - DCFG |= 3, SDIS
+   cleared - the PC enumerated "DEEPSDR Radio Disk", 14 336 blocks, and
+   mounted it. A fourth upstream `#ifdef`, `USB_MODO_ESPERA` after
+   usb_curmode_set() in usbd_core.c (DEEPSDR's four binaries identical
+   again); the port waits for GINTSTS.CMOD = 0, as ST's driver does: **7
+   ms** on this chip. The boot of the fixed image enumerated by itself.
+   **On the PC** (Linux, vfat): PRUEBA.TXT as the radio wrote it; 256 kB
+   of random data written in 2.7 s with sync (~94 kB/s: an erase and
+   sixteen pages per 4 kB), read back past the page cache (O_DIRECT) in
+   0.84 s (~300 kB/s), the same SHA-256 - and again after a power cycle of
+   the radio. The class: 228 reads, 3 writes, 0 failures.
+   **Switched from the radio**: Settings > Device > "USB disk" (this
+   port's own cell): a tap on, a tap off; the value Off / Waiting / PC
+   (configured by a host). Not kept in the FRAM - every power-on starts
+   with it off. Eject on the PC before switching it off.
+   **BD.BIN** (upstream's databases, 528 384 bytes, the repo root's) by
+   upstream's path: copied to the USB disk from the PC (5 s, read back
+   past the cache), and loaded AT BOOT by `src/bd.c` - upstream main.c's
+   datos_arranca() / datos_al_arrancar() and the opening after them,
+   rewritten with the same calls into spi_flash.c and zona_alta.c in the
+   same order (upstream's main.c is not compiled here): the checks, the
+   copy into the high zone at 0x701000, the directory and every section's
+   sum, then BD.BIN deleted from the disk. At boot because icao24_db.c
+   remembers a failed open until the next one. The panel says "Databases -
+   Copying NN %" through main.c's ui_prompt(). On the radio: copied in 6.0
+   s, checked, deleted, 8.2 s in all; three sections - aircraft models
+   294 909 bytes (57 769 aircraft, 252 types), stations 2204 frequencies /
+   13 369 entries, valid until 2027-03-28. `User/zona_alta.c`,
+   `emisoras.c` and `icao24_db.c` compiled in place (icao24_db's stub in
+   decoders_off.c gone). Checked over SWD: icao24_db_lookup(0x45C86A) =
+   "A320 Airbus A320-214", 0xA64A73 = "E75L Embraer ERJ 170-20" - the same
+   as BD.BIN parsed on the PC - and an absent address empty. The stations
+   are open but nothing draws them yet: upstream labels the spectrum from
+   its main.c (35 calls into emisoras.c), a UI step of its own.
+   Flash image 521 720 bytes.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

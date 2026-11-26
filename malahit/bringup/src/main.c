@@ -4970,6 +4970,9 @@ static uint8_t rf_autorange(void)
 
 #include "fram.h"
 #include "settings.h"
+#include "nor.h"
+#include "usbdisco.h"
+#include "bd.h"
 #include "rtc_hw.h"       /* ../../User/rtc_hw.h - upstream's contract */
 #include "rtc_hw_port.h"  /* src/rtc_hw.c's own two (step 56) */
 #include "hora.h"         /* src/hora.c - the radio clock (step 56) */
@@ -5915,6 +5918,12 @@ static void ui_prompt(const char *title, const char *a, const char *b,
     s_prompt[3] = c;
 
     gfx2_render_screen(ui_prompt_draw, 0);
+}
+
+/* bd.c's progress at boot: a title and a line, ui_prompt()'s way. */
+static void bd_cartel(const char *titulo, const char *linea)
+{
+    ui_prompt(titulo, linea, 0, 0);
 }
 
 /*
@@ -9009,6 +9018,14 @@ int main(void)
                        "build (SETTINGS_LIVE)\n");
     }
 
+    /* The SPI NOR flash (step 60), on the FRAM's bus and after it:
+     * upstream's driver, the chip's identity and its volume. */
+    nor_boot_report();
+    /* The USB disk's SWD entry points, kept past --gc-sections until a
+     * menu calls them. */
+    __asm__ volatile ("" :: "r"(usbdisco_abre), "r"(usbdisco_cierra),
+                            "r"(usbdisco_report));
+
     if (s_boot_have && s_boot_set.has_rf
         && s_boot_set.rf_gr <= RF_GR_MAX && s_boot_set.preamp <= 1U) {
         /*
@@ -9437,6 +9454,13 @@ int main(void)
 
     settings_now(&s_set_saved);
     s_set_seen = s_set_saved;
+
+    /* BD.BIN (step 60): upstream loads it at boot when the disk has one,
+     * and so does this - here, with the language and the theme set and
+     * before the first paint, which then covers the prompt. Then what
+     * the high zone holds is opened. */
+    (void)bd_al_arrancar(bd_cartel);
+    bd_abre();
 
     {
         uint64_t p0 = board_cycles();

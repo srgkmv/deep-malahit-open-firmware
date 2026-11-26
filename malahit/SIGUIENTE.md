@@ -4,10 +4,113 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 26/11/2026, evening: step 59 (HFDL) IN FLASH, NOT committed
+## START HERE — 26/11/2026, late night: step 60 - the SPI flash AND the USB disk work
 
-**In flash: the working tree's code** (step 59) - `build_flash/bringup.bin`,
-477 232 bytes, written with `swd.sh flashsrst` and verified; the owner's
+**Nothing of step 60 is committed.** `PORTING.md` 60 has the whole of it.
+
+**BD.BIN IS LOADED** (later the same night): copied to the disk over
+USB, loaded at boot by `src/bd.c` (upstream's path: copy, check the sums,
+delete from the disk) - aircraft models (HFDL's Model column; lookups
+checked over SWD) and the stations (open, not drawn: upstream draws them
+from its main.c - the next UI step if the owner wants it). To load a new
+BD.BIN: copy it to the USB disk, switch the disk off, restart. **In
+flash: the working tree's code, 521 720 bytes.** The disk now holds
+PRUEBA.TXT and RESPALDO.BIN only.
+
+Earlier the same night: 504 448 bytes, written with
+flashsrst and verified, started by the owner's press. **The USB disk
+works**: Settings > Device > "USB disk" (or `usbdisco_abre` /
+`usbdisco_cierra` / `usbdisco_report` over SWD); Linux sees "DEEPSDR Radio
+Disk", 7 MiB vfat, mounts it, reads and writes; a file written survived a
+power cycle. The first try failed on a library bug that the H7 exposes
+(device mode not waited for - PORTING 60), fixed with a fourth upstream
+`#ifdef`. The disk holds PRUEBA.TXT, RESPALDO.BIN (upstream's power-cut
+backup area) and AZAR256K.BIN (the 256 kB test file - delete at will).
+
+**Next, the owner's to choose**: the stations' names on the spectrum
+(upstream main.c's emisoras_* calls); the map; screenshots / SSTV / WEFAX saves; MEM.CSV onto the disk
+(today in the FRAM); NOR at 30 MHz (reads 691 kB/s now). The clock: lost
+with the battery - set by hand, CALR -50.5 again.
+
+The section below is this step's earlier state, kept for the record.
+
+**Done and checked on the radio**: upstream's User/spi_flash.c over
+`src/spi_nor.c` (SPI2, CS PB0 - the 10k pull-up IS fitted, measured);
+boot log `SPI flash : JEDEC ef 40 17 (W25Q64), 8192 kB`; the whole chip
+erased, a pattern programmed and read back with 0 bad bytes, erased again
+(the owner said: erase, no copy of the old BIOS image); **formatted**
+with upstream's formato.c - 7 MB FAT12, PRUEBA.TXT written and read back
+through the FAT. SWD entry points: `nor_bench addr len`, `nor_prueba
+fase seed` (0 erase, 1 blank, 2 program, 3 verify - DESTRUCTIVE),
+`nor_formatea`.
+
+**Written, built, IN FLASH (503 928 bytes), never run**: the USB disk -
+GigaDevice's library from upstream's tree + boot/disco_msc.c, three
+`#ifndef`s upstream (DEEPSDR's four binaries identical), `src/usbdisco.c`.
+The flash was written at 21:30 and the radio is ASLEEP waiting for the
+owner's power press. Then: J3 (the DFU micro-USB) to this PC, and over
+SWD `usbdisco_abre` (no args), watch `dmesg -w` / `lsusb` for "DEEPSDR
+Radio Disk", `usbdisco_report`, mount it, copy a file, eject, then
+`usbdisco_cierra`. If it does not enumerate: GCCFG/GOTGCTL in the report
+(expect GCCFG 0x00010000, GOTGCTL bits 6-7 set), `usb: not started` on
+the console means PLL3 or the USB supply detector (VDD33USB) said no.
+
+**Open after that**: a way to switch the disk on from the radio (a menu
+entry - the owner's choice of where), BD.BIN (528 kB, repo root) into
+the high zone via upstream's path (copy to the disk, then the radio loads
+it - main.c `datos_arranca()` upstream), the map, screenshots. The clock:
+the RTC was lost with the battery - set it by hand (tap on the header
+clock) and CALR -50.5 again.
+
+The owner's choice for this session (26/11/2026): erase the chip without
+a copy; then the USB disk FIRST (before BD.BIN over SWD or screenshots).
+
+## START HERE — 26/11/2026, night: the SPI NOR flash is SOLDERED - next session writes its driver
+
+**The hardware, done by the owner on 26/11/2026**: a Winbond W25Q64CV
+(marked 25Q64CVSIG, 8 MB, JEDEC EF 40 17 expected; wide SOIC-8 208 mil)
+stacked on the FRAM D11 (FM25W256, narrow SOIC-8): pins 2-8 in parallel
+(SO = SPI2 MISO PB14, /WP = 3.3V, GND, SI = MOSI PB15, SCK = PB13, /HOLD =
+3.3V, VCC), pin 1 (/CS) bent up and wired to **PB0, LQFP pin 34**
+(RESERVED_PB0 - this unit has no J6 and no J7; PD8-PD13 are the add-on
+board's). **TO CONFIRM with the owner**: whether the 10k pull-up from the
+flash's /CS to its VCC (as R37 for the FRAM) and a 100 nF across its pins
+8-4 were fitted. Without the pull-up, PB0 floats until the firmware drives
+it, and the flash would hear the FRAM's traffic: FRAM READ 0x03 is the
+flash's READ (two chips on MISO), FRAM WREN 0x06 + WRITE 0x02 its page
+program. The first boot after soldering read the FRAM fine (record v4 seq
+491, mode and QTH).
+
+**The firmware today never touches PB0.** First thing next session:
+drive PB0 high as an output in board init, BEFORE fram_init() - then the
+driver. Plan (from this session's survey):
+- `src/spi_flash.c`, this port's: upstream's `User/spi_flash.h` API on SPI2,
+  shared with src/fram.c (15 MHz, MBR from 240 MHz; both from the main
+  loop only), CS on PB0; JEDEC ID at boot to the console ("none" reads
+  0xFF: MISO is pulled up); clear the status register's block-protect bits
+  if set (the chip may be salvaged). Upstream's User/spi_flash.c mixes a
+  GD32 transport with ~3000 lines of FAT12 logic (4 kB clusters, up to 16
+  MB, 3-byte addresses) - see whether the transport can be swapped under
+  it or the FAT part split off;
+- then files: SWD first (PC -> RAM -> flash via swd-call), USB mass
+  storage later (OTG_FS on PA11/PA12 is wired - the DFU connector);
+- uses: screenshots, SSTV/WEFAX saves, ICAO24.BIN (HFDL's Model column),
+  BD.BIN, a map.
+
+**Lost with the battery during the soldering**: the RTC - "never set",
+2026-01-01 - and its smooth calibration (CALR -50.5 ppm, step 56) and
+anchors (backup registers). FT8 and WSPR need the clock: set it again (a
+tap on the header clock, "On the minute", or a radio clock), and put CALR
+back (-50.5 ppm, CALM 53) or let it relearn from two settings 22 h apart.
+VBAT comes from the main battery: unplugging it always costs this.
+
+**The radio's state**: HFDL at 8942 kHz, ATT 46, the HackRF on the input.
+QTH still the TEST value JN58td.
+
+## START HERE — 26/11/2026, evening: step 59 (HFDL) IN FLASH, committed with it
+
+**In flash: this commit's code** (step 59; f8b5fdc + 26b84f0, pushed) -
+`build_flash/bringup.bin`, 477 232 bytes, written with `swd.sh flashsrst` and verified; the owner's
 press started it. `PORTING.md` 59: upstream's HFDL, its RAM lent by
 upstream's own hfdl_ram.c now (src/prestamo.c keeps the union and
 waterfall_presta()), every giro fitting the 175 kB union, the panel, no
