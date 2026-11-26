@@ -61,6 +61,21 @@
 #define FAT_BYTES_MAX       6144U
 
 /*
+ * EL TRANSPORTE, CAMBIABLE DESDE LA COMPILACION - 26/11/2026.
+ *
+ * Lo que va de aqui a spi_flash_bus_rapido() -el retardo, las patas y el
+ * byte a patadas- y la parte de patas de spi_flash_init() son el bus de
+ * ESTA placa, y lo unico de este fichero que lo es. Todo lo demas habla
+ * con el chip a traves de f_cs(), spi_xfer_byte() y delay_us_approx().
+ *
+ * El port del Malahit tiene el chip en un SPI de verdad, compartido con
+ * su FRAM, y define SPI_FLASH_TRANSPORTE con el nombre de una cabecera
+ * suya que da esas tres, spi_flash_bus_rapido() y
+ * spi_flash_transporte_init(). Sin definirlo, este fichero es el de
+ * siempre.
+ */
+#ifndef SPI_FLASH_TRANSPORTE
+/*
  * FORCED -O0, same uncalibrated-NOP-loop reasoning as i2c_bitbang.c's
  * delay_i2c() and touch.c's own delay_us_approx() - see either of
  * those comments for the full story. This is a separate copy rather
@@ -236,6 +251,9 @@ uint8_t spi_flash_bus_rapido(void)
     return s_rapido;
 }
 #endif
+#else
+#include SPI_FLASH_TRANSPORTE
+#endif /* SPI_FLASH_TRANSPORTE */
 
 /* Quien tiene cogido cada borrador comun. Ver borrador_coge(), mucho mas
  * abajo; viven aqui arriba porque spi_flash_init() los suelta. */
@@ -256,6 +274,9 @@ void spi_flash_init(void)
     s_borrador_cogido[0] = 0U;
     s_borrador_cogido[1] = 0U;
 
+#ifdef SPI_FLASH_TRANSPORTE
+    spi_flash_transporte_init();
+#else
     rcu_periph_clock_enable(RCU_GPIOB);
 
     /* SCLK/MOSI/MISO: same mode/speed touch_init() already configures
@@ -361,6 +382,7 @@ void spi_flash_init(void)
         }
     }
 #endif
+#endif /* SPI_FLASH_TRANSPORTE */
 
     debug_print("spi_flash_init: done (bus shared with touch - see header comment)\n");
 }
