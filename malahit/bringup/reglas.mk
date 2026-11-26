@@ -521,6 +521,37 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/wspr_rx.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/wspr_fano.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/wspr_msg.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/wspr_modo.c
+# hfdl_*.c  HFDL: the I/Q at 12 kHz from demod_am.c's hook, mixed from the
+#            1440 Hz subcarrier, resampled to 1800 Bd, matched filter,
+#            preamble sync, symbol timing, equaliser and soft PSK in the
+#            audio interrupt; the Viterbi, the frames, the PDUs and the
+#            aircraft table from the main loop (hfdl_modo_poll()); its RAM
+#            the borrowed union, lent by upstream's own hfdl_ram.c over
+#            src/prestamo.c's waterfall_presta() (step 59). hfdl_viterbi.c
+#            is above, since STANAG (step 52).
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_ram.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_acars.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_agc.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_aircraft.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_costas.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_crc.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_data_segment.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_deinterleaver.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_demod_chain.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_descrambler.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_equalizer.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_framer.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_hfnpdu.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_iq_mixer.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_matched_filter.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_modo.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_payload_decode.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_pdu.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_preamble_seq.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_preamble_sync.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_rational_resampler.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_soft_demod.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/hfdl_symsync.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_digi.c
 #
 # FT8_LIB: ft8_lib's decoder (Karlis Goba, MIT - Ft8Lib/LICENSE), as
@@ -825,6 +856,7 @@ $(BUILD_DIR)/up_ais_modo.o: CFLAGS_EXTRA_UPSTREAM += -I$(UPSTREAM_DIR)/../Ft8Lib
 # (src/prestamo.c) or read its state (src/digi.c, src/main.c, src/demod.c)
 $(BUILD_DIR)/up_ft8_%.o: CFLAGS_EXTRA_UPSTREAM += -I$(FT8LIB_DIR)
 $(BUILD_DIR)/up_wspr_modo.o: CFLAGS_EXTRA_UPSTREAM += -I$(FT8LIB_DIR)
+$(BUILD_DIR)/up_hfdl_%.o: CFLAGS_EXTRA_UPSTREAM += -I$(FT8LIB_DIR)
 $(BUILD_DIR)/prestamo.o $(BUILD_DIR)/digi.o $(BUILD_DIR)/main.o $(BUILD_DIR)/demod.o: CFLAGS += -I$(FT8LIB_DIR)
 $(BUILD_DIR)/menus.o $(BUILD_DIR)/qth.o: CFLAGS += -I$(FT8LIB_DIR)
 # ALE's AFC (User/ale_rx.c, 23/11/2026): off by default there, because the

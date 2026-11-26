@@ -87,5 +87,9 @@ void digi_ft8_borra(void);
  * window's end to the console; and the view back on entering. */
 void digi_wspr_poll(void);
 void digi_wspr_borra(void);
+/* HFDL (step 59): each frame and new row to the console; the counts' start
+ * on entering. */
+void digi_hfdl_poll(void);
+void digi_hfdl_borra(void);
 
 #endif /* MALAHIT_DIGI_H */

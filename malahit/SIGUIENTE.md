@@ -4,11 +4,39 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 26/11/2026, night: step 58 (WSPR) IN FLASH, NOT committed
+## START HERE — 26/11/2026, evening: step 59 (HFDL) IN FLASH, NOT committed
 
-**In flash: the working tree's code** (step 58) - `build_flash/bringup.bin`,
-448 352 bytes, written with `swd.sh flashsrst` and verified; the owner's
-press started it. `PORTING.md` 58: upstream's WSPR, nothing of upstream
+**In flash: the working tree's code** (step 59) - `build_flash/bringup.bin`,
+477 232 bytes, written with `swd.sh flashsrst` and verified; the owner's
+press started it. `PORTING.md` 59: upstream's HFDL, its RAM lent by
+upstream's own hfdl_ram.c now (src/prestamo.c keeps the union and
+waterfall_presta()), every giro fitting the 175 kB union, the panel, no
+aircraft models (no ICAO24.BIN). Upstream edit: `#ifndef UDG_COLS_HFDL`.
+The PC was rebooted on 26/11 between steps 58 and 59: /tmp went, and with
+it the old console log; the reader now writes this session's scratchpad.
+
+**The radio's state**: 8942 kHz HFDL, ATT 46, the HackRF on the input. QTH
+still the TEST value JN58td.
+
+**Open**: upstream's channel grid (third button) and Map/Bytes (fifth) not
+ported; the aircraft database (bank 2?); the live pass: real HFDL, the -11
+ppm, FT8/WSPR occupancy.
+
+**Next**: the owner's - the decoders' list is done with this one.
+
+**The bench for HFDL**: `deepsdr-ui/out/hfdlgen b.c32 <giro 0..7> <bursts>
+<gap s>`, then `tools/hackrf_gen.py hfdl --in b.c32 [--in ...] --snr 15 --out
+h.iq`, `hackrf_transfer -t h.iq -f <dial - 200000 + ~460 at 9 MHz> -s 2016000
+-a 0 -x 47` with the radio on an HFDL channel; host `out/hfdlradio b.c32
+[sigma]` (built with the FT8 flags it has the radio's union: giro 7 needs
+it). Console: `hfdl: right/seen frames, rows, station; newest`. The audio
+hook's load: `swd-call ... demod_report`.
+
+## START HERE — 26/11/2026, night: step 58 (WSPR) IN FLASH, committed with it
+
+**In flash until step 59: this commit's code** (step 58; 69c3cc6 + 537da89,
+pushed) - `build_flash/bringup.bin`, 448 352 bytes, written with `swd.sh
+flashsrst` and verified; the owner's press started it. `PORTING.md` 58: upstream's WSPR, nothing of upstream
 changed but its columns (`#ifndef UDG_COLS_WSPR`); the screen, the band
 button with upstream's change-after-the-window; `tools/hackrf_gen.py wspr`
 and `deepsdr-ui/out/wsprradio`.

@@ -39,6 +39,8 @@
  *   AIS    Borrar | "N ships" bar (signal) | 161.975 | frames right
  *          / closed, a table over the whole area: MMSI Name Position
  *          Speed Course N, the channel in the title
+ *   HFDL   Borrar | phase / "A1>A2>M1" | 8.942 | "35% 3/9",
+ *          a table: ICAO Model Flight Position Latest N
  *   WSPR   Borrar | "starts in 1:47" / "listening 63 %" | 14.095,6 |
  *          "N heard", a table: Time Callsign Loc. dBm Offset Qual.
  *   FT8    Borrar | CQ | 14.074 |  | the slot's bar "Nc . DT" + "8/15"
@@ -83,6 +85,7 @@
 #include "ft8_modo.h"
 #include "ft8_lista.h"     /* ../../User - the CQ filter and the finger's scroll */
 #include "wspr_modo.h"
+#include "hfdl_modo.h"
 #include "menus.h"         /* radio_dial_go(), radio_dial_hz() - AIS's channel button */
 #include "board.h"         /* board_millis() - ALE's poll and its clock */
 #include "demod.h"         /* demod_quieto(): a decoder reconfigured, no block through it */
@@ -961,6 +964,194 @@ void digi_ais_poll(void)
 }
 
 /*
+ * HFDL - step 59, 26/11/2026. Upstream's digi_sync() HFDL branch, its
+ * hfdl_chapa() and its channel table: the aircraft over the whole area,
+ * newest last, zebra rows (ICAO Model Flight Position, the ground station
+ * last heard in the title, N - UDG_COLS_HFDL). The bar the
+ * receiver's phase (searching / half a signal / almost / LOCKED) or, once a
+ * preamble has been seen, its funnel "A1>A2>M1" and "U ud/pos"; the chip
+ * the signal % and the frames right / seen, with upstream's P/Z/X count of
+ * frames that did not fit when there are any. The fourth button the
+ * channel: upstream's 29 HFDL frequencies (Atlantic and Gulf ground
+ * stations), the next on a tap, lit when the dial is on one. Upstream's
+ * third (a grid of the channels with the frames each gave) is not here yet;
+ * its fifth - Map, or "Bytes", the rows' raw frames - is left out: with a
+ * fifth button the chip has 86 px here, and "99% 999/999 P999" needs 129.
+ * The Model column needs upstream's ICAO24.BIN (external flash); this
+ * radio has none, so it stays empty.
+ */
+typedef struct { uint32_t khz; const char *estacion; } hfdl_canal_t;
+/* upstream's k_hfdl_canales[] (night group under 10 MHz, day group over) */
+static const hfdl_canal_t k_hfdl_canales[] = {
+    {  2986U, "Bahrein" }, {  2998U, "Shannon" }, {  3455U, "Shannon" },
+    {  3900U, "Reykjavik" }, {  5544U, "Bahrein" }, {  5547U, "Shannon" },
+    {  5720U, "Reykjavik" }, {  6529U, "Canarias" }, {  6532U, "Shannon" },
+    {  6646U, "Bahrein" }, {  6712U, "Reykjavik" }, {  8843U, "Shannon" },
+    {  8885U, "Bahrein" }, {  8942U, "Shannon" }, {  8948U, "Canarias" },
+    {  8977U, "Reykjavik" }, { 10030U, "Bahrein" }, { 10081U, "Shannon" },
+    { 11184U, "Reykjavik" }, { 11348U, "Canarias" }, { 11384U, "Shannon" },
+    { 13303U, "Canarias" }, { 13312U, "Bahrein" }, { 15025U, "Reykjavik" },
+    { 17928U, "Canarias" }, { 17967U, "Bahrein" }, { 17985U, "Reykjavik" },
+    { 21955U, "Canarias" }, { 21982U, "Bahrein" },
+};
+#define HFDL_CANALES ((int16_t)(sizeof k_hfdl_canales / sizeof k_hfdl_canales[0]))
+
+static char     s_hf_tit[64];
+static char     s_hf_barra[36];
+static char     s_hf_chip[24];
+static char     s_hf_frec[12];
+static uint32_t s_hf_visto = 0xFFFFFFFFUL;
+static uint8_t  s_hf_barra_v = 0xFFU;
+static char     s_hf_barra_visto[36];
+static char     s_hf_chip_visto[24];
+static uint32_t s_hf_log;               /* frames right, logged */
+static uint32_t s_hf_lin_log;           /* rows, logged */
+static uint32_t s_hf_t;
+
+static int16_t hfdl_canal_actual(void)
+{
+    int16_t i;
+    uint32_t khz = radio_dial_hz() / 1000U;
+
+    if ((radio_dial_hz() % 1000U) != 0U) { return -1; }
+    for (i = 0; i < HFDL_CANALES; i++) { if (k_hfdl_canales[i].khz == khz) { return i; } }
+    return -1;
+}
+
+static uint8_t pega_lim(char *d, uint8_t i, uint8_t cap, uint32_t v)
+{
+    return pega_u(d, i, cap, (v > 999U) ? 999U : v);
+}
+
+static void hfdl_sync(void)
+{
+    static const texto_t k_fase[4] = {
+        T("buscando", "searching"), T("media señal", "half a signal"),
+        T("casi", "almost"), T("ENGANCHADO", "LOCKED")
+    };
+    uint8_t  n = JTTY_FILAS, k, hay = 0U, i;
+    uint32_t khz = radio_dial_hz() / 1000U;
+    uint8_t  e = hfdl_modo_estado();
+    const char *gs = hfdl_modo_estacion();
+
+    memset(&s_st, 0, sizeof s_st);
+    s_st.y      = (int16_t)DIGI_SCOPE_Y;
+    s_st.h      = (int16_t)(FAX_Y + FAX_ALTO - DIGI_SCOPE_Y);
+    s_st.filas  = n;
+    s_st.btn    = tr("Borrar", "Clear");
+    s_st.cebra  = 1U;
+    s_st.cols   = ui_digi_cols_hfdl;
+    s_st.ncols  = UI_DIGI_COLS_HFDL_N;
+    i = pega(s_hf_tit, 0U, (uint8_t)sizeof s_hf_tit,
+             tr("OACI\tModelo\tVuelo\tPosición\t", "ICAO\tModel\tFlight\tPosition\t"));
+    if (gs[0] != '\0') {
+        i = pega(s_hf_tit, i, (uint8_t)sizeof s_hf_tit, "> ");
+        i = pega(s_hf_tit, i, (uint8_t)(sizeof s_hf_tit - 4U), gs);
+    } else {
+        i = pega(s_hf_tit, i, (uint8_t)sizeof s_hf_tit, tr("Último", "Latest"));
+    }
+    (void)pega(s_hf_tit, i, (uint8_t)sizeof s_hf_tit, "\tN");
+    s_st.titulos = s_hf_tit;
+
+    while (hay < n && hay < hfdl_modo_lineas()) { hay++; }
+    for (k = 0U; k < hay; k++) { s_st.fila[k] = hfdl_modo_linea((uint32_t)(hay - 1U - k)); }
+
+    /* upstream's hfdl_frec_rotulo(): kHz with a thousands point */
+    if (khz >= 1000U) {
+        i = pega_u(s_hf_frec, 0U, (uint8_t)sizeof s_hf_frec, khz / 1000U);
+        i = pega(s_hf_frec, i, (uint8_t)sizeof s_hf_frec, ".");
+        s_hf_frec[i++] = (char)('0' + ((khz / 100U) % 10U));
+        s_hf_frec[i++] = (char)('0' + ((khz / 10U) % 10U));
+        s_hf_frec[i++] = (char)('0' + (khz % 10U));
+        s_hf_frec[i] = '\0';
+    } else {
+        (void)pega_u(s_hf_frec, 0U, (uint8_t)sizeof s_hf_frec, khz);
+    }
+    s_st.btn4 = s_hf_frec;
+    s_st.btn4_press = (uint8_t)(hfdl_canal_actual() >= 0);
+
+    /* upstream's hfdl_chapa(): the bar */
+    if (e > 3U) { e = 3U; }
+    s_st.barra_on  = 1U;
+    s_st.barra_max = 3U;
+    s_st.barra_v   = e;
+    s_st.enganchado = (uint8_t)(e == 3U);
+    {
+        uint32_t a1 = 0U, a2 = 0U, m1 = 0U, ud = 0U, pos = 0U;
+
+        hfdl_modo_embudo(&a1, &a2, &m1);
+        hfdl_modo_datos(&ud, &pos);
+        if (a1 == 0U) {
+            s_st.barra_txt = k_fase[e][idioma()];
+        } else {
+            i = pega_lim(s_hf_barra, 0U, (uint8_t)sizeof s_hf_barra, a1);
+            i = pega(s_hf_barra, i, (uint8_t)sizeof s_hf_barra, ">");
+            i = pega_lim(s_hf_barra, i, (uint8_t)sizeof s_hf_barra, a2);
+            i = pega(s_hf_barra, i, (uint8_t)sizeof s_hf_barra, ">");
+            i = pega_lim(s_hf_barra, i, (uint8_t)sizeof s_hf_barra, m1);
+            if (ud != 0U || pos != 0U) {
+                i = pega(s_hf_barra, i, (uint8_t)sizeof s_hf_barra, " U");
+                i = pega_u(s_hf_barra, i, (uint8_t)sizeof s_hf_barra, (ud > 99U) ? 99U : ud);
+                i = pega(s_hf_barra, i, (uint8_t)sizeof s_hf_barra, "/");
+                (void)pega_u(s_hf_barra, i, (uint8_t)sizeof s_hf_barra, (pos > 99U) ? 99U : pos);
+            }
+            s_st.barra_txt = s_hf_barra;
+        }
+    }
+    /* and the chip: the signal, frames right / seen, the ones that did not
+     * fit (P overwritten, Z rate 7, X the rest) */
+    {
+        uint32_t nc = hfdl_modo_no_cupo(), n7 = hfdl_modo_no_cupo_7(), np = hfdl_modo_pisada();
+        uint32_t n6 = (nc > (n7 + np)) ? (nc - n7 - np) : 0U;
+
+        i = pega_u(s_hf_chip, 0U, (uint8_t)sizeof s_hf_chip, hfdl_modo_senal());
+        i = pega(s_hf_chip, i, (uint8_t)sizeof s_hf_chip, "% ");
+        i = pega_lim(s_hf_chip, i, (uint8_t)sizeof s_hf_chip, hfdl_modo_buenas());
+        i = pega(s_hf_chip, i, (uint8_t)sizeof s_hf_chip, "/");
+        i = pega_lim(s_hf_chip, i, (uint8_t)sizeof s_hf_chip, hfdl_modo_total());
+        if (nc != 0U) {
+            i = pega(s_hf_chip, i, (uint8_t)sizeof s_hf_chip,
+                     (np >= n7 && np >= n6) ? " P" : ((n7 >= n6) ? " Z" : " X"));
+            (void)pega_lim(s_hf_chip, i, (uint8_t)sizeof s_hf_chip, nc);
+        }
+    }
+    s_st.chip = s_hf_chip;
+    strncpy(s_chip, s_hf_chip, sizeof s_chip - 1U);
+    s_chip[sizeof s_chip - 1U] = '\0';
+}
+
+void digi_hfdl_borra(void)
+{
+    s_hf_log = hfdl_modo_buenas();
+    s_hf_lin_log = hfdl_modo_lineas();
+}
+
+/* From the main loop, HFDL on: each frame right and each new or changed
+ * row to the console, at most four times a second. */
+void digi_hfdl_poll(void)
+{
+    uint32_t b, nl;
+
+    if ((board_millis() - s_hf_t) < 250U) { return; }
+    s_hf_t = board_millis();
+    b = hfdl_modo_buenas();
+    nl = hfdl_modo_lineas();
+    if (b < s_hf_log) { s_hf_log = 0U; }
+    if (b != s_hf_log || nl != s_hf_lin_log) {
+        const char *l = (nl > 0U) ? hfdl_modo_linea(0U) : "";
+        char t[80];
+        uint32_t j;
+
+        for (j = 0U; l[j] != '\0' && j < sizeof t - 1U; j++) { t[j] = (l[j] == '\t') ? '|' : l[j]; }
+        t[j] = '\0';
+        console_printf("  hfdl: %u/%u frames, %u rows, %s; newest: %s\n", b, hfdl_modo_total(), nl,
+                       hfdl_modo_estacion()[0] ? hfdl_modo_estacion() : "-", t);
+        s_hf_log = b;
+        s_hf_lin_log = nl;
+    }
+}
+
+/*
  * WSPR - step 58, 25/11/2026. Upstream's digi_sync() WSPR branch and its
  * wspr_chapa(): the beacons heard over the whole area, the newest last,
  * zebra rows (Time Callsign Loc. dBm Offset Qual., UDG_COLS_WSPR in
@@ -1802,6 +1993,18 @@ void digi_repinta(void)
         s_eng_visto = s_st.enganchado;
         return;
     }
+    if (hfdl_modo_activo()) {
+        hfdl_sync();
+        ui_digi_olvida();
+        if (ui_digi_draw_texto(&s_st)) {
+            s_hf_visto = hfdl_modo_lineas() ^ (hfdl_modo_buenas() << 8);
+            s_hf_barra_v = s_st.barra_v;
+            strcpy(s_hf_barra_visto, s_st.barra_txt ? s_st.barra_txt : "");
+            strcpy(s_hf_chip_visto, s_st.chip ? s_st.chip : "");
+            s_todo = 0U;
+        }
+        return;
+    }
     if (wspr_modo_activo()) {
         wspr_sync();
         ui_digi_olvida();
@@ -1908,6 +2111,27 @@ void digi_dibuja(void)
             strcpy(s_ale_barra_visto, s_ale_barra);
             s_eng_visto = s_st.enganchado;
             ui_digi_draw_barra(&s_st);
+            ui_digi_draw_chip(&s_st);
+        }
+        return;
+    }
+    if (hfdl_modo_activo()) {
+        /* the table when a frame comes or a row changes; the bar and the
+         * chip four times a second, when their text moves */
+        if (s_todo || (hfdl_modo_lineas() ^ (hfdl_modo_buenas() << 8)) != s_hf_visto) {
+            digi_repinta();
+            return;
+        }
+        if ((board_millis() - s_hf_t) < 250U) { return; }
+        hfdl_sync();
+        if (s_st.barra_v != s_hf_barra_v
+            || strcmp(s_hf_barra_visto, s_st.barra_txt ? s_st.barra_txt : "") != 0) {
+            s_hf_barra_v = s_st.barra_v;
+            strcpy(s_hf_barra_visto, s_st.barra_txt ? s_st.barra_txt : "");
+            ui_digi_draw_barra(&s_st);
+        }
+        if (strcmp(s_hf_chip_visto, s_st.chip ? s_st.chip : "") != 0) {
+            strcpy(s_hf_chip_visto, s_st.chip ? s_st.chip : "");
             ui_digi_draw_chip(&s_st);
         }
         return;
@@ -2071,6 +2295,32 @@ uint8_t digi_toque(uint16_t x, uint16_t y, uint8_t nuevo)
      * if it finds none - the same search that moves the centre by itself,
      * so a tap only matters where that one cannot decide.
      */
+    if (hfdl_modo_activo()) {
+        hfdl_sync();
+        if (!nuevo) { return 1U; }
+        if (ui_digi_boton_hit(&s_st, x, y)) {
+            demod_quieto(1);
+            hfdl_modo_borra();          /* upstream's: the table and the counts */
+            demod_quieto(0);
+            digi_hfdl_borra();
+            s_todo = 1U;
+            console_printf("  digi: HFDL cleared\n");
+        } else if (ui_digi_boton4_hit(&s_st, x, y)) {
+            /* upstream's hfdl_frec_siguiente(): the next channel up from
+             * the dial, round to the lowest */
+            uint32_t khz = radio_dial_hz() / 1000U;
+            int16_t  c, sig = 0;
+
+            for (c = 0; c < HFDL_CANALES; c++) {
+                if (k_hfdl_canales[c].khz > khz) { sig = c; break; }
+            }
+            (void)radio_dial_go(k_hfdl_canales[sig].khz * 1000U);
+            s_todo = 1U;
+            console_printf("  digi: HFDL %u kHz, %s\n", k_hfdl_canales[sig].khz,
+                           k_hfdl_canales[sig].estacion);
+        }
+        return 1U;
+    }
     if (wspr_modo_activo()) {
         wspr_sync();
         if (!nuevo) { return 1U; }

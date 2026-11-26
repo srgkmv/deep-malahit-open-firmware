@@ -107,6 +107,8 @@ void demod_ais(int on);
 void demod_ft8(int on);
 /* WSPR on (1) or off (0). */
 void demod_wspr(int on);
+/* HFDL on (1) or off (0). */
+void demod_hfdl(int on);
 /* What FT8's sideband comes in at (RMS, LSB) and the gain the port puts on
  * it before upstream's decimator (src/demod.c, __wrap_ft8_modo_come). */
 void demod_ft8_nivel(float *sigma, float *ganancia);

@@ -76,6 +76,7 @@
 #include "ft8_modo.h"     /* ../../User - upstream: FT8 */
 #include "ft8_decoder.h"  /* ../../User - the QTH it measures distances from */
 #include "wspr_modo.h"    /* ../../User - upstream: WSPR */
+#include "hfdl_modo.h"    /* ../../User - upstream: HFDL */
 #include "rtty_scope.h"   /* ../../User - its spectrum, for navtex_espectro() */
 #include "config.h"       /* ../../User - CONFIG_RTTY_SHIFT_MIN/MAX_HZ */
 #include "nb.h"           /* ../../User - upstream: the blanker, cw_report() */
@@ -6344,7 +6345,8 @@ static int modo_demod(int mode)
         || mode == RADIO_MODE_SSTV || mode == RADIO_MODE_HELL
         || mode == RADIO_MODE_JTTY || mode == RADIO_MODE_ALE
         || mode == RADIO_MODE_STANAG || mode == RADIO_MODE_IDENT
-        || mode == RADIO_MODE_FT8 || mode == RADIO_MODE_WSPR) { return (int)DEMOD_MODE_USB; }
+        || mode == RADIO_MODE_FT8 || mode == RADIO_MODE_WSPR
+        || mode == RADIO_MODE_HFDL) { return (int)DEMOD_MODE_USB; }
     if (mode == RADIO_MODE_SSTV_FM || mode == RADIO_MODE_APRS
         || mode == RADIO_MODE_AIS)                          { return (int)DEMOD_MODE_NFM; }
     if (mode == RADIO_MODE_RTTY_L || mode == RADIO_MODE_PKT300) { return (int)DEMOD_MODE_LSB; }
@@ -6379,18 +6381,20 @@ static void texto_modo(int mode)
     uint8_t as = (uint8_t)(mode == RADIO_MODE_AIS);
     uint8_t f8 = (uint8_t)(mode == RADIO_MODE_FT8);
     uint8_t ws = (uint8_t)(mode == RADIO_MODE_WSPR);
+    uint8_t hf = (uint8_t)(mode == RADIO_MODE_HFDL);
     uint8_t era_cw = cw_get_enabled(), era_rv = s_rtty_var, era_pk = psk31_activo();
     uint8_t era_nx = navtex_activo(), era_ds = dsc_activo(), era_fx = wefax_activo();
     uint8_t era_sv = sstv_activo(), era_hl = hell_activo(), era_jt = jtty_modo_activo();
     uint8_t era_al = ale_modo_activo(), era_sg = stanag_modo_activo();
     uint8_t era_id = ident_modo_activo(), era_ax = s_ax25_var;
     uint8_t era_as = ais_modo_activo(), era_f8 = ft8_modo_activo();
-    uint8_t era_ws = wspr_modo_activo();
+    uint8_t era_ws = wspr_modo_activo(), era_hf = hfdl_modo_activo();
 
     if (cw == era_cw && rv == era_rv && pk == era_pk && nx == era_nx
         && ds == era_ds && fx == era_fx && sv == era_sv && hl == era_hl
         && jt == era_jt && al == era_al && sg == era_sg && id == era_id
-        && ax == era_ax && as == era_as && f8 == era_f8 && ws == era_ws) { return; }
+        && ax == era_ax && as == era_as && f8 == era_f8 && ws == era_ws
+        && hf == era_hf) { return; }
     cw_linea_suelta();
     /* Every decoder off first, then the one wanted on: DSC and WEFAX borrow
      * the same RAM (src/prestamo.c), and the one leaving has to give it
@@ -6412,6 +6416,7 @@ static void texto_modo(int mode)
     if (!as) { demod_ais(0); }
     if (!f8) { demod_ft8(0); }
     if (!ws) { demod_wspr(0); }
+    if (!hf) { demod_hfdl(0); }
     /*
      * NFM'S CHANNEL FILTER, WIDE FOR AIS AND SSTV-FM - step 55, 24/11/2026.
      * Upstream's mode change, one set of biquads for the three: 9 kHz
@@ -6447,9 +6452,13 @@ static void texto_modo(int mode)
     }
     if (f8)  { demod_ft8(1); digi_ft8_borra(); }
     if (ws)  { demod_wspr(1); digi_wspr_borra(); }
+    if (hf)  { demod_hfdl(1); digi_hfdl_borra(); }
     s_rtty_var = rv;
     digi_pon((uint8_t)(cw || rv || pk || nx || ds || fx || sv || hl || jt || al || sg || id || ax
-                       || as || f8 || ws));
+                       || as || f8 || ws || hf));
+    if (hf != era_hf) {
+        console_printf("  HFDL %s\n", hf ? (hfdl_modo_activo() ? "on" : "REFUSED") : "off");
+    }
     if (ws != era_ws) {
         console_printf("  WSPR %s%s\n", ws ? (wspr_modo_activo() ? "on" : "REFUSED") : "off",
                        (ws && wspr_modo_activo() && !rtc_hw_has_ever_synced())
@@ -6747,6 +6756,13 @@ static void cw_poll(void)
             }
             vistas = n;
         }
+    }
+    if (hfdl_modo_activo()) {
+        /* step 59: upstream's hfdl_modo_poll() - the Viterbi, the frames,
+         * the PDUs and the aircraft table, from here and not from the block
+         * interrupt - and each new row to the console (src/digi.c) */
+        hfdl_modo_poll();
+        digi_hfdl_poll();
     }
     if (wspr_modo_activo()) {
         /* step 58: upstream's wspr_modo_poll() - the clock, a window opened
@@ -7395,7 +7411,7 @@ static const char *const k_mode_names[] = { "AM", "USB", "LSB", "NFM",
                                             "RTTY-U", "PSK31", "NAVTEX", "DSC",
                                             "WEFAX", "SSTV", "SSTV-FM", "HELL",
                                             "JTTY", "ALE", "STANAG", "IDENT",
-                                            "APRS", "PKT300", "AIS", "FT8", "WSPR" };
+                                            "APRS", "PKT300", "AIS", "FT8", "WSPR", "HFDL" };
 _Static_assert(sizeof k_mode_names / sizeof k_mode_names[0]
                == (size_t)RADIO_MODE_LAST + 1U,
                "a name for every mode, upstream's and the decoders' (menus.h)");
@@ -7602,6 +7618,7 @@ int radio_mode_get(void)
     if (m == (int)DEMOD_MODE_NFM && ais_modo_activo())    { return RADIO_MODE_AIS; }
     if (m == (int)DEMOD_MODE_USB && ft8_modo_activo())    { return RADIO_MODE_FT8; }
     if (m == (int)DEMOD_MODE_USB && wspr_modo_activo())   { return RADIO_MODE_WSPR; }
+    if (m == (int)DEMOD_MODE_USB && hfdl_modo_activo())   { return RADIO_MODE_HFDL; }
     if (m == (int)DEMOD_MODE_LSB && ax25_activo())        { return RADIO_MODE_PKT300; }
     return m;
 }
@@ -7793,6 +7810,9 @@ void radio_preamp_toggle(void)
 {
     s_rf_preamp = !s_rf_preamp;
     msi001_preamp(s_rf_preamp);
+    /* upstream's: HFDL's gate measures power before its AGC - a new gain is
+     * a new floor to learn (step 59) */
+    if (hfdl_modo_activo()) { hfdl_modo_nivel_cambiado(); }
     console_printf("  preamp -> %s\n", s_rf_preamp ? "ON" : "OFF");
 }
 
@@ -7864,6 +7884,7 @@ int radio_att_set(int db)
      * default - see msi001_set_dc_auto() - which is what keeps the centre
      * of the spectrum from walking every time the gain moves. */
     msi001_set_gain(s_rf_gr, 0, 0, 0);
+    if (hfdl_modo_activo()) { hfdl_modo_nivel_cambiado(); }   /* as the preamp's */
     rf_att_fmt();
     s_top.att = s_att_txt;
     ui_top_draw_status(&s_top);

@@ -18,6 +18,7 @@ Test signals for the decoders, sent by a HackRF into the radio - 22/11/2026.
     tools/hackrf_gen.py carrier --seconds 10 --out c.iq
     tools/hackrf_gen.py ft8 --slots 4 --out f.iq             (FT8, from the dial)
     tools/hackrf_gen.py wspr --cycles 3 --out w.iq           (WSPR, from the dial)
+    tools/hackrf_gen.py hfdl --in b.c32 --snr 15 --out h.iq  (HFDL, from the dial)
     hackrf_transfer -t f.iq -f <carrier Hz - 200000> -s 2000000 -a 0 -x 47
 
 THE BENCH (PORTING.md step 42): HackRF -> 10 dB -> 40 dB -> the radio's
@@ -1749,6 +1750,19 @@ def main():
     p.add_argument('--level', type=float, default=1.0)
     p.set_defaults(build=None)
 
+    p = sub.add_parser('hfdl', help='HFDL bursts from deepsdr-ui out/hfdlgen (I/Q f32 at 12 kHz, '
+                                    'the 1440 Hz subcarrier over the dial)')
+    p.add_argument('--in', dest='input', action='append', required=True,
+                   help='a .c32 from out/hfdlgen (repeat: one after the other)')
+    p.add_argument('--out', required=True)
+    p.add_argument('--offset', type=float, default=200e3)
+    p.add_argument('--rate', type=int, default=2_016_000)
+    p.add_argument('--snr', type=float, default=None,
+                   help='dB, the bursts\' power against the noise in 3 kHz; omitted = no noise')
+    p.add_argument('--lead', type=float, default=2.0)
+    p.add_argument('--seed', type=int, default=1)
+    p.set_defaults(build=None)
+
     p = sub.add_parser('audio', help='any 12 kHz f32 audio file, sent as USB')
     common(p)
     p.add_argument('--in', dest='input', required=True, help='the f32 file at 12 kHz')
@@ -1757,6 +1771,30 @@ def main():
     a = ap.parse_args()
     if a.mode == 'rds':
         rds_long(a)
+        return
+    if a.mode == 'hfdl':
+        # The generator's I/Q is already the radio's: the subcarrier at +1440
+        # Hz over the dial at 0. Up to FS_LO, the noise in +-6 kHz, the SNR
+        # the bursts' mean power (while on) against the noise in 3 kHz.
+        parts = [np.zeros(int(a.lead * 12000), dtype=np.complex128)]
+        for fn in a.input:
+            z = np.fromfile(fn, dtype=np.float32)
+            parts.append(z[0::2].astype(np.float64) + 1j * z[1::2])
+        z = np.concatenate(parts + [np.zeros(int(a.lead * 12000), dtype=np.complex128)])
+        x = resample_poly(z, 4, 1)
+        on = np.abs(x) > 0.05 * np.max(np.abs(x))
+        p_sig = np.mean(np.abs(x[on]) ** 2)
+        what = f'HFDL {len(a.input)} files, {len(x) / FS_LO:.1f} s'
+        if a.snr is not None:
+            rng = np.random.default_rng(a.seed)
+            sigma2 = p_sig / 10 ** (a.snr / 10.0) * FS_LO / 3000.0
+            w = np.sqrt(sigma2 / 2) * (rng.standard_normal(len(x)) + 1j * rng.standard_normal(len(x)))
+            W = np.fft.fft(w)
+            f = np.fft.fftfreq(len(w), 1.0 / FS_LO)
+            W[np.abs(f) > 6000.0] = 0
+            x = x + np.fft.ifft(W)
+            what += f', SNR {a.snr} dB in 3 kHz'
+        write_iq_long(x, a, what)
         return
     if a.mode in ('ft8', 'wspr'):
         x, edge, what = ft8_slots(a) if a.mode == 'ft8' else wspr_cycles(a)

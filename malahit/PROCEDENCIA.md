@@ -199,6 +199,12 @@ and each is recorded here so the divergence is never a surprise:
   (`digi0`, `digi1`, `digi_ft8`, `ft8_panel`) identical to the byte,
   `wsprcols` green.**
 
+- Step 59, 26/11/2026 (HFDL): `User/ui_digi.c` - HFDL's columns as
+  `UDG_COLS_HFDL`, upstream's values by default. **The DEEPSDR's panels
+  (`digi0`, `digi1`, `digi_ft8`, `ft8_panel`) identical to the byte,
+  `hfdlcols` green.** And `User/hfdl_ram.c` is now compiled here as it is
+  (it was replaced by src/prestamo.c's own three calls until step 58).
+
 - `deepsdr-ui/tools/gen_temas.py` — 21/11/2026, for the port's English:
   it read k_temas[]'s `T("es", "en")` and kept only the Spanish; it now
   emits the English name and description too, as two fields appended at

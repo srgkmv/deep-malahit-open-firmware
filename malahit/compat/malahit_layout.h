@@ -651,6 +651,13 @@
 #define UIQ_HIT_CAJA_AIRE    12
 #define UIQ_HIT_BTN_AIRE      4
 
+/* HFDL's aircraft table (step 59): ICAO (or a ground station's name),
+ * Model, Flight, Position, the last event, N - upstream's
+ * { 8, 72, 298, 366, 484, -792 } for 800 px, measured in font_ui_10b
+ * (deepsdr-ui `make malahit-menus`, digi_hfdl()). The Model column is
+ * narrow: without ICAO24.BIN it only ever holds "-". */
+#define UDG_COLS_HFDL { 4, 92, 134, 180, 260, -476 }
+
 /* WSPR's table (step 58): Time, Callsign, Loc., dBm, Offset, Qual. -
  * upstream's { 8, 110, 260, 380, 500, -792 } for 800 px, measured in
  * font_ui_10b (deepsdr-ui `make malahit-menus`, digi_wspr()). */

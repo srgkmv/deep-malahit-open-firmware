@@ -29,6 +29,7 @@
 #include "ais_modo.h"     /* ../../User - demod_ais() */
 #include "ft8_modo.h"     /* ../../User - demod_ft8() */
 #include "wspr_modo.h"    /* ../../User - demod_wspr() */
+#include "hfdl_modo.h"    /* ../../User - demod_hfdl() */
 
 /*
  * Upstream's call: 512 frames at 192 kHz in (with rf_doble), 512 stereo
@@ -95,7 +96,7 @@ void demod_init(void)
                             "r"(demod_wefax), "r"(demod_sstv), "r"(demod_hell),
                             "r"(demod_jtty), "r"(demod_ale), "r"(demod_stanag),
                             "r"(demod_ident), "r"(demod_ax25), "r"(demod_ais));
-    __asm__ volatile ("" :: "r"(demod_ft8), "r"(demod_wspr));
+    __asm__ volatile ("" :: "r"(demod_ft8), "r"(demod_wspr), "r"(demod_hfdl));
 }
 
 void demod_block(const int16_t *rx, int16_t *tx, uint32_t frames)
@@ -615,6 +616,27 @@ SWD_ENTRY void demod_wspr(int on)
     demod_quieto(0);
     if (on && !ok) {
         console_printf("  *** WSPR did not start: the borrowed RAM is too small or taken (src/prestamo.c) ***\n");
+    }
+}
+
+/*
+ * HFDL on or off - step 59. Upstream's mode change: hfdl_modo_start() takes
+ * the borrowed RAM through upstream's own hfdl_ram.c (its state, the
+ * preamble's ring, the aircraft table, the lines, and the deinterleaver's
+ * "giro" - the union is 175 kB here, so every one of them fits) and says 0
+ * if it cannot. Its input is not the sideband but the I/Q pair at 12 kHz,
+ * demod_am.c's own hook after the decimators, the subcarrier at +1440 Hz.
+ */
+SWD_ENTRY void demod_hfdl(int on)
+{
+    uint8_t ok = 1U;
+
+    if ((uint8_t)(on != 0) == hfdl_modo_activo()) { return; }
+    demod_quieto(1);
+    if (on) { ok = hfdl_modo_start(); } else { hfdl_modo_stop(); }
+    demod_quieto(0);
+    if (on && !ok) {
+        console_printf("  *** HFDL did not start: the borrowed RAM is too small or taken (src/prestamo.c) ***\n");
     }
 }
 

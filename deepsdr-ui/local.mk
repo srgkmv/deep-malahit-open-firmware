@@ -6397,3 +6397,22 @@ out/wsprradio: sim/wspr_radio.c sim/waterfall_prestamo.c \
 	@mkdir -p out
 	$(CC) -O2 -Wall -Wextra -I hostinc -I sim -I $(FIRMWARE)/User \
 	      -I $(FIRMWARE)/Ft8Lib -o $@ $^ $(LDLIBS)
+
+# RAFAGAS DE HFDL PARA EL HACKRF (26/11/2026, port del Malahit, paso 59). Ver
+# sim/hfdl_gen.c: el transmisor de la autoprueba con la modulacion de
+# sim/hfdl_extremo.c, sin el receptor. Escribe un fichero: fuera de
+# "comprueba".
+out/hfdlgen: sim/hfdl_gen.c $(wildcard $(FIRMWARE)/User/hfdl_*.c) \
+             $(FIRMWARE)/User/nco.c $(FIRMWARE)/User/nco_tabla.c \
+             sim/waterfall_prestamo.c sim/rtc_sim.c
+	@mkdir -p out
+	$(CC) -O2 -I hostinc -I sim -I $(FIRMWARE)/User -I $(FIRMWARE)/Ft8Lib -o $@ $^ $(LDLIBS)
+
+# HFDL COMO LO LLEVA LA RADIO, CONTRA CUALQUIER FICHERO (26/11/2026, port del
+# Malahit, paso 59). Ver sim/hfdl_radio.c. Pide un fichero: fuera de
+# "comprueba". El fichero, de out/hfdlgen.
+out/hfdlradio: sim/hfdl_radio.c $(wildcard $(FIRMWARE)/User/hfdl_*.c) \
+               $(FIRMWARE)/User/nco.c $(FIRMWARE)/User/nco_tabla.c \
+               sim/waterfall_prestamo.c sim/rtc_sim.c
+	@mkdir -p out
+	$(CC) -O2 -I hostinc -I sim -I $(FIRMWARE)/User -I $(FIRMWARE)/Ft8Lib -o $@ $^ $(LDLIBS)

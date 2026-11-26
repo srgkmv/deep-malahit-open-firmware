@@ -13,15 +13,19 @@
  * until step 57, AXI since - below).
  * Same three calls, same contract: coge() before todo(), suelta() after,
  * and a decoder that finds it too small refuses to start rather than
- * running on someone else's memory.
+ * running on someone else's memory. SINCE STEP 59 (HFDL) THOSE ARE
+ * UPSTREAM'S OWN, User/hfdl_ram.c compiled as it is: it lends the union
+ * through waterfall_presta(), which is what this file now provides (with
+ * the union itself), and HFDL wants its other two calls - the header
+ * (hfdl_ram_cabecera()) and the region after it (hfdl_scope_get_hfdl_ram()).
  *
  * IT IS UPSTREAM'S UNION ITSELF SINCE STEP 57 (FT8, 25/11/2026). FT8 does
  * not borrow through hfdl_ram_todo(): its files name the members of
  * g_ft8_shared_ram (User/ft8_shared_ram.h) directly - the FFT's arrays, the
  * spectrogram of the slot, the LDPC's messages, the lines - and take the
  * loan with waterfall_presta(1). So the pool is now that union, defined
- * here, and hfdl_ram_todo() hands out the whole of it, as upstream's
- * hfdl_scope_get_hfdl_ram() does. Its size is the largest member's: FT8's,
+ * here, and hfdl_ram_todo() hands out the whole of it (upstream's, from
+ * step 59). Its size is the largest member's: FT8's,
  * 159 kB with this port's flags (FREQ_OSR=2 and a byte a cell, reglas.mk;
  * ~68 kB as upstream builds it), against HFDL's 66 kB and the waterfall's
  * 54 kB. It was 56 kB (JTTY's 52.4 kB - 48 was refused on the radio), and
@@ -80,30 +84,10 @@ void waterfall_init(void)
 {
 }
 
-void hfdl_ram_coge(void)
-{
-    waterfall_presta(1U);
-}
-
-void hfdl_ram_suelta(void)
-{
-    waterfall_presta(0U);
-}
-
 /* upstream's waterfall.c answer to "is someone else holding it?", asked by
  * the modes that take the loan from a poll (JTTY, ALE, AIS...) rather than
  * from the mode change. Here, the same lock. */
 uint8_t waterfall_prestada(void)
 {
     return s_cogida;
-}
-
-uint8_t *hfdl_ram_todo(uint32_t *capacity_out)
-{
-    if (!s_cogida) {
-        if (capacity_out != (uint32_t *)0) { *capacity_out = 0U; }
-        return (uint8_t *)0;
-    }
-    if (capacity_out != (uint32_t *)0) { *capacity_out = (uint32_t)sizeof g_ft8_shared_ram; }
-    return (uint8_t *)&g_ft8_shared_ram;
 }

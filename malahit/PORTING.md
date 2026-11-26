@@ -2317,6 +2317,54 @@ Each step should end with something visible on the radio.
    D-cache over AXI would cure this and FT8's search alike - a decision
    about the DMA buffers, not this step's.
    Flash image 448 352 bytes.
+59. **HFDL - the aircraft.** *26/11/2026, from flash, against the HackRF at
+   8942 kHz* - upstream's twenty-three hfdl_*.c (hfdl_viterbi.c was in
+   since STANAG), stubs gone; Digital "HFDL" ("Datos de aviones"), USB -
+   upstream keeps it in a family of its own, "Aire"; here it is Digital's
+   sixteenth cell. `demod_hfdl(1|0)`; upstream's hfdl_modo_poll() from
+   cw_poll(). Its input is upstream's own hook in demod_am.c, the I/Q pair at
+   12 kHz after the decimators, the subcarrier at +1440 Hz - nothing to wire.
+   **Its RAM**: upstream's User/hfdl_ram.c is now compiled as it is: it
+   lends the union through waterfall_presta(), which src/prestamo.c has
+   provided since step 57, and the port's copies of hfdl_ram_coge(),
+   _suelta() and _todo() are gone. The union is 175 kB here (FT8's flags),
+   against upstream's 66-70 kB, so **every "giro" fits**, the 1800 bps
+   double slot (giro 7, 76 kB) too, which the DEEPSDR cannot decode at all.
+   The gate before HFDL's AGC learns a new floor when the gain moves, as
+   upstream asks after its PGA: radio_att_set() and radio_preamp_toggle()
+   call hfdl_modo_nivel_cambiado(). The aircraft models come from
+   ICAO24.BIN on upstream's external flash; this radio has none, so
+   `icao24_db_lookup()` says "not found" (src/decoders_off.c) and the Model
+   column shows "-" - the database could live in the H743's bank 2.
+   **The screen** is upstream's (digi.c): the aircraft over the whole area,
+   newest last, zebra rows (ICAO or a ground station, Model, Flight,
+   Position, the last event, N - `UDG_COLS_HFDL`, `#ifndef` now in
+   ui_digi.c), the station last heard in the title; the bar the phase
+   (searching / half a signal / almost / LOCKED) or the funnel
+   "A1>A2>M1 U ud/pos"; the chip "signal% right/seen" and upstream's P/Z/X
+   count of frames that did not fit; the fourth button the channel,
+   upstream's 29 (Bahrain, Shannon, Reykjavik, Canarias), the next up on a
+   tap, lit when on one. Left out: upstream's third button (a grid of the
+   channels with their frames), and its fifth (Map, or "Bytes", the raw
+   frames: with a fifth button the chip has 86 px, and "99% 999/999 P999"
+   needs 129). The console: the counts and the newest row as they change.
+   **The signal**: `deepsdr-ui/sim/hfdl_gen.c` (`out/hfdlgen`) - upstream's
+   own burst, as sim/hfdl_extremo.c builds it (448 carrier symbols, A, A,
+   the giro's M1, M2, nine training windows, the self-test's message with
+   its CRC in data segments, training between), RRC beta 0.35 at 12 kHz on
+   the 1440 Hz subcarrier; `tools/hackrf_gen.py hfdl --in b.c32 --snr N`
+   takes it to the HackRF. NOT an independent transmitter - the decoder's
+   author wrote both; what it tests is this radio's chain, and the
+   protocol's reading is for the live pass. `sim/hfdl_radio.c`
+   (`out/hfdlradio`) runs the mode on a .c32. Host: giros 0, 3 and 7 two of
+   two, giro 7 only with the port's union (the FT8 flags).
+   **On the radio**, four bursts each of giros 0, 3 and 7: SNR 15 dB in 3
+   kHz 12 of 12 frames right, giro 7 included; SNR 8 dB 9 of 12 (the host
+   12 of 12 from the same int8 file - the HackRF's drift and the radio's own
+   noise at the threshold). The audio hook (demod_report): 12.1 ms of each
+   42.7 ms in USB, 14.7 in HFDL on noise, 15.8 worst during bursts, no SAI
+   overrun; the main loop's worst decoders' pass 83 ms (the Viterbi).
+   Flash image 477 232 bytes.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

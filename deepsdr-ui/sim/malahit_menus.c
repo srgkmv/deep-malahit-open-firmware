@@ -1163,9 +1163,84 @@ static void digi_wspr(const char *nombre, uint8_t en)
     escribe(nombre);
 }
 
+/*
+ * HFDL - paso 59 del port, 26/11/2026: la tabla de aviones con
+ * UDG_COLS_HFDL, la barra del embudo, el boton del canal y la chapa, como
+ * los arma src/digi.c (sin "Bytes": con un quinto boton la chapa se queda en
+ * 86 px y su peor caso no cabe). Lo mas ancho: una estacion de tierra de
+ * trece letras en la primera columna, una posicion de cuatro cifras y el
+ * evento "RESUME CFM". El modelo sale "-": sin ICAO24.BIN.
+ */
+static void digi_hfdl(const char *nombre, uint8_t en)
+{
+    static const char *const k_filas[] = {
+        "4CA2D5\t-\tEIN104\t53,3N 6,2W\t> POSITION\t12",
+        "SAN FRANCISCO\t-\t-\t-\t< SQUITTER\t999",
+        "A1B2C3\t-\tBAW123\t-89,9S -179,9W\t< RESUME CFM\t3",
+    };
+    ui_digi_state_t st;
+    uint8_t i, k;
+    int16_t h = (int16_t)(DIGI_PANEL_Y + DIGI_PANEL_H - DIGI_SCOPE_Y);
+
+    fondo_principal();
+    memset(&st, 0, sizeof st);
+    st.y = DIGI_SCOPE_Y;
+    st.h = h;
+    st.filas = (uint8_t)((h - UDG_HDR_H) / UDG_LINE_H - 1);
+    st.btn = en ? "Clear" : "Borrar";
+    st.cebra = 1U;
+    st.cols = ui_digi_cols_hfdl;
+    st.ncols = UI_DIGI_COLS_HFDL_N;
+    st.titulos = en ? "ICAO\tModel\tFlight\tPosition\t> SAN FRANCISCO\tN"
+                    : "OACI\tModelo\tVuelo\tPosición\t> SAN FRANCISCO\tN";
+    st.btn4 = "21.982";
+    st.btn4_press = 1U;
+    st.barra_on = 1U;
+    st.barra_max = 3U;
+    st.barra_v = 2U;
+    st.barra_txt = "999>999>999 U99/99";
+    st.chip = "99% 999/999 P999";
+    st.enganchado = 1U;
+    for (i = 0; i < sizeof k_filas / sizeof k_filas[0]; i++) {
+        const char *p = k_filas[i];
+
+        st.fila[i] = k_filas[i];
+        for (k = 0; k < UI_DIGI_COLS_HFDL_N && *p; k++) {
+            char campo[40];
+            uint8_t n = 0;
+            int16_t x = ui_digi_cols_hfdl[k], hasta;
+
+            while (*p && *p != '\t' && n < sizeof campo - 1U) { campo[n++] = *p++; }
+            campo[n] = '\0';
+            if (*p == '\t') { p++; }
+            if (x < 0) { continue; }
+            if (ui_digi_cols_hfdl[k + 1U] >= 0) { hasta = (int16_t)(ui_digi_cols_hfdl[k + 1U] - x - 4); }
+            else { hasta = (int16_t)(-ui_digi_cols_hfdl[k + 1U] - UDG_COL_RESERVA - x - 4); }
+            cabe("hfdl", campo, &font_ui_10b, hasta);
+        }
+    }
+    cabe("hfdl tit", en ? "Model" : "Modelo", &font_ui_10b,
+         (int16_t)(ui_digi_cols_hfdl[2] - ui_digi_cols_hfdl[1] - 4));
+    cabe("hfdl tit", en ? "Position" : "Posición", &font_ui_10b,
+         (int16_t)(ui_digi_cols_hfdl[4] - ui_digi_cols_hfdl[3] - 4));
+    cabe("hfdl tit", "> SAN FRANCISCO", &font_ui_10b,
+         (int16_t)(-ui_digi_cols_hfdl[5] - UDG_COL_RESERVA - ui_digi_cols_hfdl[4] - 4));
+    cabe("boton4", st.btn4, &font_ui_10b, ui_digi_btn4_w_dbg(&st) - 8);
+    cabe("barra", st.barra_txt, &font_ui_10b, ui_digi_barra_hueco_dbg(&st));
+    cabe("barra", en ? "half a signal" : "media señal", &font_ui_10b, ui_digi_barra_hueco_dbg(&st));
+    ui_digi_draw_texto(&st);
+    if (strcmp(ui_digi_chip_visible(&st), st.chip) != 0) {
+        printf("  SE CORTA la chapa \"%s\"\n", st.chip);
+        s_fallos++;
+    }
+    escribe(nombre);
+}
+
 int main(void)
 {
     printf("menus del Malahit, 480 x 320\n");
+    digi_hfdl("hfdl", 0U);
+    digi_hfdl("hfdl_en", 1U);
     digi_wspr("wspr", 0U);
     digi_wspr("wspr_en", 1U);
     qth("qth", 0U, 0U);
