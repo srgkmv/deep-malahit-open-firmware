@@ -2464,6 +2464,40 @@ Each step should end with something visible on the radio.
    are open but nothing draws them yet: upstream labels the spectrum from
    its main.c (35 calls into emisoras.c), a UI step of its own.
    Flash image 521 720 bytes.
+61. **The stations on the spectrum.** *26/11/2026, from flash.* Upstream's
+   "BD en espectro": the names of the broadcast stations on the air now,
+   out of BD.BIN's station database, over the trace at their frequencies.
+   The choosing and the drawing are upstream's spec_rotulos.c (compiled
+   since step 8, unmodified); the glue lives in upstream's main.c
+   (emis_cuando(), bd_rotulos_refresca(), bd_rotulos_textos(),
+   bd_rotulos_banda()) and is rewritten in `src/rotulos.c` with the same
+   calls in the same order - the raw-list cache (only the window and the
+   minute ask the database again; the dial only re-splits), the
+   invalidate when the list changes, the names read once a list.
+   rotulos_antes()/rotulos_despues() go round the display loop's
+   spectrum_draw(), on the ruler's window (s_chrome: the dial, 168 kHz).
+   The time: rtc_hw_get(), local, and emisoras_utc() takes the radio's
+   zone off (hora_huso(), the FRAM's); a clock never set does not filter
+   by day, as upstream does for a failed crystal.
+   **One thing this screen needed**: upstream's label band runs down to
+   the trace's FIRST grid line - ~42 rows on the DEEPSDR's 208-row trace,
+   exactly three rows of font_ui_11. Here the trace is 117 rows and that
+   line ~24 down: one row, and spec_rotulos_draw() then draws its three
+   zigzag rows at one height while keeping their collisions apart - the
+   first screenshot had names over names. The port takes the band down to
+   the first grid line with three rows above it (the second here, ~46
+   rows); upstream's collapse is latent on the DEEPSDR and untouched.
+   **The setting**: upstream's, Settings > Display > "DB on spectrum"
+   (Off / On, "No database" without one; on only with a database, as
+   upstream's), born off, kept in the FRAM - record v4 byte 45, 1 off /
+   2 on, 0 not stored; checked by reading both slots over SWD after two
+   taps (seq 496 off, 497 on). On the radio at 9600 kHz AM, 21:45 UTC:
+   ten names in the 168 kHz window in three rows, none over another (the
+   31 m band: Solomon Islands, R. Boa Vontade, KBS, China National, NHK,
+   CNR 8, CNR 1, China Radio, R. Voz Missionaria, CNR 1 DRM). The frame
+   (42.7 ms, the waterfall's 25) and the trace (1.7 ms) the same with the
+   labels on and off, A/B in one run. `radio_sintoniza <hz>` is a new SWD
+   entry (dial_tune(), as the keypad). Flash image 528 312 bytes.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

@@ -4973,6 +4973,7 @@ static uint8_t rf_autorange(void)
 #include "nor.h"
 #include "usbdisco.h"
 #include "bd.h"
+#include "rotulos.h"
 #include "rtc_hw.h"       /* ../../User/rtc_hw.h - upstream's contract */
 #include "rtc_hw_port.h"  /* src/rtc_hw.c's own two (step 56) */
 #include "hora.h"         /* src/hora.c - the radio clock (step 56) */
@@ -5968,7 +5969,8 @@ static int settings_same(const settings_t *a, const settings_t *b)
         && a->aj_sql == b->aj_sql && a->aj_nr == b->aj_nr
         && a->aj_suav == b->aj_suav && a->aj_wfm_bw == b->aj_wfm_bw
         && a->aj_idioma == b->aj_idioma && a->aj_brillo == b->aj_brillo
-        && a->aj_estereo == b->aj_estereo && a->cw_bw == b->cw_bw
+        && a->aj_estereo == b->aj_estereo && a->aj_bd == b->aj_bd
+        && a->cw_bw == b->cw_bw
         && a->rtty_shift == b->rtty_shift && a->rtty_baud == b->rtty_baud
         && a->rtty_auto == b->rtty_auto && a->cw_aprende == b->cw_aprende
         && a->wfx_lpm == b->wfx_lpm
@@ -8053,6 +8055,16 @@ __attribute__((noinline)) void ui_tap(int x, int y)
 }
 
 /*
+ * AND THE DIAL - swd-call ... radio_sintoniza <hz>: dial_tune() as the
+ * keypad calls it, from the display loop where swd-call runs it (step 61:
+ * the stations' labels wanted a broadcast band with nobody at the knob).
+ */
+__attribute__((noinline)) void radio_sintoniza(uint32_t hz)
+{
+    (void)dial_tune((int64_t)hz);
+}
+
+/*
  * AND A FINGER THAT MOVES - swd-call ... ui_swipe <x0> <x1> <y>: eight
  * polls from x0 to x1 at height y, then the lift, through ui_touch() like
  * a real drag. For the spectrum's drag-to-tune, which a single tap cannot
@@ -9500,7 +9512,8 @@ int main(void)
      */
     demod_init();
     grab_init();
-    __asm__ volatile ("" :: "r"(ui_tap), "r"(ui_swipe), "r"(ui_hold));   /* swd-call's, see ui_tap() */
+    __asm__ volatile ("" :: "r"(ui_tap), "r"(ui_swipe), "r"(ui_hold),
+                            "r"(radio_sintoniza), "r"(radio_mode_set));   /* swd-call's, see ui_tap() */
     __asm__ volatile ("" :: "r"(cw_report), "r"(digi_report));           /* and the decoders' bench */
 
     /*
@@ -9948,9 +9961,14 @@ int main(void)
          * so it is current the moment the menu closes. */
         traza_suaviza(&s_db[s_pan_lo]);
         if (menu_open_id() == MENU_NONE && !digi_en_pantalla()) {
+            /* The stations' names over the trace (step 61, rotulos.c):
+             * the list for this window, and spectrum_draw()'s hook. The
+             * window is the ruler's - s_chrome's centre and span. */
+            rotulos_antes(s_chrome.center_hz, s_chrome.span_hz, s_tuned_hz);
             spectrum_draw(s_db_traza, PAN_SHOWN,
                           SPC_TRACE_X, SPC_TRACE_Y, SPC_TRACE_W, SPC_TRACE_H,
                           UI_DB_MIN, UI_DB_MAX, 0, 0U, 0, 0);
+            rotulos_despues();
         } else if (menu_open_id() == MENU_NONE) {
             digi_dibuja();              /* the scope and the text, step 42 */
         }

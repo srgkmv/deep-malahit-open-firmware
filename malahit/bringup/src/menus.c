@@ -28,6 +28,8 @@
 #include "backlight.h"     /* ../../User - upstream's API, src/backlight.c */
 #include "estereo.h"      /* src/ - FM stereo: Auto / Mono */
 #include "usbdisco.h"     /* src/ - the USB disk, Device page (step 60) */
+#include "rotulos.h"      /* src/ - the stations on the spectrum (step 61) */
+#include "emisoras.h"     /* ../../User - emisoras_hay() */
 
 /* What ui_cfg.c draws the range line in, defined once in fonts_menu.c. */
 extern const gfx2_font_t font_ui_10;
@@ -350,7 +352,7 @@ typedef enum {
     AJ_TEMA, AJ_PALETA, AJ_ESTILO, AJ_VOL,
     AJ_SUAV, AJ_PUENTE, AJ_TRAZA,
     AJ_IDIOMA, AJ_BRILLO, AJ_ESTEREO,
-    AJ_HORA, AJ_QTH, AJ_USB
+    AJ_HORA, AJ_QTH, AJ_USB, AJ_BD
 } aj_id_t;
 
 /*
@@ -388,6 +390,7 @@ static const struct { texto_t nombre; uint8_t pag; uint8_t id; } k_aj[] = {
     { T("Estilo", "Style"),            AJ_PAG_PANTALLA, AJ_ESTILO },
     { T("Volumen", "Volume"),          AJ_PAG_PANTALLA, AJ_VOL    },
     { T("Brillo", "Brightness"),       AJ_PAG_PANTALLA, AJ_BRILLO },   /* upstream's: after Volumen */
+    { T("BD en espectro", "DB on spectrum"), AJ_PAG_PANTALLA, AJ_BD }, /* upstream's, step 61 (rotulos.c) */
     { T("Suavizado", "Smoothing"),     AJ_PAG_ESPECTRO, AJ_SUAV   },   /* upstream's place: before Puente */
     { T("Puente", "Bridge"),           AJ_PAG_ESPECTRO, AJ_PUENTE },
     { T("Traza", "Trace"),             AJ_PAG_ESPECTRO, AJ_TRAZA  },
@@ -505,6 +508,10 @@ static const char *aj_valor(uint8_t id)
         const char *g = ft8_decoder_get_own_grid();
         return (g != 0 && g[0] != '\0') ? g : tr("sin poner", "not set");
     }
+    case AJ_BD:
+        /* upstream's: and if there is no database, it says so */
+        if (!emisoras_hay()) { return tr("Sin base", "No database"); }
+        return rotulos_puesto() ? tr("Activo", "On") : tr("Apagado", "Off");
     case AJ_USB:
         return !usbdisco_activo() ? tr("Apagado", "Off")
              : usbdisco_con_pc()  ? tr("Con el PC", "PC")
@@ -666,6 +673,10 @@ static void aj_toca(uint8_t id)
         qth_abre();
         radio_act_refresh();
         return;
+    case AJ_BD:
+        /* upstream's: only with a database to show */
+        if (emisoras_hay()) { rotulos_pon((uint8_t)!rotulos_puesto()); }
+        break;
     case AJ_USB:
         /* Off: detaches - the PC should have ejected it first. */
         if (usbdisco_activo()) { usbdisco_cierra(); } else { usbdisco_abre(); }
@@ -755,6 +766,7 @@ void menu_ajustes_get(settings_t *s)
     s->aj_idioma = (uint8_t)(idioma() + 1U);
     s->aj_brillo = backlight_get_percent();
     s->aj_estereo = (uint8_t)(estereo_puesto() + 1U);
+    s->aj_bd      = (uint8_t)(rotulos_puesto() + 1U);
 }
 
 /* What the screen shows - before the first paint, so a stored theme is
@@ -776,6 +788,9 @@ void menu_ajustes_apply_pantalla(const settings_t *s)
     if (s->has_suav) { (void)radio_suav_set((int)s->aj_suav); }   /* clamps */
     if (s->aj_estereo == 1U || s->aj_estereo == 2U) {
         estereo_pon((uint8_t)(s->aj_estereo - 1U));
+    }
+    if (s->aj_bd == 1U || s->aj_bd == 2U) {
+        rotulos_pon((uint8_t)(s->aj_bd - 1U));
     }
     if (s->aj_brillo >= (uint8_t)BRILLO_MIN && s->aj_brillo <= 100U) {
         backlight_set_percent(s->aj_brillo);

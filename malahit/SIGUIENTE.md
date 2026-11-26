@@ -4,6 +4,24 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
+## START HERE — 26/11/2026, ~23:50: step 61 (stations on the spectrum) IN FLASH, NOT committed
+
+Step 60 is committed and pushed (c2312e7, 2e5131f, 63c79fb). Step 61 -
+`PORTING.md` 61: `src/rotulos.c` (upstream main.c's label glue), the
+"DB on spectrum" cell (Settings > Display, FRAM v4 byte 45), the band
+taken down to the grid line that holds three rows - is in flash (528 312
+bytes) and checked on screen, NOT committed: the owner commits on asking.
+
+**The radio's state**: 9600 kHz AM, labels on. The clock was set by the
+owner to the TIME only - the date is still 2026-01-01 (a Thursday, as
+26/11/2026 happens to be, so the day filter is right today). Set the
+date, and CALR -50.5 again.
+
+**Next, the owner's**: upstream's other two uses of the stations - the
+"who is on this frequency" banner (emisoras_tick(), main.c 37290-37500)
+and jumping station to station with the knob (JMP, emisoras_salto());
+the map; screenshots; MEM.CSV onto the disk.
+
 ## START HERE — 26/11/2026, late night: step 60 - the SPI flash AND the USB disk work
 
 **Nothing of step 60 is committed.** `PORTING.md` 60 has the whole of it.
