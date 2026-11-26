@@ -830,7 +830,12 @@ const int16_t ui_digi_cols_hfdl[UI_DIGI_COLS_HFDL_N] = { 8, 72, 298, 366, 484, -
  * hay; reservarlos es gratis y el dia que pase un "F/EA4XYZ" no sale
  * cortado.
  */
-const int16_t ui_digi_cols_wspr[UI_DIGI_COLS_WSPR_N] = { 8, 110, 260, 380, 500, -792 };
+/* #ifndef desde el 25/11/2026, como las de FT8: el port del Malahit pone
+ * las suyas en malahit/compat/malahit_layout.h. Aqui, las de siempre. */
+#ifndef UDG_COLS_WSPR
+#define UDG_COLS_WSPR { 8, 110, 260, 380, 500, -792 }
+#endif
+const int16_t ui_digi_cols_wspr[UI_DIGI_COLS_WSPR_N] = UDG_COLS_WSPR;
 
 /*
  * JTTY: hora, desvio, calidad, el mensaje y el pais.
