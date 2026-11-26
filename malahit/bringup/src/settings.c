@@ -143,7 +143,9 @@ _Static_assert(sizeof(slot_t) == SLOT_BYTES, "the extension fills the slot");
  *          not stored, no locator - step 57
  *  45  stations on the spectrum ("DB on spectrum"): 1 off, 2 on; 0 = not
  *      stored (off) - step 61
- *  46..59  zero - room. A field added there reads 0 from a record
+ *  46  JMP, the knob from station to station: 1 off, 2 on; 0 = not
+ *      stored (off) - step 62
+ *  47..59  zero - room. A field added there reads 0 from a record
  *          written before it, so it must mean "not stored" at 0, or
  *          the version goes to 5 (the owner's word allows it).
  *  60  CRC-32 of bytes 0-59
@@ -190,7 +192,8 @@ typedef struct {
     uint8_t  huso_medido;   /* 2 measured, 1 a city; 0 = written before it */
     char     qth[6];        /* the locator; 0 = written before it, or none */
     uint8_t  bd;            /* stations on the spectrum 1 off 2 on; 0 = before it */
-    uint8_t  rsv[14];
+    uint8_t  jmp;           /* JMP 1 off 2 on; 0 = written before it */
+    uint8_t  rsv[13];
     uint32_t crc;
 } rec4_t;
 
@@ -382,6 +385,7 @@ int settings_load(settings_t *out)
     out->huso_medido = p->huso_medido;
     memcpy(out->qth, p->qth, sizeof out->qth);
     out->aj_bd      = p->bd;
+    out->aj_jmp     = p->jmp;
     out->has_rf = out->has_mode = out->has_aj = 1U;
     out->has_sqlnr = out->has_suav = 1U;
     return 1;
@@ -425,6 +429,7 @@ int settings_save(const settings_t *s)
     w.huso_medido = s->huso_medido;
     memcpy(w.qth, s->qth, sizeof w.qth);
     w.bd       = s->aj_bd;
+    w.jmp      = s->aj_jmp;
     w.crc      = crc32_of((const uint8_t *)&w, V4_BYTES - 4U);
 
     fram_write(v4_addr(slot), (const uint8_t *)&w, sizeof w);

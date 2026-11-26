@@ -4,6 +4,23 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
+## START HERE — 26/11/2026, ~23:58: step 62 (station banner + JMP) IN FLASH, NOT committed
+
+Step 61 committed locally (b39eb3b), NOT pushed (the owner said "commit"
+only). Step 62 - `PORTING.md` 62 - in flash (531 408 bytes), checked on the
+radio, not committed.
+
+**The radio's state**: 9880 kHz AM, labels on, JMP off. The DATE was set
+over SWD (`radio_fecha 20261126`); the clock runs ~1 min behind the PC and
+the ZONE is +1:00 (a city, FRAM byte 37 = 68) where the owner is on EET
++2:00 - both the owner's to fix (On the minute; Settings > Digital > Radio
+clock). Until then UTC is an hour off: station schedules, FT8, WSPR.
+CALR -50.5 still not put back.
+
+**Open**: a date keypad (upstream has none; the owner asked how to set the
+date - answered: radio clock, RDS CT, or SWD); the map; screenshots;
+MEM.CSV onto the disk.
+
 ## START HERE — 26/11/2026, ~23:50: step 61 (stations on the spectrum) IN FLASH, NOT committed
 
 Step 60 is committed and pushed (c2312e7, 2e5131f, 63c79fb). Step 61 -

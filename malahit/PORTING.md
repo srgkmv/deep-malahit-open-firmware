@@ -2498,6 +2498,35 @@ Each step should end with something visible on the radio.
    (42.7 ms, the waterfall's 25) and the trace (1.7 ms) the same with the
    labels on and off, A/B in one run. `radio_sintoniza <hz>` is a new SWD
    entry (dial_tune(), as the keypad). Flash image 528 312 bytes.
+62. **Who is on the dial, and JMP.** *26/11/2026, from flash.* Upstream's
+   other two uses of the station database, from its main.c, rewritten
+   with the same calls. **The banner** (emis_pon(), emisoras_tick(),
+   emis_marq_poll()): outside WFM, the header's strip - RDS's in WFM, "same
+   hole, same question" - says the station on the air within 600 Hz of the
+   dial: its name above, "country - site - language - hh:mm-hh:mm UTC (+n
+   others)" below, each line scrolling 2 px a pass when it does not fit;
+   asked again when the dial has stood 300 ms on a new frequency or the
+   minute changed, and when the mode leaves WFM. The text is
+   `rotulos_emisora()` in src/rotulos.c (upstream's unbounded writes into
+   its buffers bounded here), the strip is main.c's beside the RDS one.
+   **JMP** (jmp_conmutar(), the knob at 34824): the header's JMP chip,
+   never on without a database; lit, the big knob jumps to the next
+   station on the air now instead of stepping - up to ten a pass, one
+   budget of flash reads for all of them (emisoras_salto()'s `gasto`), the
+   turn spent whether it found one or not. Born off, FRAM v4 byte 46.
+   On the radio: the chip's tap on/off (console and the chip), one detent
+   up from 9800 kHz to 9805 (KBS, "KOR - Kimjae - Ind - 22:00-23:00 UTC
+   (+2)" in the strip), two down to 9790 (CRI) and 9780 (PBS Qinghai), the
+   chip off and the knob stepping 100 kHz again, the strip empty at 9880;
+   both bytes read back from the FRAM over SWD. The knob's detents were put
+   in over SWD by writing encoder.c's s_qsteps (-4 = one detent up on this
+   board). Found by it: the radio's zone is +1:00 (FRAM byte 37 = 68, "a
+   city"), upstream's default, where the owner is on EET - so UTC was an
+   hour ahead and KBS "on the air" at 21:56 UTC; the owner's to set
+   (Settings > Digital > Radio clock). New SWD entry `radio_fecha
+   <yyyymmdd>`: the date only, by rtc_hw_set() as the time keypad sets the
+   time - upstream has no date keypad (its date comes from a radio clock or
+   RDS CT), and the battery had taken it. Flash image 531 408 bytes.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

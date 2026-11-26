@@ -74,6 +74,8 @@ typedef struct {
     uint8_t  aj_estereo;    /* v4: FM stereo 1 Mono / 2 Auto; 0 = not stored (Auto) */
     uint8_t  aj_bd;         /* v4 byte 45: stations on the spectrum 1 off / 2 on;
                                0 = not stored (off, upstream's default) */
+    uint8_t  aj_jmp;        /* v4 byte 46: JMP, the knob station to station
+                               1 off / 2 on; 0 = not stored (off) */
     uint8_t  cw_bw;         /* v4: CW band-pass / 10 Hz; 0 = not stored (500) */
     uint8_t  rtty_shift;    /* v4: RTTY shift / 5 Hz; 0 = not stored (450) */
     uint8_t  rtty_baud;     /* v4: index in upstream's four + 1; 0 = not stored (50) */

@@ -767,6 +767,7 @@ void menu_ajustes_get(settings_t *s)
     s->aj_brillo = backlight_get_percent();
     s->aj_estereo = (uint8_t)(estereo_puesto() + 1U);
     s->aj_bd      = (uint8_t)(rotulos_puesto() + 1U);
+    s->aj_jmp     = (uint8_t)(rotulos_jmp() + 1U);
 }
 
 /* What the screen shows - before the first paint, so a stored theme is
@@ -791,6 +792,9 @@ void menu_ajustes_apply_pantalla(const settings_t *s)
     }
     if (s->aj_bd == 1U || s->aj_bd == 2U) {
         rotulos_pon((uint8_t)(s->aj_bd - 1U));
+    }
+    if (s->aj_jmp == 1U || s->aj_jmp == 2U) {
+        rotulos_jmp_pon((uint8_t)(s->aj_jmp - 1U));
     }
     if (s->aj_brillo >= (uint8_t)BRILLO_MIN && s->aj_brillo <= 100U) {
         backlight_set_percent(s->aj_brillo);

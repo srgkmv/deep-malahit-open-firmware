@@ -249,3 +249,124 @@ void rotulos_despues(void)
         s_enganchado = 0U;
     }
 }
+
+/* ------------------------------------------------------------------ */
+/* WHO IS ON THE DIAL, AND THE JUMP (step 62)                          */
+/* ------------------------------------------------------------------ */
+
+static char *emis_num(char *p, uint32_t v, uint8_t cifras)
+{
+    char t[8];
+    uint8_t n = 0U;
+
+    do { t[n++] = (char)('0' + (v % 10UL)); v /= 10UL; } while (v != 0UL && n < 8U);
+    while (n < cifras) { t[n++] = '0'; }
+    while (n > 0U) { *p++ = t[--n]; }
+    return p;
+}
+
+/* Copy `q` on at `p`, never past `fin` (the buffer's last byte). */
+static char *emis_pega(char *p, const char *fin, const char *q)
+{
+    while (*q != '\0' && p < fin) { *p++ = *q++; }
+    return p;
+}
+
+/*
+ * Upstream's emis_pon() (main.c 37256): the station on the air within
+ * 600 Hz of `hz`, its name, and a line "country - site - language -
+ * hh:mm-hh:mm UTC (+n)". Upstream writes into its 48- and 96-byte
+ * buffers without a bound; here every write is bounded by the caller's.
+ */
+uint8_t rotulos_emisora(uint32_t hz, char *nom, uint8_t nl, char *txt, uint8_t tl)
+{
+    emisoras_r_t r[3];
+    uint16_t min_utc;
+    uint8_t  dia, n;
+    char    *p;
+    const char *fin;
+    char     tmp[24];
+
+    if (nom == 0 || txt == 0 || nl == 0U || tl < 32U) { return 0U; }
+    nom[0] = '\0';
+    txt[0] = '\0';
+    if (!emisoras_hay()) { return 0U; }
+    if (!emis_cuando(&min_utc, &dia)) { return 0U; }
+
+    n = emisoras_busca(hz, 600UL, min_utc, dia, r, 3U);
+    if (n == 0U || !r[0].ahora) { return 0U; }   /* there is one, at another hour */
+
+    emisoras_texto(r[0].nombre, nom, nl);
+
+    p   = txt;
+    fin = txt + tl - 24U;           /* " - hh:mm-hh:mm UTC (+n)" and its 0 */
+    emisoras_pais(r[0].pais, tmp, (uint8_t)sizeof tmp);
+    p = emis_pega(p, fin, tmp);
+    if (r[0].sitio != EMISORAS_SIN_TEXTO) {
+        emisoras_texto(r[0].sitio, tmp, (uint8_t)sizeof tmp);
+        if (tmp[0] != '\0') { p = emis_pega(p, fin, " - "); p = emis_pega(p, fin, tmp); }
+    }
+    if (r[0].idioma != EMISORAS_SIN_TEXTO) {
+        emisoras_texto(r[0].idioma, tmp, (uint8_t)sizeof tmp);
+        if (tmp[0] != '\0') { p = emis_pega(p, fin, " - "); p = emis_pega(p, fin, tmp); }
+    }
+    *p++ = ' '; *p++ = '-'; *p++ = ' ';
+    p = emis_num(p, r[0].ini / 60U, 2U); *p++ = ':';
+    p = emis_num(p, r[0].ini % 60U, 2U); *p++ = '-';
+    p = emis_num(p, r[0].fin / 60U, 2U); *p++ = ':';
+    p = emis_num(p, r[0].fin % 60U, 2U);
+    *p++ = ' '; *p++ = 'U'; *p++ = 'T'; *p++ = 'C';
+    if (n > 1U) {
+        *p++ = ' '; *p++ = '('; *p++ = '+';
+        p = emis_num(p, (uint32_t)(n - 1U), 1U);
+        *p++ = ')';
+    }
+    *p = '\0';
+    return 1U;
+}
+
+static uint8_t s_jmp;               /* upstream's s_jmp_on: born off */
+
+uint8_t rotulos_jmp(void) { return s_jmp; }
+
+void rotulos_jmp_pon(uint8_t on) { s_jmp = on ? 1U : 0U; }
+
+/* Upstream's jmp_conmutar(): never on without a database - a knob that
+ * stops tuning and finds nothing is a radio that looks broken. */
+uint8_t rotulos_jmp_conmuta(void)
+{
+    if (!s_jmp && !emisoras_hay()) { return 0U; }
+    s_jmp = s_jmp ? 0U : 1U;
+    return 1U;
+}
+
+/*
+ * Upstream's knob with JMP on (main.c 34824): up to ten jumps a pass,
+ * each to the next station on the air now, strictly beyond the last, with
+ * ONE budget of flash reads shared by all of them (emisoras_salto()'s
+ * `gasto`), so a fast turn costs what a slow one does. Returns the
+ * frequency reached, or `desde` if none - and the turn is spent either
+ * way, as upstream's: it does not fall through to the normal step.
+ */
+uint32_t rotulos_salta(uint32_t desde, int32_t detents, uint32_t lo_hz, uint32_t hi_hz)
+{
+    uint16_t min_utc = 0U, gasto = 0U;
+    uint8_t  dia = EMISORAS_DIA_CUALQUIERA;
+    int32_t  quedan = detents;
+    int8_t   dir = (detents < 0) ? -1 : 1;
+    uint32_t hz = desde;
+
+    if (detents == 0 || !emisoras_hay()) { return desde; }
+    if (!emis_cuando(&min_utc, &dia)) { return desde; }
+    if (quedan < 0) { quedan = -quedan; }
+    if (quedan > 10) { quedan = 10; }
+
+    while (quedan-- > 0) {
+        uint32_t sig;
+
+        if (!emisoras_salto(hz, dir, min_utc, dia, &sig, 0, &gasto)) { break; }
+        if (sig < lo_hz || sig > hi_hz) { break; }
+        hz = sig;
+    }
+    return hz;
+}

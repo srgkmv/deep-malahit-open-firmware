@@ -4974,6 +4974,7 @@ static uint8_t rf_autorange(void)
 #include "usbdisco.h"
 #include "bd.h"
 #include "rotulos.h"
+#include "emisoras.h"     /* ../../User - emisoras_hay(), step 62 */
 #include "rtc_hw.h"       /* ../../User/rtc_hw.h - upstream's contract */
 #include "rtc_hw_port.h"  /* src/rtc_hw.c's own two (step 56) */
 #include "hora.h"         /* src/hora.c - the radio clock (step 56) */
@@ -5970,6 +5971,7 @@ static int settings_same(const settings_t *a, const settings_t *b)
         && a->aj_suav == b->aj_suav && a->aj_wfm_bw == b->aj_wfm_bw
         && a->aj_idioma == b->aj_idioma && a->aj_brillo == b->aj_brillo
         && a->aj_estereo == b->aj_estereo && a->aj_bd == b->aj_bd
+        && a->aj_jmp == b->aj_jmp
         && a->cw_bw == b->cw_bw
         && a->rtty_shift == b->rtty_shift && a->rtty_baud == b->rtty_baud
         && a->rtty_auto == b->rtty_auto && a->cw_aprende == b->cw_aprende
@@ -6278,6 +6280,120 @@ static void rds_marq_poll(void)
         }
     } else {
         s_rds_off = 0;
+    }
+}
+
+/*
+ * WHO IS ON THE DIAL - step 62. Upstream's emisoras_tick() and
+ * emis_marq_poll() (its main.c, 37355-37545) on this port's strip: outside
+ * WFM, the strip RDS uses there says which broadcast station is on the
+ * dial now - its name above, "country - site - language - hours UTC" below
+ * (rotulos_emisora(), upstream's emis_pon()) - each line scrolling when it
+ * does not fit. "Same hole, same question": RDS answers what am I hearing
+ * in wideband FM, this on short and medium wave.
+ *
+ * Asked again only when the dial has stood 300 ms on a new frequency
+ * (upstream's EMIS_ASIENTA_MS: a turn does not query the database a
+ * click) or the minute has changed; and when the mode leaves WFM, whose
+ * RDS has just cleared the strip (rds_modo()). The scroll is the RDS
+ * strip's: 2 px a pass of the loop.
+ */
+static char     s_emis_nom[48], s_emis_txt[96];
+static int16_t  s_emis_off_nom, s_emis_off_txt, s_emis_w_nom, s_emis_w_txt;
+static uint32_t s_emis_hz_visto = 0xFFFFFFFFU, s_emis_min_visto = 0xFFFFFFFFU;
+static uint32_t s_emis_hz_pend = 0xFFFFFFFFU, s_emis_pend_ms;
+static int      s_emis_modo_visto = -1;
+
+#define EMIS_ASIENTA_MS  300U
+
+/* Upstream's emis_recorrido(): how far a line runs before it comes round,
+ * or 0 if it fits. */
+static int16_t emis_recorrido(int16_t w)
+{
+    int16_t hueco = ui_top_rds_ancho();
+
+    if (hueco <= 0 || w <= hueco) { return 0; }
+    return (int16_t)(w + 8);
+}
+
+static void emis_pinta(void)
+{
+    s_top.rds_nombre  = (s_emis_nom[0] != '\0') ? s_emis_nom : 0;
+    s_top.rds         = (s_emis_txt[0] != '\0') ? s_emis_txt : 0;
+    s_top.rds_nom_off = s_emis_off_nom;
+    s_top.rds_off     = s_emis_off_txt;
+    ui_top_draw_rds(&s_top);
+}
+
+static void emis_marq(void)
+{
+    int16_t rn, rt;
+
+    if (s_emis_nom[0] == '\0' && s_emis_txt[0] == '\0') { return; }
+    rn = emis_recorrido(s_emis_w_nom);
+    rt = emis_recorrido(s_emis_w_txt);
+    if (rn == 0 && rt == 0) { return; }     /* both fit: nothing moves */
+
+    if (rn != 0) {
+        s_emis_off_nom = (int16_t)(s_emis_off_nom + RDS_MARQ_PX);
+        if (s_emis_off_nom > rn) { s_emis_off_nom = (int16_t)(-ui_top_rds_ancho()); }
+    }
+    if (rt != 0) {
+        s_emis_off_txt = (int16_t)(s_emis_off_txt + RDS_MARQ_PX);
+        if (s_emis_off_txt > rt) { s_emis_off_txt = (int16_t)(-ui_top_rds_ancho()); }
+    }
+    emis_pinta();
+}
+
+static void emis_poll(void)
+{
+    int      modo = demod_am_get_mode();
+    uint8_t  forzar;
+    uint32_t min;
+
+    if (modo == DEMOD_MODE_WFM) {           /* RDS's strip there */
+        s_emis_modo_visto = modo;
+        return;
+    }
+    if (!emisoras_hay()) { return; }
+
+    forzar = (uint8_t)(modo != s_emis_modo_visto);
+    s_emis_modo_visto = modo;
+
+    if (!forzar && s_tuned_hz != s_emis_hz_visto) {
+        if (s_tuned_hz != s_emis_hz_pend) {
+            s_emis_hz_pend = s_tuned_hz;
+            s_emis_pend_ms = board_millis();
+            emis_marq();
+            return;
+        }
+        if ((uint32_t)(board_millis() - s_emis_pend_ms) < EMIS_ASIENTA_MS) {
+            emis_marq();
+            return;
+        }
+    }
+
+    {
+        rtc_hw_datetime_t dt;
+
+        rtc_hw_get(&dt);
+        min = (uint32_t)dt.hour * 60U + dt.minute;
+    }
+    if (!forzar && s_tuned_hz == s_emis_hz_visto && min == s_emis_min_visto) {
+        emis_marq();
+        return;
+    }
+    s_emis_hz_visto  = s_tuned_hz;
+    s_emis_min_visto = min;
+    (void)rotulos_emisora(s_tuned_hz, s_emis_nom, (uint8_t)sizeof s_emis_nom,
+                          s_emis_txt, (uint8_t)sizeof s_emis_txt);
+    s_emis_w_nom   = ui_top_rds_nombre_w(s_emis_nom);
+    s_emis_w_txt   = ui_top_rds_texto_w(s_emis_txt);
+    s_emis_off_nom = 0;
+    s_emis_off_txt = 0;
+    emis_pinta();
+    if (s_emis_nom[0] != '\0') {
+        console_printf("  station: %s | %s\n", s_emis_nom, s_emis_txt);
     }
 }
 
@@ -8065,6 +8181,29 @@ __attribute__((noinline)) void radio_sintoniza(uint32_t hz)
 }
 
 /*
+ * AND THE DATE - swd-call ... radio_fecha <yyyymmdd>: the date only, the
+ * time of day kept, through rtc_hw_set() as the plain keypad sets the time
+ * (no anchor, nothing learnt; the second restarts, so "On the minute"
+ * after it if the second matters). Upstream has no date keypad - its date
+ * comes from a radio clock or RDS - and the owner's clock had lost it with
+ * the battery (26/11/2026).
+ */
+__attribute__((noinline)) void radio_fecha(uint32_t aaaammdd)
+{
+    rtc_hw_datetime_t dt;
+
+    rtc_hw_get(&dt);
+    dt.year  = (uint16_t)(aaaammdd / 10000U);
+    dt.month = (uint8_t)((aaaammdd / 100U) % 100U);
+    dt.day   = (uint8_t)(aaaammdd % 100U);
+    rtc_hw_set(&dt);
+    rtc_hw_get(&dt);
+    console_printf("  fecha: %04u-%02u-%02u %02u:%02u:%02u\n", (uint32_t)dt.year,
+                   (uint32_t)dt.month, (uint32_t)dt.day, (uint32_t)dt.hour,
+                   (uint32_t)dt.minute, (uint32_t)dt.second);
+}
+
+/*
  * AND A FINGER THAT MOVES - swd-call ... ui_swipe <x0> <x1> <y>: eight
  * polls from x0 to x1 at height y, then the lift, through ui_touch() like
  * a real drag. For the spectrum's drag-to-tune, which a single tap cannot
@@ -8399,6 +8538,18 @@ static void ui_touch(void)
             /* What upstream does with them (its ui_top tap handling). */
             if (h == UI_TOP_HIT_AGC) { agc_cycle(); return; }
             if (h == UI_TOP_HIT_BW)  { bw_cycle();  return; }
+            /* JMP (step 62): upstream's jmp_conmutar() - not without a
+             * database, and the chip says which it is. */
+            if (h == UI_TOP_HIT_JMP) {
+                if (rotulos_jmp_conmuta()) {
+                    s_top.jmp_on = rotulos_jmp();
+                    ui_top_draw_status(&s_top);
+                    console_printf("  JMP -> %s\n", rotulos_jmp() ? "on" : "off");
+                } else {
+                    console_printf("  JMP: no station database\n");
+                }
+                return;
+            }
             if (h == UI_TOP_HIT_NONE && ui_top_band_hit(x, y)) {
                 menu_toggle(MENU_BANDAS);
                 return;
@@ -9473,6 +9624,7 @@ int main(void)
      * the high zone holds is opened. */
     (void)bd_al_arrancar(bd_cartel);
     bd_abre();
+    s_top.jmp_on = rotulos_jmp();       /* JMP as the FRAM left it (step 62) */
 
     {
         uint64_t p0 = board_cycles();
@@ -9513,7 +9665,8 @@ int main(void)
     demod_init();
     grab_init();
     __asm__ volatile ("" :: "r"(ui_tap), "r"(ui_swipe), "r"(ui_hold),
-                            "r"(radio_sintoniza), "r"(radio_mode_set));   /* swd-call's, see ui_tap() */
+                            "r"(radio_sintoniza), "r"(radio_mode_set),
+                            "r"(radio_fecha));   /* swd-call's, see ui_tap() */
     __asm__ volatile ("" :: "r"(cw_report), "r"(digi_report));           /* and the decoders' bench */
 
     /*
@@ -9732,6 +9885,17 @@ int main(void)
 
         if (detents != 0 && menu_open_id() != MENU_NONE) {
             menu_knob(detents);             /* the menu's cursor, not the dial */
+        } else if (detents != 0 && rotulos_jmp() && emisoras_hay()) {
+            /*
+             * JMP (step 62): station to station on the air now, upstream's
+             * knob with its chip lit - rotulos_salta(). The turn is spent
+             * whether or not it found one, as upstream's: it does not fall
+             * through to the step.
+             */
+            uint32_t hz = rotulos_salta(s_tuned_hz, detents,
+                                        (uint32_t)TUNE_MIN_HZ, (uint32_t)TUNE_MAX_HZ);
+
+            if (hz != s_tuned_hz) { (void)dial_tune((int64_t)hz); }
         } else if (detents != 0) {
             /*
              * THE TUNER FOLLOWS THE DIAL ON EVERY CLICK, a fixed
@@ -9759,6 +9923,7 @@ int main(void)
 
         retune_test_step();
         rds_marq_poll();                /* the header's RDS strip, in WFM */
+        emis_poll();                    /* and outside it, who is on the dial (step 62) */
         estereo_ui_poll();              /* and "WFM ST" in the mode chip */
         {
             uint64_t p0 = board_cycles();
