@@ -799,7 +799,12 @@ const int16_t ui_digi_cols_ft8[UI_DIGI_COLS_FT8_N] = UDG_COLS_FT8;
  * cortado el dia que pasara un Nomad por encima, o sea nunca hasta que
  * pasara.
  */
-const int16_t ui_digi_cols_hfdl[UI_DIGI_COLS_HFDL_N] = { 8, 72, 298, 366, 484, -792 };
+/* #ifndef desde el 26/11/2026, como las de FT8 y WSPR: el port del Malahit
+ * pone las suyas en malahit/compat/malahit_layout.h. Aqui, las de siempre. */
+#ifndef UDG_COLS_HFDL
+#define UDG_COLS_HFDL { 8, 72, 298, 366, 484, -792 }
+#endif
+const int16_t ui_digi_cols_hfdl[UI_DIGI_COLS_HFDL_N] = UDG_COLS_HFDL;
 
 /*
  * WSPR: quien es, desde donde, con cuanta potencia y como de bien cuadro.
