@@ -37,8 +37,15 @@ OF SUCH DAMAGE.
 
 #include "usb_conf.h"
 
+/* #ifndef desde el 26/11/2026: el port del Malahit tiene el mismo nucleo
+ * (Synopsys) en otra direccion, 0x40080000 en el STM32H743, y la pone desde
+ * su compilacion. Aqui, las del GD32F4 de siempre. */
+#ifndef USBHS_REG_BASE
 #define USBHS_REG_BASE                0x40040000L   /*!< base address of USBHS registers */
+#endif
+#ifndef USBFS_REG_BASE
 #define USBFS_REG_BASE                0x50000000L   /*!< base address of USBFS registers */
+#endif
 
 #define USBFS_MAX_TX_FIFOS            15U           /*!< FIFO number */
 

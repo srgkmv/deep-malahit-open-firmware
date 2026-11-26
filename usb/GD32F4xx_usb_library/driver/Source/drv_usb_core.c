@@ -175,12 +175,23 @@ usb_status usb_core_init(usb_core_basic usb_basic, usb_core_regs *usb_regs)
         /* soft reset the core */
         usb_core_reset(usb_regs);
 
+#ifndef USB_PHY_ENCIENDE
         /* active the transceiver and enable VBUS sensing */
         usb_regs->gr->GCCFG |= GCCFG_PWRON | GCCFG_VBUSACEN | GCCFG_VBUSBCEN;
 
 #ifndef VBUS_SENSING_ENABLED
         usb_regs->gr->GCCFG |= GCCFG_VBUSIG;
 #endif /* VBUS_SENSING_ENABLED */
+#else
+        /*
+         * 26/11/2026: el port del Malahit. El STM32H7 tiene este mismo
+         * nucleo, pero en su GCCFG los bits 18 y 19 encienden la deteccion
+         * de cargador (BCD), que se queda con D+ y D-, y el 21 ENCIENDE la
+         * deteccion de VBUS en vez de ignorarla. Lo que hay que escribir lo
+         * dice el port con este macro. Sin definirlo, lo de arriba.
+         */
+        USB_PHY_ENCIENDE(usb_regs);
+#endif /* USB_PHY_ENCIENDE */
 
         /* enable SOF output */
         if(usb_basic.sof_enable) {

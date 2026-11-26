@@ -75,11 +75,18 @@ typedef enum _usb_feature {
 /* USB device exported macros */
 #define CTL_EP(ep)                ((0x00U == (ep)) || (0x80U == (ep)))
 
+/* #ifndef desde el 26/11/2026: son las direcciones del numero de serie del
+ * GD32F4, y el port del Malahit -un STM32H743, con el suyo en 0x1FF1E800-
+ * pone las suyas. Leer las de aqui en otro chip es un fallo de bus. */
+#ifndef DEVICE_ID1
 #define DEVICE_ID1                (0x1FFF7A10U)  /*!< device ID1 */
 #define DEVICE_ID2                (0x1FFF7A14U)  /*!< device ID2 */
 #define DEVICE_ID3                (0x1FFF7A18U)  /*!< device ID3 */
+#endif
 
+#ifndef DEVICE_ID
 #define DEVICE_ID                 (0x40023D00U)  /*!< product reserved ID */
+#endif
 
 /* function declarations */
 /* handle USB standard device request */

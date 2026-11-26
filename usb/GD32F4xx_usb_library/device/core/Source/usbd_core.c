@@ -79,6 +79,18 @@ void usbd_init(usb_core_driver *udev, usb_core_enum core, usb_desc *desc, usb_cl
 
 #ifndef USE_OTG_MODE
     usb_curmode_set(&udev->regs, DEVICE_MODE);
+#ifdef USB_MODO_ESPERA
+    /*
+     * 26/11/2026, el port del Malahit. Forzar el modo no es instantaneo:
+     * el nucleo de Synopsys tarda hasta 25 ms en cambiar, y lo que se
+     * escriba antes en los registros de dispositivo lo tira (y marca
+     * "mode mismatch"). En el STM32H7 el nucleo arranca como host, asi que
+     * se perdian la velocidad de DCFG y la conexion de DCTL, y el PC no
+     * veia nada. El port espera aqui a que el cambio se vea. Sin definirlo,
+     * lo de siempre.
+     */
+    USB_MODO_ESPERA(&udev->regs);
+#endif /* USB_MODO_ESPERA */
 #endif /* USE_OTG_MODE */
 
     /* initializes device mode */
