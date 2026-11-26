@@ -28,6 +28,7 @@
 #include "ax25.h"         /* ../../User - demod_ax25() */
 #include "ais_modo.h"     /* ../../User - demod_ais() */
 #include "ft8_modo.h"     /* ../../User - demod_ft8() */
+#include "wspr_modo.h"    /* ../../User - demod_wspr() */
 
 /*
  * Upstream's call: 512 frames at 192 kHz in (with rf_doble), 512 stereo
@@ -94,7 +95,7 @@ void demod_init(void)
                             "r"(demod_wefax), "r"(demod_sstv), "r"(demod_hell),
                             "r"(demod_jtty), "r"(demod_ale), "r"(demod_stanag),
                             "r"(demod_ident), "r"(demod_ax25), "r"(demod_ais));
-    __asm__ volatile ("" :: "r"(demod_ft8));
+    __asm__ volatile ("" :: "r"(demod_ft8), "r"(demod_wspr));
 }
 
 void demod_block(const int16_t *rx, int16_t *tx, uint32_t frames)
@@ -595,6 +596,26 @@ SWD_ENTRY void demod_ft8(int on)
     s_ft8_cebado = 0U;                  /* the level primed again (above) */
     if (on) { ft8_modo_start(DEMOD_DEC_FS_HZ); } else { ft8_modo_stop(); }
     demod_quieto(0);
+}
+
+/*
+ * WSPR on or off - step 58. Upstream's mode change: wspr_modo_start() takes
+ * the borrowed RAM (its 46 kB spectrogram, the receiver's state and its
+ * lines) and says 0 if it cannot; it then waits for an even minute by
+ * itself (wspr_modo_poll()). Its spectrogram is normalised row by row, so
+ * the radio's level - FT8's trouble, step 57 - does not reach it.
+ */
+SWD_ENTRY void demod_wspr(int on)
+{
+    uint8_t ok = 1U;
+
+    if ((uint8_t)(on != 0) == wspr_modo_activo()) { return; }
+    demod_quieto(1);
+    if (on) { ok = wspr_modo_start(); } else { wspr_modo_stop(); }
+    demod_quieto(0);
+    if (on && !ok) {
+        console_printf("  *** WSPR did not start: the borrowed RAM is too small or taken (src/prestamo.c) ***\n");
+    }
 }
 
 /*

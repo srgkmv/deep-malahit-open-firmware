@@ -39,6 +39,8 @@
  *   AIS    Borrar | "N ships" bar (signal) | 161.975 | frames right
  *          / closed, a table over the whole area: MMSI Name Position
  *          Speed Course N, the channel in the title
+ *   WSPR   Borrar | "starts in 1:47" / "listening 63 %" | 14.095,6 |
+ *          "N heard", a table: Time Callsign Loc. dBm Offset Qual.
  *   FT8    Borrar | CQ | 14.074 |  | the slot's bar "Nc . DT" + "8/15"
  *          and the dot, a table over the whole area: Time Hz dB DT
  *          Message km Country, CQs in their colour, a finger scrolls it
@@ -80,6 +82,7 @@
 #include "ais_modo.h"
 #include "ft8_modo.h"
 #include "ft8_lista.h"     /* ../../User - the CQ filter and the finger's scroll */
+#include "wspr_modo.h"
 #include "menus.h"         /* radio_dial_go(), radio_dial_hz() - AIS's channel button */
 #include "board.h"         /* board_millis() - ALE's poll and its clock */
 #include "demod.h"         /* demod_quieto(): a decoder reconfigured, no block through it */
@@ -958,6 +961,184 @@ void digi_ais_poll(void)
 }
 
 /*
+ * WSPR - step 58, 25/11/2026. Upstream's digi_sync() WSPR branch and its
+ * wspr_chapa(): the beacons heard over the whole area, the newest last,
+ * zebra rows (Time Callsign Loc. dBm Offset Qual., UDG_COLS_WSPR in
+ * malahit_layout.h); the bar the 2-minute cycle - "starts in 1:47" waiting
+ * for the even minute, "listening 63 %" through the 110.6 s window - with
+ * the last attempt's corroboration ("q 92", 88 needed) once there has been
+ * one; the chip the beacons heard, or "then 20 m" when the band button was
+ * pressed during a window. The fourth button is upstream's dial: its ten
+ * WSPR frequencies, the next on a tap - kept until the window closes if one
+ * is open (upstream's wspr_cambio_pendiente()). No map.
+ * Upstream's bar texts are Spanish in both languages; here tr() gives them
+ * English too.
+ */
+typedef struct { uint32_t hz; const char *banda; } wspr_canal_t;
+/* upstream's k_wspr_canales[] */
+static const wspr_canal_t k_wspr_canales[] = {
+    {  1836600UL, "160 m" }, {  3568600UL,  "80 m" }, {  5287200UL,  "60 m" },
+    {  7038600UL,  "40 m" }, { 10138700UL,  "30 m" }, { 14095600UL,  "20 m" },
+    { 18104600UL,  "17 m" }, { 21094600UL,  "15 m" }, { 24924600UL,  "12 m" },
+    { 28124600UL,  "10 m" },
+};
+#define WSPR_CANALES ((int16_t)(sizeof k_wspr_canales / sizeof k_wspr_canales[0]))
+
+static char     s_ws_barra[40];
+static char     s_ws_chip[16];
+static char     s_ws_frec[12];
+static int16_t  s_ws_pide = -1;         /* a band asked for during a window */
+static uint32_t s_ws_visto = 0xFFFFFFFFUL;
+static uint8_t  s_ws_barra_v = 0xFFU;
+static char     s_ws_barra_visto[40];
+static char     s_ws_chip_visto[16];
+static uint32_t s_ws_log;               /* beacons logged */
+static uint8_t  s_ws_capt;              /* capturing, last poll */
+
+static int16_t wspr_canal_actual(void)
+{
+    int16_t i;
+    uint32_t hz = radio_dial_hz();
+
+    for (i = 0; i < WSPR_CANALES; i++) { if (k_wspr_canales[i].hz == hz) { return i; } }
+    return -1;
+}
+
+static void wspr_sync(void)
+{
+    uint8_t  n = JTTY_FILAS, k, hay = 0U, i;
+    int16_t  c = (s_ws_pide >= 0) ? s_ws_pide : wspr_canal_actual();
+    uint32_t hz = (c >= 0) ? k_wspr_canales[c].hz : radio_dial_hz();
+    uint32_t khz = hz / 1000U;
+    uint8_t  q = wspr_modo_q();
+
+    if (n > (uint8_t)WSPR_MODO_LINEAS) { n = (uint8_t)WSPR_MODO_LINEAS; }
+    memset(&s_st, 0, sizeof s_st);
+    s_st.y      = (int16_t)DIGI_SCOPE_Y;
+    s_st.h      = (int16_t)(FAX_Y + FAX_ALTO - DIGI_SCOPE_Y);
+    s_st.filas  = n;
+    s_st.btn    = tr("Borrar", "Clear");
+    s_st.cebra  = 1U;
+    s_st.cols   = ui_digi_cols_wspr;
+    s_st.ncols  = UI_DIGI_COLS_WSPR_N;
+    s_st.titulos = tr("Hora\tIndicativo\tLoc.\tdBm\tDesvío\tCal.",
+                      "Time\tCallsign\tLoc.\tdBm\tOffset\tQual.");
+    while (hay < n && hay < wspr_modo_lineas()) { hay++; }
+    for (k = 0U; k < hay; k++) { s_st.fila[k] = wspr_modo_linea((uint32_t)(hay - 1U - k)); }
+
+    /* upstream's wspr_frec_rotulo(): kHz with a thousands point and the
+     * hundreds of hertz - "14.095,6" */
+    i = 0U;
+    if (khz >= 1000U) {
+        i = pega_u(s_ws_frec, 0U, (uint8_t)sizeof s_ws_frec, khz / 1000U);
+        i = pega(s_ws_frec, i, (uint8_t)sizeof s_ws_frec, ".");
+        s_ws_frec[i++] = (char)('0' + ((khz / 100U) % 10U));
+        s_ws_frec[i++] = (char)('0' + ((khz / 10U) % 10U));
+        s_ws_frec[i++] = (char)('0' + (khz % 10U));
+    } else {
+        i = pega_u(s_ws_frec, 0U, (uint8_t)sizeof s_ws_frec, khz);
+    }
+    s_ws_frec[i++] = ',';
+    s_ws_frec[i++] = (char)('0' + ((hz % 1000U) / 100U));
+    s_ws_frec[i] = '\0';
+    s_st.btn4 = s_ws_frec;
+
+    s_st.barra_on  = 1U;
+    s_st.barra_max = 100U;
+    if (!wspr_modo_hay_hora()) {
+        s_st.barra_v    = 0U;
+        s_st.barra_txt  = tr("pon el reloj en hora", "set the clock first");
+        s_st.chip       = tr("sin hora", "no clock");
+        s_st.enganchado = 0U;
+        strncpy(s_chip, s_st.chip, sizeof s_chip - 1U);
+        return;
+    }
+    if (wspr_modo_capturando()) {
+        uint8_t pc = wspr_modo_por_ciento();
+
+        s_st.barra_v    = pc;
+        s_st.enganchado = 1U;
+        i = pega(s_ws_barra, 0U, (uint8_t)sizeof s_ws_barra, tr("escuchando ", "listening "));
+        i = pega_u(s_ws_barra, i, (uint8_t)sizeof s_ws_barra, pc);
+        i = pega(s_ws_barra, i, (uint8_t)sizeof s_ws_barra, " %");
+    } else {
+        uint16_t f = wspr_modo_espera_s();
+
+        s_st.barra_v    = (uint8_t)((f > 119U) ? 100U : ((f * 100U) / 119U));
+        s_st.enganchado = 0U;
+        i = pega(s_ws_barra, 0U, (uint8_t)sizeof s_ws_barra, tr("empieza en ", "starts in "));
+        i = pega_u(s_ws_barra, i, (uint8_t)sizeof s_ws_barra, (uint32_t)(f / 60U));
+        i = pega(s_ws_barra, i, (uint8_t)sizeof s_ws_barra, ":");
+        s_ws_barra[i++] = (char)('0' + ((f % 60U) / 10U));
+        s_ws_barra[i++] = (char)('0' + (f % 10U));
+        s_ws_barra[i] = '\0';
+    }
+    if (q != 0U) {                      /* upstream's wspr_pon_q() */
+        i = pega(s_ws_barra, i, (uint8_t)sizeof s_ws_barra, "  q ");
+        (void)pega_u(s_ws_barra, i, (uint8_t)sizeof s_ws_barra, q);
+    }
+    s_st.barra_txt = s_ws_barra;
+    if (s_ws_pide >= 0) {
+        i = pega(s_ws_chip, 0U, (uint8_t)sizeof s_ws_chip, tr("luego ", "then "));
+        (void)pega(s_ws_chip, i, (uint8_t)sizeof s_ws_chip, k_wspr_canales[s_ws_pide].banda);
+    } else {
+        uint32_t b = wspr_modo_buenas();
+
+        if (b > 999U) { b = 999U; }
+        i = pega_u(s_ws_chip, 0U, (uint8_t)sizeof s_ws_chip, b);
+        (void)pega(s_ws_chip, i, (uint8_t)sizeof s_ws_chip,
+                   (b == 1U) ? tr(" oída", " heard") : tr(" oídas", " heard"));
+    }
+    s_st.chip = s_ws_chip;
+    strncpy(s_chip, s_ws_chip, sizeof s_chip - 1U);
+    s_chip[sizeof s_chip - 1U] = '\0';
+}
+
+void digi_wspr_borra(void)
+{
+    s_ws_pide = -1;
+    s_ws_log = wspr_modo_buenas();
+}
+
+/*
+ * From the main loop, WSPR on: the band asked for during a window, once it
+ * has closed (upstream's wspr_cambio_pendiente()); each beacon to the
+ * console; and each window's end with its corroboration, decoded or not.
+ */
+void digi_wspr_poll(void)
+{
+    uint8_t capt = wspr_modo_capturando();
+
+    if (s_ws_pide >= 0 && !capt) {
+        (void)radio_dial_go(k_wspr_canales[s_ws_pide].hz);
+        console_printf("  digi: WSPR dial %u Hz (asked for during the window)\n",
+                       k_wspr_canales[s_ws_pide].hz);
+        s_ws_pide = -1;
+        s_todo = 1U;
+    }
+    if (capt && !s_ws_capt) {
+        console_printf("  wspr: window open\n");
+    }
+    if (!capt && s_ws_capt) {
+        uint32_t b = wspr_modo_buenas();
+
+        if (b != s_ws_log && wspr_modo_lineas() > 0U) {
+            const char *l = wspr_modo_linea(0U);
+            char t[WSPR_MODO_LARGO + 4U];
+            uint32_t j;
+
+            for (j = 0U; l[j] != '\0' && j < sizeof t - 1U; j++) { t[j] = (l[j] == '\t') ? '|' : l[j]; }
+            t[j] = '\0';
+            console_printf("  wspr: %s\n", t);
+        }
+        console_printf("  wspr: window closed, %s, q %u (88 to accept), %u heard\n",
+                       (b != s_ws_log) ? "DECODED" : "nothing", (uint32_t)wspr_modo_q(), b);
+        s_ws_log = b;
+    }
+    s_ws_capt = capt;
+}
+
+/*
  * FT8 - step 57, 25/11/2026. Upstream's digi_sync() FT8 branch and its
  * ft8_chapa(): the table over the whole area, oldest first and stuck to the
  * top, CQs in their colour (UDG_T_LLAMA), no zebra; the second layout of the
@@ -1621,6 +1802,18 @@ void digi_repinta(void)
         s_eng_visto = s_st.enganchado;
         return;
     }
+    if (wspr_modo_activo()) {
+        wspr_sync();
+        ui_digi_olvida();
+        if (ui_digi_draw_texto(&s_st)) {
+            s_ws_visto = wspr_modo_lineas() | ((uint32_t)wspr_modo_buenas() << 8);
+            s_ws_barra_v = s_st.barra_v;
+            strcpy(s_ws_barra_visto, s_st.barra_txt ? s_st.barra_txt : "");
+            strcpy(s_ws_chip_visto, s_st.chip ? s_st.chip : "");
+            s_todo = 0U;
+        }
+        return;
+    }
     if (ft8_modo_activo()) {
         ft8_sync();
         ui_digi_olvida();
@@ -1716,6 +1909,26 @@ void digi_dibuja(void)
             s_eng_visto = s_st.enganchado;
             ui_digi_draw_barra(&s_st);
             ui_digi_draw_chip(&s_st);
+        }
+        return;
+    }
+    if (wspr_modo_activo()) {
+        /* the list when a beacon comes (once in two minutes at most), the
+         * bar and the chip when their text or the bar's fill move */
+        if (s_todo || (wspr_modo_lineas() | ((uint32_t)wspr_modo_buenas() << 8)) != s_ws_visto) {
+            digi_repinta();
+            return;
+        }
+        wspr_sync();
+        if (s_st.barra_v != s_ws_barra_v
+            || strcmp(s_ws_barra_visto, s_st.barra_txt ? s_st.barra_txt : "") != 0) {
+            s_ws_barra_v = s_st.barra_v;
+            strcpy(s_ws_barra_visto, s_st.barra_txt ? s_st.barra_txt : "");
+            ui_digi_draw_barra(&s_st);
+        }
+        if (strcmp(s_ws_chip_visto, s_st.chip ? s_st.chip : "") != 0) {
+            strcpy(s_ws_chip_visto, s_st.chip ? s_st.chip : "");
+            ui_digi_draw_cabecera(&s_st);   /* the chip and the button beside it */
         }
         return;
     }
@@ -1858,6 +2071,34 @@ uint8_t digi_toque(uint16_t x, uint16_t y, uint8_t nuevo)
      * if it finds none - the same search that moves the centre by itself,
      * so a tap only matters where that one cannot decide.
      */
+    if (wspr_modo_activo()) {
+        wspr_sync();
+        if (!nuevo) { return 1U; }
+        if (ui_digi_boton_hit(&s_st, x, y)) {
+            /* upstream's: the list and the count; an open window goes on */
+            wspr_modo_borra();
+            digi_wspr_borra();
+            s_todo = 1U;
+            console_printf("  digi: WSPR cleared\n");
+        } else if (ui_digi_boton4_hit(&s_st, x, y)) {
+            /* upstream's wspr_frec_siguiente(): the next of the ten, or the
+             * first from anywhere else; during a window only noted, the
+             * window ends where it began */
+            int16_t ahora = (s_ws_pide >= 0) ? s_ws_pide : wspr_canal_actual();
+            int16_t sig = (ahora >= 0) ? (int16_t)((ahora + 1) % WSPR_CANALES) : 0;
+
+            if (wspr_modo_capturando()) {
+                s_ws_pide = sig;
+                console_printf("  digi: WSPR %s after this window\n", k_wspr_canales[sig].banda);
+            } else {
+                s_ws_pide = -1;
+                (void)radio_dial_go(k_wspr_canales[sig].hz);
+                console_printf("  digi: WSPR dial %u Hz\n", k_wspr_canales[sig].hz);
+            }
+            s_todo = 1U;
+        }
+        return 1U;
+    }
     if (ft8_modo_activo()) {
         ft8_sync();
         if (y >= (uint16_t)(DIGI_SCOPE_Y + UDG_HDR_H)) {

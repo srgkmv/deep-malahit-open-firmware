@@ -651,6 +651,11 @@
 #define UIQ_HIT_CAJA_AIRE    12
 #define UIQ_HIT_BTN_AIRE      4
 
+/* WSPR's table (step 58): Time, Callsign, Loc., dBm, Offset, Qual. -
+ * upstream's { 8, 110, 260, 380, 500, -792 } for 800 px, measured in
+ * font_ui_10b (deepsdr-ui `make malahit-menus`, digi_wspr()). */
+#define UDG_COLS_WSPR { 4, 40, 100, 136, 162, -476 }
+
 /* FT8's table (step 57): Time, Hz, dB, DT, Message, km, Country - upstream's
  * { 8, 110, 210, 290, 380, -660, -792 } for 800 px, measured in font_ui_10b
  * (deepsdr-ui `make malahit-menus`, digi_ft8()). */

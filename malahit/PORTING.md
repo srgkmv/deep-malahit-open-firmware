@@ -2264,6 +2264,59 @@ Each step should end with something visible on the radio.
    for the live pass, against a known station (upstream has "Calibrar
    PPM", not ported).
    Flash image 439 160 bytes.
+58. **WSPR.** *25-26/11/2026, from flash, against the HackRF at 14.0956
+   MHz* - upstream's wspr_rx.c, wspr_fano.c, wspr_msg.c and wspr_modo.c,
+   stub gone; Digital "WSPR" ("Balizas de HF"), USB. `demod_wspr(1|0)`
+   (wspr_modo_start() takes the borrowed RAM: its 46 kB spectrogram, the
+   receiver's state, the lines); upstream's wspr_modo_poll() from cw_poll().
+   A window opens at each odd minute's second 59 (the RTC, step 56) and
+   closes 114.7 s later; then the sync search and the stack decoder, one
+   beacon a cycle, as upstream decided. Its spectrogram is normalised row by
+   row in floats, so the radio's low sideband - FT8's trouble - does not
+   reach it, and nothing of upstream changes but the columns.
+   **The screen** is upstream's (digi.c): the beacons over the whole area,
+   newest last, zebra rows (Time Callsign Loc. dBm Offset Qual.,
+   `UDG_COLS_WSPR`, `#ifndef` now in ui_digi.c); the bar the cycle -
+   "starts in 1:47" / "listening 63 %" and the last attempt's "q 92" (88
+   accepts); the dial button upstream's ten WSPR frequencies ("14.095,6"),
+   a tap during a window noted and applied when it closes ("then 20 m" in
+   the chip); the chip the beacons heard. Upstream's bar is Spanish in
+   both languages; here tr() gives it English. The console: each window
+   opened and closed, with its q and the beacon.
+   `tools/hackrf_gen.py wspr` writes beacons from G4JNT's description, not
+   from wspr_msg.c: the 28-bit call, the 22-bit locator and power, the K=32
+   convolutional code, the bit-reversal interleave, the sync vector (written
+   from memory and found equal, all 162 bits, to upstream's k_wspr_sincro),
+   continuous-phase 4-FSK from 1 s past an even minute; `--snr` per cycle.
+   `deepsdr-ui/sim/wspr_radio.c` (`out/wsprradio`) runs the mode on a file.
+   Host: every beacon read back, q 99-100; -24 dB 8 of 8, -26 dB 6 of 8,
+   -28 dB none (WSJT-X: about -28).
+   **On the radio**: the four test beacons decoded at -20 dB, q 97-99, and
+   -24 dB once of twice; -26 dB not. **But the bench is the limit, not the
+   radio**: the HackRF drifts while it warms - the first two to four
+   cycles of every transmission fail at noise-level q (74-80), the rest
+   decode (7 of 7 warm cycles at -20 dB), and even warm it moves ~0.5 Hz in
+   a 110 s beacon against tones 1.46 Hz apart. FT8, 12.6 s long, never
+   noticed.
+   **Measured on the way - the radio's own frequency**: the CPU's cycle
+   counter against the PC's NTP time over 598 s (one OpenOCD session,
+   CYCCNT unwrapped every 2 s): **-11.0 ppm**, g_msticks the same. X1 is
+   also the MSi001's reference (BOARD.md), so the radio tunes 11 ppm low:
+   on the air a station appears 155 Hz high at 14 MHz - a WSPR beacon at
+   1500 Hz lands at 1655, outside upstream's 1400-1600 window. The HackRF
+   is then ~-62 ppm (the 719-751 Hz of step 57). Not corrected here: for
+   the live pass, upstream's "Calibrar PPM" (SAM lock on a known station)
+   or a calibration of X1 against the RTC, which step 56 already
+   disciplines to NTP. (A first reading of -388 ppm was swd-call and
+   grab.py halting the core: SysTick stops with it.)
+   **Left as upstream has it**: the decode at a window's end is one call,
+   1.38 s on this radio when there is no beacon (PC sampled: the stack
+   decoder, wspr_fano_ex(), scanning its stack in uncached AXI to its
+   200 000-step limit); the capture is closed by then, so nothing is lost,
+   but the panel and the knob stop for that long every two minutes. The
+   D-cache over AXI would cure this and FT8's search alike - a decision
+   about the DMA buffers, not this step's.
+   Flash image 448 352 bytes.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

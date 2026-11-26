@@ -83,5 +83,9 @@ void digi_ais_borra(void);
  * panel's view (scroll, counters) back to the newest on entering. */
 void digi_ft8_poll(void);
 void digi_ft8_borra(void);
+/* WSPR (step 58): a band asked for during a window, each beacon and each
+ * window's end to the console; and the view back on entering. */
+void digi_wspr_poll(void);
+void digi_wspr_borra(void);
 
 #endif /* MALAHIT_DIGI_H */

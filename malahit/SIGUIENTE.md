@@ -4,7 +4,39 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
-## START HERE — 25/11/2026, late: step 57 (FT8 and the QTH screen) IN FLASH, NOT committed
+## START HERE — 26/11/2026, night: step 58 (WSPR) IN FLASH, NOT committed
+
+**In flash: the working tree's code** (step 58) - `build_flash/bringup.bin`,
+448 352 bytes, written with `swd.sh flashsrst` and verified; the owner's
+press started it. `PORTING.md` 58: upstream's WSPR, nothing of upstream
+changed but its columns (`#ifndef UDG_COLS_WSPR`); the screen, the band
+button with upstream's change-after-the-window; `tools/hackrf_gen.py wspr`
+and `deepsdr-ui/out/wsprradio`.
+
+**The radio's state**: 14.0956 MHz WSPR, ATT 46, the HackRF on the input.
+QTH still the TEST value JN58td.
+
+**Found, for the live pass**: (1) the radio tunes **-11 ppm** (CPU cycles
+against NTP; X1 is the tuner's reference too) - WSPR on 20 m would land
+outside its window; needs a frequency calibration first (upstream's SAM
+one, or X1 against the RTC); (2) the HackRF drifts while warming - WSPR
+bench runs need two to four cycles of warm-up and still lose ~2 dB at
+the threshold; (3) WSPR's decode stops the main loop 1.38 s every two
+minutes on noise - the D-cache question.
+
+**Next, the owner's order**: HFDL.
+
+**The bench for WSPR**: `tools/hackrf_gen.py wspr --cycles 8 --snr -20
+--snr -24 ... --msg 'YL2ABC KO26 37' --msg ... --hz 1500 --out w.iq`
+(type-1 calls only; --snr and --msg used in turn, a cycle each), started 5
+s before an even minute: `hackrf_transfer -t w.iq -f <dial - 200000 + ~750>
+-s 2016000 -a 0 -x 47`. `--audio` for `deepsdr-ui/out/wsprradio w.f32 5 1`.
+Console: `wspr: window open`, `wspr: <beacon>`, `wspr: window closed, ...
+q N`. Clock checks over SWD without halting: CYCCNT 0xE0001004 and
+g_msticks against `[clock microseconds]` in one OpenOCD tcl session; RTC
+TR 0x58004000 and SSR 0x58004028 likewise.
+
+## START HERE — 25/11/2026, late: step 57 (FT8 and the QTH screen) IN FLASH, committed with it
 
 **In flash: the working tree's code** (step 57) - `build_flash/bringup.bin`,
 439 160 bytes, written with `swd.sh flashsrst` and verified; the owner's
@@ -15,8 +47,8 @@ and four things this radio needed - the level lifted before FT8
 buffers - plus upstream's QTH screen (src/qth.c, Settings > Device, FRAM v4
 bytes 39-44). Upstream edits, all `#ifndef` with upstream's default
 (PROCEDENCIA.md): ui_digi.c, ft8_waterfall_adapter.h, ft8_shared_ram.h +
-ft8_decimator.c, ui_qth.h/.c. Commits ededcc2 + f5502b9 (step 56) still NOT
-pushed; nothing of step 57 committed.
+ft8_decimator.c (ee46a71), ui_qth.h/.c (df53182); the port ddc7114. All
+pushed, step 56 with them.
 
 **The radio's state**: 14.074 MHz FT8, ATT 46, preamp off, the HackRF on
 the input through 40 dB. **QTH = JN58td, a TEST value** set over SWD (the

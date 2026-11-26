@@ -512,6 +512,15 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ft8_modo.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ft8_snr.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ft8_tablas.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ft8_waterfall_adapter.c
+# wspr_*.c  WSPR: the sideband mixed to 1500 Hz and decimated to 375 Hz in
+#            the audio interrupt, a Goertzel spectrogram of half-symbols in
+#            the borrowed RAM, and at the window's end the sync search and
+#            the Fano decoder from the main loop; one beacon a 2-minute
+#            cycle, the even minutes from the RTC (step 58)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/wspr_rx.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/wspr_fano.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/wspr_msg.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/wspr_modo.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_digi.c
 #
 # FT8_LIB: ft8_lib's decoder (Karlis Goba, MIT - Ft8Lib/LICENSE), as
@@ -815,6 +824,7 @@ $(BUILD_DIR)/up_ais_modo.o: CFLAGS_EXTRA_UPSTREAM += -I$(UPSTREAM_DIR)/../Ft8Lib
 # FT8 itself (step 57), and the port's files that hold its union
 # (src/prestamo.c) or read its state (src/digi.c, src/main.c, src/demod.c)
 $(BUILD_DIR)/up_ft8_%.o: CFLAGS_EXTRA_UPSTREAM += -I$(FT8LIB_DIR)
+$(BUILD_DIR)/up_wspr_modo.o: CFLAGS_EXTRA_UPSTREAM += -I$(FT8LIB_DIR)
 $(BUILD_DIR)/prestamo.o $(BUILD_DIR)/digi.o $(BUILD_DIR)/main.o $(BUILD_DIR)/demod.o: CFLAGS += -I$(FT8LIB_DIR)
 $(BUILD_DIR)/menus.o $(BUILD_DIR)/qth.o: CFLAGS += -I$(FT8LIB_DIR)
 # ALE's AFC (User/ale_rx.c, 23/11/2026): off by default there, because the

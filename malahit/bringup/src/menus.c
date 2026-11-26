@@ -79,6 +79,7 @@ static const struct { int mode; uint8_t fam; const char *n; texto_t d; } k_modos
     { RADIO_MODE_NAVTEX, FAM_DIG, "NAVTEX", T("Avisos marítimos", "Marine warnings") },
     { RADIO_MODE_DSC,    FAM_DIG, "DSC",    T("Llamada marítima", "Maritime DSC") },
     { RADIO_MODE_FT8,    FAM_DIG, "FT8",    T("Digital de HF", "HF digital") },
+    { RADIO_MODE_WSPR,   FAM_DIG, "WSPR",   T("Balizas de HF", "HF beacons") },
     { RADIO_MODE_JTTY,   FAM_DIG, "JTTY",   T("Teletipo digital", "Digital teletype") },
     { RADIO_MODE_ALE,    FAM_DIG, "ALE",    T("Sondeos de HF", "HF soundings") },
     /* upstream's "Módem naval OTAN" / "NATO naval modem" are 92 and 93 px

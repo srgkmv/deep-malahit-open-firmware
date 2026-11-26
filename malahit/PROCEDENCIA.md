@@ -194,6 +194,11 @@ and each is recorded here so the divergence is never a surprise:
   green.** (Steps 50-56's upstream edits are recorded in PORTING.md and
   in their commits, not yet here.)
 
+- Step 58, 25/11/2026 (WSPR): `User/ui_digi.c` - WSPR's columns as
+  `UDG_COLS_WSPR`, upstream's values by default. **The DEEPSDR's panels
+  (`digi0`, `digi1`, `digi_ft8`, `ft8_panel`) identical to the byte,
+  `wsprcols` green.**
+
 - `deepsdr-ui/tools/gen_temas.py` — 21/11/2026, for the port's English:
   it read k_temas[]'s `T("es", "en")` and kept only the Spanish; it now
   emits the English name and description too, as two fields appended at

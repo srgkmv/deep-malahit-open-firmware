@@ -17,6 +17,7 @@ Test signals for the decoders, sent by a HackRF into the radio - 22/11/2026.
     tools/hackrf_gen.py ax25 --hf --lsb --snr 15 --out p.iq  (PKT300, LSB)
     tools/hackrf_gen.py carrier --seconds 10 --out c.iq
     tools/hackrf_gen.py ft8 --slots 4 --out f.iq             (FT8, from the dial)
+    tools/hackrf_gen.py wspr --cycles 3 --out w.iq           (WSPR, from the dial)
     hackrf_transfer -t f.iq -f <carrier Hz - 200000> -s 2000000 -a 0 -x 47
 
 THE BENCH (PORTING.md step 42): HackRF -> 10 dB -> 40 dB -> the radio's
@@ -1126,6 +1127,109 @@ def ft8_slots(a):
     return x, edge, what
 
 
+# WSPR (K1JT; G4JNT's "The WSPR Coding Process", 2009), written from that
+# description, not from upstream's wspr_msg.c:
+#   - the call as six characters with the digit third (" K1ABC"), 0-9 A-Z
+#     and space as 0..36: N = c0; *36 + c1; *10 + c2; then *27 + (c - 10)
+#     for the last three (space 26) - 28 bits;
+#   - the locator and the power: M1 = (179 - 10*L0 - L2) * 180 + 10*L1 + L3
+#     (letters from A, digits), M = M1 * 128 + dBm + 64 - 22 bits;
+#   - those 50 bits and 31 zeros through the K=32 rate-1/2 convolutional
+#     code, polynomials 0xF2D05351 and 0xE4613C47: 162 bits;
+#   - interleaved by bit-reversed 8-bit addresses (those under 162);
+#   - each symbol sync + 2 * data, the 162-bit sync vector below - written
+#     here from memory and found equal, bit for bit, to upstream's
+#     k_wspr_sincro, two sources for one table;
+#   - 4-FSK, continuous phase, 12000/8192 Hz apart, 8192/12000 s a symbol
+#     (110.6 s), from 1 s after an even minute.
+WSPR_SYNC = [
+    1, 1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 0, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0,
+    0, 0, 0, 0, 1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 0, 0, 1,
+    1, 0, 1, 0, 0, 0, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 0, 1, 0, 0, 1, 0, 1, 1, 0, 0, 0, 1,
+    1, 0, 1, 0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 1, 1, 0, 1, 1, 0, 0, 1, 1,
+    0, 1, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0,
+    1, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0]
+WSPR_DF = 12000.0 / 8192.0
+WSPR_TS = 8192.0 / 12000.0
+
+
+def wspr_symbols(call, grid, dbm):
+    c = call.upper()
+    if not (len(c) >= 3 and c[2].isdigit()):
+        c = ' ' + c
+    c = (c + '      ')[:6]
+
+    def v(ch):
+        if ch.isdigit():
+            return ord(ch) - 48
+        if 'A' <= ch <= 'Z':
+            return ord(ch) - 55
+        return 36
+    if len(call) > 6 or not c[2].isdigit() or any(not ('A' <= ch <= 'Z' or ch == ' ') for ch in c[3:]):
+        raise SystemExit(f'wspr: "{call}" is not a type-1 callsign (digit 2nd or 3rd, '
+                         'letters after it, six at most)')
+    n = v(c[0])
+    n = n * 36 + v(c[1])
+    n = n * 10 + v(c[2])
+    for ch in c[3:]:
+        n = n * 27 + (v(ch) - 10)
+    g = grid.upper()
+    m1 = (179 - 10 * (ord(g[0]) - 65) - int(g[2])) * 180 + 10 * (ord(g[1]) - 65) + int(g[3])
+    m = m1 * 128 + dbm + 64
+    bits = [(n >> (27 - i)) & 1 for i in range(28)] + [(m >> (21 - i)) & 1 for i in range(22)]
+    bits += [0] * 31
+    reg, conv = 0, []
+    for b in bits:
+        reg = ((reg << 1) | b) & 0xFFFFFFFF
+        conv.append(bin(reg & 0xF2D05351).count('1') & 1)
+        conv.append(bin(reg & 0xE4613C47).count('1') & 1)
+    inter = [0] * 162
+    p = 0
+    for i in range(256):
+        j = int(f'{i:08b}'[::-1], 2)
+        if j < 162:
+            inter[j] = conv[p]
+            p += 1
+    return [WSPR_SYNC[i] + 2 * inter[i] for i in range(162)]
+
+
+def wspr_cycles(a):
+    """--cycles 2-minute cycles, one beacon each (--msg 'CALL GRID dBm',
+    repeated, used in turn), from 1 s + --dt after each even minute, its
+    centre at --hz of audio over the dial (0 Hz). Noise from 200 to 3800 Hz,
+    the SNR of WSJT-X: the beacon against the noise in 2500 Hz."""
+    import datetime as dt
+    msgs = a.msg or ['YL2ABC KO26 37']
+    n = int((a.lead + 120.0 * a.cycles) * FS_LO)
+    x = np.zeros(n, dtype=np.complex128)
+    sps = WSPR_TS * FS_LO                       # 32768 samples a symbol
+    for k in range(a.cycles):
+        call, grid, dbm = msgs[k % len(msgs)].split()
+        sym = wspr_symbols(call, grid, int(dbm))
+        t0 = int((a.lead + 120.0 * k + 1.0 + a.dt) * FS_LO)
+        idx = np.arange(int(162 * sps))
+        f = a.hz - 1.5 * WSPR_DF + WSPR_DF * np.array(sym)[(idx / sps).astype(int)]
+        w = np.exp(1j * 2 * np.pi * np.cumsum(f) / FS_LO)
+        snrs = a.snr or [-20.0]
+        amp = np.sqrt(10 ** (snrs[k % len(snrs)] / 10.0))
+        e = min(n, t0 + len(w))
+        x[t0:e] += amp * w[:e - t0]
+    if not a.clean:
+        rng = np.random.default_rng(a.seed)
+        sigma2 = FS_LO / 2500.0
+        w = np.sqrt(sigma2 / 2) * (rng.standard_normal(n) + 1j * rng.standard_normal(n))
+        W = np.fft.fft(w)
+        f = np.fft.fftfreq(n, 1.0 / FS_LO)
+        W[(f < 200.0) | (f > 3800.0)] = 0
+        x = x + np.fft.ifft(W)
+    now = dt.datetime.now(dt.timezone.utc)
+    edge = now.replace(second=0, microsecond=0) + dt.timedelta(minutes=1)
+    if edge.minute % 2:
+        edge += dt.timedelta(minutes=1)
+    what = f'WSPR {a.cycles} cycles: {msgs} at {a.hz:.1f} Hz, SNR {a.snr} dB in 2500 Hz'
+    return x, edge, what
+
+
 def add_noise(x, a):
     """Complex white noise, `snr` dB below the carrier in 500 Hz, only
     within +/- noise_bw/2 of it. The carrier's power is 1."""
@@ -1627,6 +1731,24 @@ def main():
                    help='--audio: multiply by this (the radio\'s scale)')
     p.set_defaults(build=None)
 
+    p = sub.add_parser('wspr', help="WSPR beacons, the dial at 0 Hz (USB), one a 2-minute cycle")
+    p.add_argument('--out', required=True)
+    p.add_argument('--offset', type=float, default=200e3)
+    p.add_argument('--rate', type=int, default=2_016_000,
+                   help='a multiple of 48 kHz, 2 MHz or more (default 2.016 MHz)')
+    p.add_argument('--msg', action='append', help="'YL2ABC KO26 37' - call, locator, dBm (repeat: in turn)")
+    p.add_argument('--hz', type=float, default=1500.0, help='the beacon\'s centre, audio Hz')
+    p.add_argument('--snr', type=float, action='append',
+                   help='dB in 2500 Hz, WSJT-X\'s (default -20); repeat: one a cycle, in turn')
+    p.add_argument('--cycles', type=int, default=2)
+    p.add_argument('--dt', type=float, default=0.0, help='s late against the even minute + 1 s')
+    p.add_argument('--lead', type=float, default=5.0, help='s before the first even minute')
+    p.add_argument('--clean', action='store_true')
+    p.add_argument('--seed', type=int, default=1)
+    p.add_argument('--audio', action='store_true')
+    p.add_argument('--level', type=float, default=1.0)
+    p.set_defaults(build=None)
+
     p = sub.add_parser('audio', help='any 12 kHz f32 audio file, sent as USB')
     common(p)
     p.add_argument('--in', dest='input', required=True, help='the f32 file at 12 kHz')
@@ -1636,8 +1758,8 @@ def main():
     if a.mode == 'rds':
         rds_long(a)
         return
-    if a.mode == 'ft8':
-        x, edge, what = ft8_slots(a)
+    if a.mode in ('ft8', 'wspr'):
+        x, edge, what = ft8_slots(a) if a.mode == 'ft8' else wspr_cycles(a)
         if a.audio:
             r = resample_poly(np.real(x), 1, 4).astype(np.float32) * np.float32(a.level)
             r.tofile(a.out)
@@ -1649,8 +1771,9 @@ def main():
                 write_iq(x, a, what)        # resample_poly, the whole file in memory
             else:
                 write_iq_long(x, a, what)
-            print(f'start the transfer {a.lead:.1f} s before a slot edge (:00 :15 :30 :45), '
-                  f'e.g. {(edge).strftime("%H:%M:%S")} UTC')
+            print(f'start the transfer {a.lead:.1f} s before '
+                  + ('a slot edge (:00 :15 :30 :45)' if a.mode == 'ft8' else 'an EVEN minute')
+                  + f', e.g. {(edge).strftime("%H:%M:%S")} UTC')
         return
     if a.mode == 'wwv':
         env, t0, what = wwv_envelope(a)

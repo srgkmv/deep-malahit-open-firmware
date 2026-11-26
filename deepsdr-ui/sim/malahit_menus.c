@@ -1096,9 +1096,78 @@ static void qth(const char *nombre, uint8_t en, uint8_t sel)
     escribe(nombre);
 }
 
+/*
+ * WSPR - paso 58 del port, 25/11/2026: la tabla con UDG_COLS_WSPR, la barra
+ * del ciclo, el boton de la frecuencia y la chapa, como los arma src/digi.c.
+ * Los campos mas anchos: un indicativo de siete, el desvio con signo de tres
+ * cifras, la calidad de tres.
+ */
+static void digi_wspr(const char *nombre, uint8_t en)
+{
+    static const char *const k_filas[] = {
+        "21:58\tYL2ABC\tKO26\t37\t+12,3\t92",
+        "22:00\tDL1ABCD\tJN58\t60\t-99,9\t100",
+        "22:02\tW1AW\tFN31\t0\t+0,0\t88",
+    };
+    ui_digi_state_t st;
+    uint8_t i, k;
+    int16_t h = (int16_t)(DIGI_PANEL_Y + DIGI_PANEL_H - DIGI_SCOPE_Y);
+
+    fondo_principal();
+    memset(&st, 0, sizeof st);
+    st.y = DIGI_SCOPE_Y;
+    st.h = h;
+    st.filas = (uint8_t)((h - UDG_HDR_H) / UDG_LINE_H - 1);
+    st.btn = en ? "Clear" : "Borrar";
+    st.cebra = 1U;
+    st.cols = ui_digi_cols_wspr;
+    st.ncols = UI_DIGI_COLS_WSPR_N;
+    st.titulos = en ? "Time\tCallsign\tLoc.\tdBm\tOffset\tQual."
+                    : "Hora\tIndicativo\tLoc.\tdBm\tDesvío\tCal.";
+    st.btn4 = "28.124,6";
+    st.barra_on = 1U;
+    st.barra_max = 100U;
+    st.barra_v = 63U;
+    st.barra_txt = en ? "listening 100 %  q 100" : "escuchando 100 %  q 100";
+    st.chip = en ? "999 heard" : "999 oídas";
+    st.enganchado = 1U;
+    for (i = 0; i < sizeof k_filas / sizeof k_filas[0]; i++) {
+        const char *p = k_filas[i];
+
+        st.fila[i] = k_filas[i];
+        for (k = 0; k < UI_DIGI_COLS_WSPR_N && *p; k++) {
+            char campo[40];
+            uint8_t n = 0;
+            int16_t x = ui_digi_cols_wspr[k], hasta;
+
+            while (*p && *p != '\t' && n < sizeof campo - 1U) { campo[n++] = *p++; }
+            campo[n] = '\0';
+            if (*p == '\t') { p++; }
+            if (x < 0) { continue; }
+            if (ui_digi_cols_wspr[k + 1U] >= 0) { hasta = (int16_t)(ui_digi_cols_wspr[k + 1U] - x - 4); }
+            else { hasta = (int16_t)(-ui_digi_cols_wspr[k + 1U] - UDG_COL_RESERVA - x - 4); }
+            cabe("wspr", campo, &font_ui_10b, hasta);
+        }
+    }
+    cabe("boton4", st.btn4, &font_ui_10b, ui_digi_btn4_w_dbg(&st) - 8);
+    cabe("barra", st.barra_txt, &font_ui_10b, ui_digi_barra_hueco_dbg(&st));
+    cabe("barra", en ? "set the clock first" : "pon el reloj en hora", &font_ui_10b,
+         ui_digi_barra_hueco_dbg(&st));
+    cabe("barra", en ? "starts in 1:59  q 100" : "empieza en 1:59  q 100", &font_ui_10b,
+         ui_digi_barra_hueco_dbg(&st));
+    ui_digi_draw_texto(&st);
+    if (strcmp(ui_digi_chip_visible(&st), st.chip) != 0) {
+        printf("  SE CORTA la chapa \"%s\"\n", st.chip);
+        s_fallos++;
+    }
+    escribe(nombre);
+}
+
 int main(void)
 {
     printf("menus del Malahit, 480 x 320\n");
+    digi_wspr("wspr", 0U);
+    digi_wspr("wspr_en", 1U);
     qth("qth", 0U, 0U);
     qth("qth_en", 1U, 4U);
     digi_ft8("ft8", 0U, 0U);

@@ -6386,3 +6386,14 @@ out/ft8radio: sim/ft8_radio.c \
               sim/waterfall_prestamo.c
 	@mkdir -p out
 	$(CC) $(CFLAGS) $(FT8RADIO_FLAGS) -I $(FIRMWARE)/User -I $(FIRMWARE)/Ft8Lib -Ihostinc -Isim -o $@ $^ $(LDLIBS) -Wl,--wrap=ft8_decoder_slot_paso
+
+# WSPR COMO LO LLEVA LA RADIO, CONTRA CUALQUIER FICHERO (25/11/2026, port del
+# Malahit, paso 58). Ver sim/wspr_radio.c. Pide un fichero: fuera de
+# "comprueba". El fichero, de malahit/tools/hackrf_gen.py wspr --audio.
+out/wsprradio: sim/wspr_radio.c sim/waterfall_prestamo.c \
+               $(FIRMWARE)/User/wspr_modo.c $(FIRMWARE)/User/wspr_rx.c \
+               $(FIRMWARE)/User/wspr_msg.c $(FIRMWARE)/User/wspr_fano.c \
+               $(FIRMWARE)/User/hfdl_ram.c
+	@mkdir -p out
+	$(CC) -O2 -Wall -Wextra -I hostinc -I sim -I $(FIRMWARE)/User \
+	      -I $(FIRMWARE)/Ft8Lib -o $@ $^ $(LDLIBS)
