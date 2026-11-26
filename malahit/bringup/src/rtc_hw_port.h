@@ -22,4 +22,9 @@ void  rtc_hw_pon_anclado(const rtc_hw_datetime_t *dt, uint16_t frac_ms, uint16_t
 float rtc_hw_desvio_s(const rtc_hw_datetime_t *dt, uint16_t frac_ms);  /* RTC - dt, s */
 float rtc_hw_cal_ppm(void);     /* the calibration in force, ppm (+ = faster) */
 
+/* The date alone (step 63): the time of day kept to the 1/256 s, the
+ * anchors moved by as many days. 1 if done, 0 for an impossible date, a
+ * dead crystal or a calendar that would not take it. */
+uint8_t rtc_hw_pon_fecha(uint16_t year, uint8_t month, uint8_t day);
+
 #endif

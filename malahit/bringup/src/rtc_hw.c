@@ -459,6 +459,71 @@ void rtc_hw_pon_anclado(const rtc_hw_datetime_t *dt, uint16_t frac_ms, uint16_t 
     RTC->BKP3R = calidad_ms;
 }
 
+/*
+ * THE DATE ONLY - step 63, the clock keypad's "Date" (menus.c). The RTC
+ * takes a date only through init mode, which writes the time as well and
+ * restarts the second: written plainly, a clock set "On the minute" would
+ * lose up to a second for a date. So the time is read with its fraction
+ * (SSR first: it freezes TR and DR until DR is read), written back with
+ * the new date, and the fraction given back by a shift - the same sum as
+ * rtc_hw_pon_anclado()'s. Within the last ~20 ms of a second the write
+ * could land after the edge and keep the old second, so that edge is let
+ * pass first.
+ *
+ * The anchors (BKP1: last setting, BKP2: the learning's start) are epochs
+ * that include the date; moved by the same number of days, "set N s ago"
+ * and the crystal's learning carry on as if the date had always been
+ * right. Not a setting of the time: no anchor made, none broken.
+ */
+uint8_t rtc_hw_pon_fecha(uint16_t year, uint8_t month, uint8_t day)
+{
+    uint32_t ssr, tr, dr, ep_antes, ep_despues, t0;
+    uint8_t  h, m, sg, sub;
+    int32_t  delta;
+
+    if (s_lxtal_mal || !s_arrancado) { return 0U; }
+    if (!rtc_cal_valida(year, month, day, 0U, 0U, 0U)) { return 0U; }
+
+    t0 = board_millis();
+    for (;;) {
+        ssr = RTC->SSR;
+        tr  = RTC->TR;
+        dr  = RTC->DR;
+        sub = (uint8_t)(RTC_SYN_PRE - (ssr & 0xFFU));    /* 1/256 s gone by */
+        if (sub < 250U || (board_millis() - t0) > 50U) { break; }
+    }
+    h  = rtc_cal_bcd_a_dec((uint8_t)((tr >> RTC_TR_HU_Pos) & 0x3FU));
+    m  = rtc_cal_bcd_a_dec((uint8_t)((tr >> RTC_TR_MNU_Pos) & 0x7FU));
+    sg = rtc_cal_bcd_a_dec((uint8_t)((tr >> RTC_TR_SU_Pos) & 0x7FU));
+    ep_antes = rtc_cal_epoca((uint16_t)(2000U + rtc_cal_bcd_a_dec((uint8_t)((dr >> RTC_DR_YU_Pos) & 0xFFU))),
+                             rtc_cal_bcd_a_dec((uint8_t)((dr >> RTC_DR_MU_Pos) & 0x1FU)),
+                             rtc_cal_bcd_a_dec((uint8_t)((dr >> RTC_DR_DU_Pos) & 0x3FU)),
+                             h, m, sg);
+
+    if (!calendario_pon(year, month, day, h, m, sg)) { return 0U; }
+    if (sub > 0U) {
+        for (t0 = board_millis(); (RTC->ISR & RTC_ISR_SHPF) != 0U; ) {
+            if ((board_millis() - t0) > 10U) { break; }
+        }
+        wpr_abre();
+        RTC->SHIFTR = RTC_SHIFTR_ADD1S | ((RTC_SYN_PRE + 1U - sub) & RTC_SHIFTR_SUBFS);
+        wpr_cierra();
+    }
+
+    ep_despues = rtc_cal_epoca(year, month, day, h, m, sg);
+    delta = (int32_t)(ep_despues - ep_antes);
+    respaldo_abre();
+    if (RTC->BKP0R == BKP_MAGIA && RTC->BKP1R != 0U) {
+        RTC->BKP1R = (uint32_t)((int32_t)RTC->BKP1R + delta);
+    }
+    if (RTC->BKP2R != 0U) {
+        RTC->BKP2R = (uint32_t)((int32_t)RTC->BKP2R + delta);
+    }
+    s_sucio = 1U;            /* the calendar changed: its readers re-read */
+    s_seq++;
+    return 1U;
+}
+
 uint32_t rtc_hw_get_seconds_since_sync(void)
 {
     uint32_t ahora, antes;

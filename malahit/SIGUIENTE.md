@@ -4,6 +4,17 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
+## START HERE — 27/11/2026, ~00:10: step 63 (the date on the clock keypad) IN FLASH, NOT committed
+
+Steps 60-62 committed and pushed (through fd4e0c6). Step 63 - `PORTING.md`
+63: "Date" on the clock keypad, rtc_hw_pon_fecha() - in flash (533 136
+bytes), checked on the radio over SWD taps, not committed.
+
+**The radio's clock**: date 2026-11-27 right; the time ~60.65 s behind the
+PC; the zone +1:00 where the owner is on EET +2:00; no calibration anchor
+and CALR not put back (-50.5). The owner's to fix the zone and the time
+(On the minute); CALR then by hand or by two anchored settings 22 h apart.
+
 ## START HERE — 26/11/2026, ~23:58: step 62 (station banner + JMP) IN FLASH, NOT committed
 
 Step 61 committed locally (b39eb3b), NOT pushed (the owner said "commit"

@@ -2527,6 +2527,27 @@ Each step should end with something visible on the radio.
    <yyyymmdd>`: the date only, by rtc_hw_set() as the time keypad sets the
    time - upstream has no date keypad (its date comes from a radio clock or
    RDS CT), and the battery had taken it. Flash image 531 408 bytes.
+63. **The date, on the clock's keypad.** *27/11/2026, from flash, asked
+   by the owner.* This port's own: upstream has no date keypad. The key
+   upstream leaves blank on its clock keypad (bottom left) is "Date": the
+   same keypad then takes DDMMYY, shown DD.MM.YY with dashes for what is
+   not typed (the time's rule), the radio's own date in the hint line
+   ("DDMMYY. Now: 27.11.26"), "Set the date" writes it, the key reads
+   "Time" and goes back, On the minute is blank. Written by
+   `rtc_hw_pon_fecha()` (src/rtc_hw.c): the RTC takes a date only through
+   init mode, which writes the time too and restarts the second, so the
+   time is read with its fraction (SSR, TR, DR - SSR freezes the other
+   two), written back with the new date, the fraction given back by a
+   shift (rtc_hw_pon_anclado()'s sum), the last ~20 ms of a second let
+   pass first; and the anchors (BKP1 last setting, BKP2 the learning's
+   start), epochs with the date in them, moved by the same days - not a
+   setting of the time, nothing anchored or broken. On the radio, taps
+   over SWD: 27.11 -> 26.11 -> 27.11, the RTC against the PC -60.651,
+   -60.651, -60.653 s (5 reads each, +-2 ms) - the second untouched; "last
+   setting" 568 s before, 685 s after (117 s later): carried through both.
+   `radio_fecha` (SWD, step 62) still goes through rtc_hw_set() - it broke
+   the anchor once tonight; the keypad's is the path to use. Flash image
+   533 136 bytes.
 
 Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress

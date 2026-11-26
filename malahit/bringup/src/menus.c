@@ -1179,32 +1179,89 @@ static void kbd_accept(uint32_t mult)
  * ":--" until then. The date is not the keypad's: it stays what the RTC
  * holds, as upstream's. Only four digits apply, and an impossible time
  * (25:70) is refused by rtc_hw_set() - said on the console here.
+ *
+ * AND THE DATE - step 63, this port's own, asked by the owner (upstream
+ * has no date keypad: its date comes from a radio clock or RDS CT, and
+ * this radio's went with the battery). The key upstream leaves empty,
+ * bottom left, is "Date": the same keypad then takes DDMMYY, shown
+ * DD.MM.YY, the radio's own date in the hint line, and "Set the date"
+ * writes it through rtc_hw_pon_fecha() - the time of day kept to the
+ * 1/256 s, so a clock set On the minute stays so. The key reads "Time"
+ * there and goes back; On the minute has nothing to say about a date
+ * and is blank.
  */
 #define HE_MAX_DIGITS  4U       /* upstream's TIME_ENTRY_MAX_DIGITS */
+#define FE_DIGITS      6U       /* DDMMYY */
 
 static uint8_t  s_kbd_hora;     /* the keypad open is the clock's */
-static uint16_t s_he_value;
+static uint8_t  s_kbd_fecha;    /* ... and on its date */
+static uint32_t s_he_value;
 static uint8_t  s_he_digits;
 static char     s_kbd_seg[4];
+static char     s_kbd_pista[48];
 
 static const texto_t k_kbd_hora_rot[UIK_KEYS] = {   /* upstream's */
     T("1","1"), T("2","2"), T("3","3"), T("Borrar","Delete"),
     T("4","4"), T("5","5"), T("6","6"), T("Vaciar","Clear"),
     T("7","7"), T("8","8"), T("9","9"), T("Volver","Back"),
-    T(0,0),     T("0","0"), T("Poner en hora","Set the clock"), T("En punto","On the minute"),
+    T("Fecha","Date"), T("0","0"), T("Poner en hora","Set the clock"), T("En punto","On the minute"),
 };
 static const uint8_t k_kbd_hora_tipo[UIK_KEYS] = {
     UIK_DIGITO, UIK_DIGITO, UIK_DIGITO, UIK_BORRA,
     UIK_DIGITO, UIK_DIGITO, UIK_DIGITO, UIK_BORRA,
     UIK_DIGITO, UIK_DIGITO, UIK_DIGITO, UIK_VUELVE,
-    UIK_NADA,   UIK_DIGITO, UIK_ACEPTA, UIK_ACEPTA,
+    UIK_BORRA,  UIK_DIGITO, UIK_ACEPTA, UIK_ACEPTA,
 };
+/* The date's: the same grid, key 12 back to the time, 15 blank. */
+static const texto_t k_kbd_fecha_rot[UIK_KEYS] = {
+    T("1","1"), T("2","2"), T("3","3"), T("Borrar","Delete"),
+    T("4","4"), T("5","5"), T("6","6"), T("Vaciar","Clear"),
+    T("7","7"), T("8","8"), T("9","9"), T("Volver","Back"),
+    T("Hora","Time"), T("0","0"), T("Poner fecha","Set the date"), T(0,0),
+};
+static const uint8_t k_kbd_fecha_tipo[UIK_KEYS] = {
+    UIK_DIGITO, UIK_DIGITO, UIK_DIGITO, UIK_BORRA,
+    UIK_DIGITO, UIK_DIGITO, UIK_DIGITO, UIK_BORRA,
+    UIK_DIGITO, UIK_DIGITO, UIK_DIGITO, UIK_VUELVE,
+    UIK_BORRA,  UIK_DIGITO, UIK_ACEPTA, UIK_NADA,
+};
+
+/* DD.MM.YY from the digits typed, dashes for the rest - the time's rule:
+ * "2","6" must not read as a whole date. */
+static void fecha_lectura(void)
+{
+    uint8_t i;
+
+    s_kbd.lectura = s_kbd_lectura;
+    if (s_he_digits == 0U) {
+        s_kbd_lectura[0] = '\0';
+    } else {
+        uint32_t div = 1U;
+
+        for (i = 1U; i < s_he_digits; i++) { div *= 10U; }
+        for (i = 0U; i < FE_DIGITS; i++) {
+            uint8_t slot = (uint8_t)(i + i / 2U);          /* 2 and 5 are '.' */
+
+            if (i < s_he_digits) {
+                s_kbd_lectura[slot] = (char)('0' + (char)((s_he_value / div) % 10U));
+                div /= 10U;
+            } else {
+                s_kbd_lectura[slot] = '-';
+            }
+        }
+        s_kbd_lectura[2] = '.';
+        s_kbd_lectura[5] = '.';
+        s_kbd_lectura[8] = '\0';
+    }
+    s_kbd.unidad = 0;
+}
 
 static void hora_lectura(void)
 {
     static const uint16_t k_pot10[HE_MAX_DIGITS] = { 1U, 10U, 100U, 1000U };
     uint8_t i;
 
+    if (s_kbd_fecha) { fecha_lectura(); return; }
     s_kbd.lectura = s_kbd_lectura;
     if (s_he_digits == 0U) {
         s_kbd_lectura[0] = '\0';
@@ -1271,13 +1328,93 @@ static void hora_acepta(uint8_t en_punto)
     menu_close();
 }
 
+/* The keypad on the time (0) or the date (1): titles, hint, keys, and
+ * what was typed for the other forgotten. */
+static void hora_modo(uint8_t fecha)
+{
+    uint8_t i;
+
+    s_kbd_fecha = fecha;
+    s_he_value  = 0U;
+    s_he_digits = 0U;
+    if (fecha) {
+        rtc_hw_datetime_t dt;
+        const char *a = tr("DDMMAA. Ahora: ", "DDMMYY. Now: ");
+        uint8_t n = 0U;
+
+        rtc_hw_get(&dt);
+        while (a[n] != '\0' && n < (uint8_t)(sizeof s_kbd_pista - 12U)) {
+            s_kbd_pista[n] = a[n]; n++;
+        }
+        s_kbd_pista[n++] = (char)('0' + dt.day / 10U);
+        s_kbd_pista[n++] = (char)('0' + dt.day % 10U);
+        s_kbd_pista[n++] = '.';
+        s_kbd_pista[n++] = (char)('0' + dt.month / 10U);
+        s_kbd_pista[n++] = (char)('0' + dt.month % 10U);
+        s_kbd_pista[n++] = '.';
+        s_kbd_pista[n++] = (char)('0' + (dt.year % 100U) / 10U);
+        s_kbd_pista[n++] = (char)('0' + dt.year % 10U);
+        s_kbd_pista[n]   = '\0';
+        s_kbd.titulo = tr("Fecha", "Date");
+        s_kbd.pista  = s_kbd_pista;
+    } else {
+        s_kbd.titulo = tr("Hora", "Time");
+        s_kbd.pista  = tr("HHMM. En punto: el toque es el cambio de minuto",
+                          "HHMM. On the minute: the tap is the minute change");
+    }
+    for (i = 0U; i < UIK_KEYS; i++) {
+        const texto_t *t = fecha ? &k_kbd_fecha_rot[i] : &k_kbd_hora_rot[i];
+
+        s_kbd.tecla[i] = (*t)[idioma()];
+        s_kbd.tipo[i]  = fecha ? k_kbd_fecha_tipo[i] : k_kbd_hora_tipo[i];
+    }
+    s_kbd.pressed = -1;
+    hora_lectura();
+    if (s_open == MENU_TECLADO) {
+        ui_kbd_draw(&s_kbd);
+        console_printf("  menu -> Teclado de la %s\n", fecha ? "fecha" : "hora");
+    }
+}
+
+/* "Set the date": six digits, DDMMYY, 20YY. An impossible date (31.02)
+ * is refused by rtc_hw_pon_fecha() and the keypad stays open to retype. */
+static void fecha_acepta(void)
+{
+    uint8_t dd, mm, aa;
+
+    if (s_he_digits != FE_DIGITS) { return; }
+    dd = (uint8_t)(s_he_value / 10000U);
+    mm = (uint8_t)((s_he_value / 100U) % 100U);
+    aa = (uint8_t)(s_he_value % 100U);
+    if (rtc_hw_lxtal_failed()) {
+        console_printf("  reloj: la fecha no se pone - el cristal de 32.768 Hz no va\n");
+        menu_close();
+        return;
+    }
+    if (!rtc_hw_pon_fecha((uint16_t)(2000U + aa), mm, dd)) {
+        console_printf("  reloj: %02u.%02u.%02u no existe - no se pone\n",
+                       (uint32_t)dd, (uint32_t)mm, (uint32_t)aa);
+        return;
+    }
+    {
+        rtc_hw_datetime_t dt;
+
+        rtc_hw_get(&dt);
+        console_printf("  reloj: fecha puesta, %04u-%02u-%02u %02u:%02u:%02u\n",
+                       (uint32_t)dt.year, (uint32_t)dt.month, (uint32_t)dt.day,
+                       (uint32_t)dt.hour, (uint32_t)dt.minute, (uint32_t)dt.second);
+    }
+    radio_reloj_repinta();
+    menu_close();
+}
+
 static void hora_apply(uint8_t i)
 {
     uint8_t d = k_kbd_digito[i];
 
     if (d != 0xFFU) {
-        if (s_he_digits < HE_MAX_DIGITS) {
-            s_he_value = (uint16_t)(s_he_value * 10U + d);
+        if (s_he_digits < (s_kbd_fecha ? FE_DIGITS : HE_MAX_DIGITS)) {
+            s_he_value = s_he_value * 10U + d;
             s_he_digits++;
             hora_lectura();
             ui_kbd_draw_lectura(&s_kbd);
@@ -1294,16 +1431,19 @@ static void hora_apply(uint8_t i)
         hora_lectura(); ui_kbd_draw_lectura(&s_kbd);
         break;
     case 11U: menu_close();      break;
-    case 14U: hora_acepta(0U);   break;
-    case 15U: hora_acepta(1U);   break;
+    case 12U: hora_modo((uint8_t)!s_kbd_fecha); break;
+    case 14U:
+        if (s_kbd_fecha) { fecha_acepta(); } else { hora_acepta(0U); }
+        break;
+    case 15U:
+        if (!s_kbd_fecha) { hora_acepta(1U); }
+        break;
     default:                     break;
     }
 }
 
 void menu_hora_open(void)
 {
-    uint8_t i;
-
     suelta_hora();
     s_det       = DET_NINGUNO;
     s_pressed   = -1;
@@ -1311,16 +1451,8 @@ void menu_hora_open(void)
     s_he_digits = 0U;
     s_kbd_hora  = 1U;
     memset(&s_kbd, 0, sizeof s_kbd);
-    s_kbd.titulo  = tr("Hora", "Time");
-    s_kbd.pista   = tr("HHMM. En punto: el toque es el cambio de minuto",
-                       "HHMM. On the minute: the tap is the minute change");
-    s_kbd.pressed = -1;
     s_kbd.cursor  = -1;
-    for (i = 0U; i < UIK_KEYS; i++) {
-        s_kbd.tecla[i] = k_kbd_hora_rot[i][idioma()];
-        s_kbd.tipo[i]  = k_kbd_hora_tipo[i];
-    }
-    hora_lectura();
+    hora_modo(0U);                      /* titles, hint, keys: the time's */
     s_open = MENU_TECLADO;
     ui_kbd_draw(&s_kbd);
     radio_act_refresh();
@@ -1330,7 +1462,7 @@ void menu_hora_open(void)
 /* Once a second from the main loop: the keypad's ticking second. */
 void menu_hora_tic(void)
 {
-    if (s_open != MENU_TECLADO || !s_kbd_hora || !hora_anclada()) { return; }
+    if (s_open != MENU_TECLADO || !s_kbd_hora || s_kbd_fecha || !hora_anclada()) { return; }
     hora_lectura();
     ui_kbd_draw_lectura(&s_kbd);
 }
@@ -1430,6 +1562,7 @@ void menu_teclado_open(void)
     s_fe_digits = 0U;
     s_fe_point  = FE_NO_POINT;
     s_kbd_hora  = 0U;
+    s_kbd_fecha = 0U;
     memset(&s_kbd, 0, sizeof s_kbd);
     s_kbd.titulo  = tr("Frecuencia", "Frequency");
     s_kbd.pista   = tr("teclea y elige la unidad", "type it and pick the unit");
