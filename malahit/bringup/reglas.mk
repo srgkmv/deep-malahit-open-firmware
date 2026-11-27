@@ -408,17 +408,15 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/ui_kbd.c
 #              function, upstream's sim/snaptest.c tests it)
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/spec_snap.c
 # banco.c  the memory channels: four banks of fifteen, upstream's table
-#          and its MEM.CSV, kept in the FRAM by src/memfram.c (22/11/2026)
-#          - still there since the SPI flash came (step 60): banco.c's
-#          two calls to the disk are renamed, for it and for memfram.c
-#          alone, so upstream's real spi_flash.c can link beside them.
-#          The same -D on both sides keeps memfram.c's definitions
-#          checked against upstream's prototypes in spi_flash.h.
+#          and its MEM.CSV (22/11/2026). banco.c's two calls to the disk
+#          are renamed for it alone and answered by src/memfram.c: the
+#          disk since step 67 (the FRAM's old copy moved there once), the
+#          FRAM when there is no disk. memfram.c checks its two functions
+#          against upstream's prototypes with _Static_assert.
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/banco.c
 MEMFRAM_RENAME  = -Dspi_flash_read_file_by_name=memfram_read_file_by_name
 MEMFRAM_RENAME += -Dspi_flash_write_or_update_file=memfram_write_or_update_file
 $(BUILD_DIR)/up_banco.o: CFLAGS_EXTRA_UPSTREAM += $(MEMFRAM_RENAME)
-$(BUILD_DIR)/memfram.o:  CFLAGS += $(MEMFRAM_RENAME)
 # rds.c, rds_pi.c  RDS on WFM: the decoder upstream's WFM hook feeds, and
 #                  its table of networks by PI code (22/11/2026)
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/rds.c

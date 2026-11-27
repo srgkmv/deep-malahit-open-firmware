@@ -4,6 +4,19 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
+## START HERE — 27/11/2026, ~23:00: step 67 (MEM.CSV onto the disk) IN FLASH, committed and pushed
+
+Step 66 committed and pushed (c1b3c57). Step 67 - `PORTING.md` 67:
+`src/memfram.c` answers banco.c from the disk; the FRAM's MEM.CSV moved
+there once (236 bytes, the FRAM slots' magic now MEMV); read again when
+the PC gives the disk back - in flash (574 944 bytes, the commit's
+code), checked on the radio.
+
+**The radio's state**: WEFAX at 7878.1 kHz, its save off; memories 01
+(104.3 WFM) and 02 (9.6 AM), MEM.CSV on the disk as moved. The disk:
+MEM.CSV, PANT001, SSTV001/002, W0787801 (the bench's pictures), PRUEBA.TXT,
+RESPALDO.BIN - the empty and noise charts W0787802..05 deleted (owner).
+
 ## START HERE — 27/11/2026, ~22:40: step 66 (pictures to the disk) IN FLASH, committed and pushed
 
 Steps 64-65 committed and pushed (413ac0d). Step 66 - `PORTING.md` 66:

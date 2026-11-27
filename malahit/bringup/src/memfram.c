@@ -1,41 +1,50 @@
 #include <string.h>
-#include "spi_flash.h"     /* ../../User - upstream's prototypes, nothing else */
+#include "spi_flash.h"     /* ../../User - upstream's disk */
 #include "fram.h"
+#include "console.h"
+#include "usbdisco.h"
+#include "guarda.h"
+#include "menus.h"
 
 /*
- * THE DISK THIS BOARD DOES NOT HAVE, FOR ONE FILE - 22/11/2026.
+ * WHERE MEM.CSV LIVES - banco.c's two calls to the disk, answered here.
  *
  * Upstream keeps its memory channels in MEM.CSV on the DEEPSDR's SPI
  * flash disk (banco.c, banco.h: "DONDE VIVE"), and banco.c reaches the
- * disk through exactly two calls. This board has no disk - PORTING.md
- * 3.3, decided - but it has 25 kB of FRAM nobody uses, so those two calls
- * are answered here, for MEM.CSV and nothing else, and banco.c is
- * compiled in place unmodified: the same table, the same CSV, the same
- * parser, the same validation.
+ * disk through exactly two calls, spi_flash_read_file_by_name() and
+ * spi_flash_write_or_update_file(). banco.c is compiled in place,
+ * unmodified, with those two renamed to memfram_*() (reglas.mk
+ * MEMFRAM_RENAME), and this file answers them.
  *
- * WHERE: 0x4200, two slots of 3 kB, after the settings record (0x4000
- * for versions 1-3, 0x4100 for 4) and inside the stretch the factory
- * firmware leaves blank (settings.h). Upstream's own buffer floor is
- * BANCO_CSV_MIN, 2560 bytes; a full bank of sixty memories with the four
- * names is under 2.7 kB.
+ * UNTIL STEP 67 (22/11 - 27/11/2026) the answer was the FRAM: this board
+ * had no disk, and 0x4200 held MEM.CSV in two slots of 3 kB - each a
+ * header (magic, sequence, length, CRC-32 of the data) and the data, a
+ * write to the slot NOT holding the newest, data first and header last,
+ * read back; a read takes the newest slot whose CRC checks.
  *
- * HOW: as the settings record - each slot a header (magic, sequence,
- * length, CRC-32 of the data) and the data; a write goes to the slot NOT
- * holding the newest file, data first and header last, and is read back;
- * a read takes the newest slot whose CRC checks. A power cut in the middle
- * of a write leaves the other slot whole, so the bank comes back one save
- * behind rather than empty.
+ * NOW IT IS THE DISK, upstream's place, for upstream's reasons: the file
+ * opens in the PC's notepad, is corrected there, copied to another radio.
+ * The FRAM's copy is MOVED to the disk once - the first boot that finds
+ * the disk without MEM.CSV and the FRAM with one writes it there, reads it
+ * back, and only then marks the FRAM slots moved (their magic changed:
+ * the bytes stay, for SWD, but nothing reads them). From then on the
+ * file on the disk is the truth: deleted on the PC, the bank is empty,
+ * as upstream's would be - an old copy coming back from the FRAM would
+ * be a surprise.
  *
- * SINCE THE SPI FLASH CAME (step 60, 26/11/2026) upstream's real
- * spi_flash.c is linked too, with these two names. This file and banco.c
- * are compiled with -Dspi_flash_read_file_by_name=memfram_read_file_by_name
- * (and the write's likewise, reglas.mk MEMFRAM_RENAME): the functions
- * below are memfram_*() in the object, and banco.c still reaches them,
- * not the flash. MEM.CSV stays in the FRAM.
+ * The FRAM stays the answer when there is no disk (no chip, or a volume
+ * this driver does not understand), and for the boot whose move failed.
+ *
+ * A WRITE TO THE DISK IS REFUSED - the memory stays in RAM, banco.c's
+ * table, and the caller beeps - while the PC has the disk (it owns the
+ * FAT then) and while a picture is being saved (upstream's rule, its
+ * main.c before banco_guarda(): "mientras haya una foto en curso ... la
+ * memoria se queda en RAM"). memfram_porque() says which.
  */
 #define MEMF_ADDR     0x4200U
 #define MEMF_SLOT     0x0C00U                   /* 3 kB */
 #define MEMF_MAGIC    0x4D454D4DU               /* "MMEM" */
+#define MEMF_MOVIDO   0x564D454DU               /* "MEMV": moved to the disk */
 
 typedef struct {
     uint32_t magic;
@@ -46,8 +55,22 @@ typedef struct {
 
 #define MEMF_DATA_MAX (MEMF_SLOT - sizeof(memf_hdr_t))
 
-static int      s_slot = -1;
-static uint32_t s_seq;
+/* the names banco.c calls, checked against upstream's prototypes */
+uint32_t memfram_read_file_by_name(const char name8[8], const char ext3[3],
+                                   uint8_t *out_buf, uint32_t out_buf_size);
+int      memfram_write_or_update_file(const char name8[8], const char ext3[3],
+                                      const uint8_t *data, uint32_t len);
+_Static_assert(__builtin_types_compatible_p(__typeof__(&spi_flash_read_file_by_name),
+                                            __typeof__(&memfram_read_file_by_name)),
+               "banco.c's read is renamed to memfram_read_file_by_name()");
+_Static_assert(__builtin_types_compatible_p(__typeof__(&spi_flash_write_or_update_file),
+                                            __typeof__(&memfram_write_or_update_file)),
+               "banco.c's write is renamed to memfram_write_or_update_file()");
+
+static int         s_slot = -1;
+static uint32_t    s_seq;
+static uint8_t     s_donde;                     /* MEMF_DONDE_* */
+static const char *s_porque;
 
 static uint32_t crc32_add(uint32_t c, const uint8_t *p, uint32_t n)
 {
@@ -85,13 +108,14 @@ static uint32_t crc_en_fram(uint32_t addr, uint32_t len)
     return ~c;
 }
 
-uint32_t spi_flash_read_file_by_name(const char name8[8], const char ext3[3],
-                                     uint8_t *out_buf, uint32_t out_buf_size)
+/* ------------------------------------------------------------------ */
+/* the FRAM's two slots                                                 */
+/* ------------------------------------------------------------------ */
+
+static uint32_t fram_lee(uint8_t *out_buf, uint32_t out_buf_size)
 {
     memf_hdr_t h[2];
     int        ok[2], pick, i;
-
-    if (!es_mem_csv(name8, ext3)) { return 0U; }
 
     for (i = 0; i < 2; i++) {
         fram_read(slot_addr(i), (uint8_t *)&h[i], sizeof h[i]);
@@ -112,14 +136,13 @@ uint32_t spi_flash_read_file_by_name(const char name8[8], const char ext3[3],
     return h[pick].len;
 }
 
-int spi_flash_write_or_update_file(const char name8[8], const char ext3[3],
-                                   const uint8_t *data, uint32_t len)
+static int fram_escribe(const uint8_t *data, uint32_t len)
 {
     memf_hdr_t h, back;
     int        slot = (s_slot == 0) ? 1 : 0;
     uint32_t   a;
 
-    if (!es_mem_csv(name8, ext3) || len == 0U || len > MEMF_DATA_MAX) { return 0; }
+    if (len == 0U || len > MEMF_DATA_MAX) { return 0; }
 
     a = slot_addr(slot);
     h.magic = MEMF_MAGIC;
@@ -140,6 +163,95 @@ int spi_flash_write_or_update_file(const char name8[8], const char ext3[3],
     return 1;
 }
 
+/* Both slots marked moved: the magic only, the rest left as it was. */
+static void fram_suelta(void)
+{
+    int i;
+
+    for (i = 0; i < 2; i++) {
+        uint32_t m;
+
+        fram_read(slot_addr(i), (uint8_t *)&m, sizeof m);
+        if (m == MEMF_MAGIC) {
+            m = MEMF_MOVIDO;
+            fram_write(slot_addr(i), (const uint8_t *)&m, sizeof m);
+        }
+    }
+    s_slot = -1;
+    s_seq  = 0U;
+}
+
+/* ------------------------------------------------------------------ */
+/* banco.c's two calls                                                  */
+/* ------------------------------------------------------------------ */
+
+uint32_t memfram_read_file_by_name(const char name8[8], const char ext3[3],
+                                   uint8_t *out_buf, uint32_t out_buf_size)
+{
+    uint32_t n, c;
+
+    if (!es_mem_csv(name8, ext3)) { return 0U; }
+
+    if (!spi_flash_puede_escribir()) {
+        s_donde = MEMF_DONDE_FRAM;      /* no disk: the FRAM, as before */
+        return fram_lee(out_buf, out_buf_size);
+    }
+    s_donde = MEMF_DONDE_DISCO;
+    if (spi_flash_fichero_hay(name8, ext3)) {
+        return spi_flash_read_file_by_name(name8, ext3, out_buf, out_buf_size);
+    }
+
+    /* The disk without MEM.CSV: the FRAM's, if it has one, goes there. */
+    n = fram_lee(out_buf, out_buf_size);
+    if (n == 0U) { return 0U; }         /* none anywhere: an empty bank */
+    c = crc32_add(0xFFFFFFFFU, out_buf, n);
+    guarda_sello();
+    if (spi_flash_write_or_update_file(name8, ext3, out_buf, n)
+        && spi_flash_read_file_by_name(name8, ext3, out_buf, out_buf_size) == n
+        && crc32_add(0xFFFFFFFFU, out_buf, n) == c) {
+        fram_suelta();
+        console_printf("MEM.CSV   : %u bytes moved from the FRAM to the disk "
+                       "(the FRAM's copy is not read any more)\n", n);
+        return n;
+    }
+
+    /* Not there whole: no half file left behind, and the FRAM's for now. */
+    (void)spi_flash_fichero_borra(name8, ext3);
+    console_printf("*** MEM.CSV: could not be moved to the disk - from the "
+                   "FRAM this time ***\n");
+    s_donde = MEMF_DONDE_FRAM;
+    return fram_lee(out_buf, out_buf_size);
+}
+
+int memfram_write_or_update_file(const char name8[8], const char ext3[3],
+                                 const uint8_t *data, uint32_t len)
+{
+    s_porque = 0;
+    if (!es_mem_csv(name8, ext3)) { return 0; }
+    if (s_donde == MEMF_DONDE_NINGUNO) {
+        s_donde = spi_flash_puede_escribir() ? MEMF_DONDE_DISCO : MEMF_DONDE_FRAM;
+    }
+    if (s_donde == MEMF_DONDE_FRAM) {
+        if (fram_escribe(data, len)) { return 1; }
+        s_porque = "the FRAM did not read it back";
+        return 0;
+    }
+
+    if (usbdisco_activo()) { s_porque = "the disk is on the PC"; return 0; }
+    if (guarda_grabando()) { s_porque = "a picture is being saved"; return 0; }
+    guarda_sello();                     /* the file's time: when it was written */
+    if (!spi_flash_write_or_update_file(name8, ext3, data, len)) {
+        s_porque = "the disk refused it";
+        return 0;
+    }
+    return 1;
+}
+
 /* For the console. */
-int      memfram_slot(void) { return s_slot; }
-uint32_t memfram_seq(void)  { return s_seq; }
+uint8_t     memfram_donde(void)   { return s_donde; }
+const char *memfram_porque(void)  { return s_porque ? s_porque : ""; }
+const char *memfram_donde_txt(void)
+{
+    return (s_donde == MEMF_DONDE_DISCO) ? "the disk"
+         : (s_donde == MEMF_DONDE_FRAM)  ? "the FRAM" : "nowhere yet";
+}

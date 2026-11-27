@@ -7,6 +7,7 @@
 #include "fram.h"
 #include "usbdisco.h"
 #include "guarda.h"
+#include "menus.h"
 #include "spi_flash.h"
 #include "disco.h"
 
@@ -283,6 +284,10 @@ __attribute__((noinline)) void usbdisco_cierra(void)
         console_printf("usb: BD.BIN is on the disk - restart the radio to "
                        "load it (src/bd.c)\n");
     }
+    /* MEM.CSV again (step 67): the PC may have edited it, or deleted it.
+     * Upstream reads it at boot, and its disk is only the PC's with the
+     * firmware not running - so here the boot's read comes now. */
+    menu_mem_init();
 }
 
 __attribute__((noinline)) void usbdisco_report(void)

@@ -140,8 +140,9 @@ static void mete(const uint8_t *d, uint32_t n)
     }
 }
 
-/* upstream's gsv_sello(): the FAT date and time from the RTC, or none */
-static void sello(void)
+/* upstream's gsv_sello(): the FAT date and time from the RTC, or none.
+ * memfram.c's too, before MEM.CSV is written (step 67). */
+void guarda_sello(void)
 {
     rtc_hw_datetime_t dt;
 
@@ -166,7 +167,7 @@ static void abre(uint16_t ancho, uint16_t alto, uint8_t bits, const char pre[4],
     uint8_t  k;
 
     s_trozos = crece;
-    sello();
+    guarda_sello();
     memcpy(s_pre, pre, 4U);
     s_ancho = ancho;
     s_alto  = alto;

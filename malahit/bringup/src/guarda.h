@@ -31,6 +31,10 @@ void    guarda_poll(void);
  * with what it has. */
 void    guarda_suelta(void);
 
+/* The FAT date and time the next file written takes: the radio's clock
+ * (local time, as upstream), or upstream's filler with no clock set. */
+void    guarda_sello(void);
+
 /* 1 while the display loop must not draw: a capture, or its notice. */
 uint8_t guarda_pantalla_quieta(void);
 

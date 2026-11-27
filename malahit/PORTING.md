@@ -2664,7 +2664,35 @@ Each step should end with something visible on the radio.
    minute after a boot - a chart file open then takes noise rows, as
    upstream's would. Also here: with the map on, AIS's chip now follows
    the frames seen between two good ones (it waited for a decoded frame
-   to be redrawn; `ais_pinta()`, digi.c). Only at step 8 does the bulk of
+   to be redrawn; `ais_pinta()`, digi.c).
+67. **MEM.CSV onto the disk.** *27/11/2026, from flash, asked by the
+   owner.* The memory channels' file goes where upstream keeps it, the
+   disk (banco.h, "DONDE VIVE": the PC's notepad edits it, it is copied
+   to another radio). banco.c is still unmodified with its two disk calls
+   renamed; `src/memfram.c` now answers them from upstream's
+   `spi_flash.c`, and from the FRAM only when there is no disk (no chip,
+   or a volume the driver does not understand). **The FRAM's copy moves
+   once**: the first boot that finds the disk without MEM.CSV and the
+   FRAM with one writes it to the disk, reads it back and compares the
+   CRC, and only then changes the FRAM slots' magic (MMEM -> MEMV: the
+   bytes stay, nothing reads them) - a move that fails deletes the half
+   file and serves the FRAM's for that boot. From then the file is the
+   truth: deleted on the PC, the bank is empty, as upstream's. **Read
+   again when the PC gives the disk back** (`usbdisco_cierra()` ->
+   `menu_mem_init()`; upstream reads it at boot, and its disk is the PC's
+   only with the firmware not running), the memory screen refilled if it
+   is up. **A save is refused** - kept in RAM, the "no" pip, the console
+   says why - while the PC has the disk, and while a picture is being
+   saved (upstream's rule before its banco_guarda()). The file's FAT time
+   is when it was written (`guarda_sello()`, the radio's clock, as the
+   pictures'; upstream leaves whatever the last picture set). **On the
+   radio**: "MEM.CSV: 236 bytes moved from the FRAM to the disk", the two
+   memories in upstream's CSV on the PC; a hold on a cell wrote "1,14,..."
+   to the disk; a hold with the disk on the PC and one with a WEFAX chart
+   file open both refused, each with its reason; the line deleted on the
+   PC, the disk given back: "2 in use", the open memory screen redrawn
+   without it. The owner's file is byte for byte the moved one. Only at
+   step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress
 before the hard part, rather than months of nothing.
 

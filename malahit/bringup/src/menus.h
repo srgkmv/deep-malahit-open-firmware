@@ -53,13 +53,20 @@ void menu_teclado_open(void);
 void menu_hora_open(void);      /* a tap on the clock: upstream's KBD_HORA (step 56) */
 void menu_hora_tic(void);       /* once a second: the keypad's ticking second */
 
-/* The memory channels (upstream's banco.c, MEM.CSV in the FRAM): load
- * them at boot. The screen is menu_toggle(MENU_MEM). */
+/* The memory channels (upstream's banco.c, MEM.CSV on the disk - in the
+ * FRAM with no disk; src/memfram.c): load them at boot, and again when
+ * the PC gives the disk back (it may have edited the file). The screen is
+ * menu_toggle(MENU_MEM). */
 void menu_mem_init(void);
 
-/* src/memfram.c: where MEM.CSV is, for the console (-1 none). */
-int      memfram_slot(void);
-uint32_t memfram_seq(void);
+/* src/memfram.c: where MEM.CSV is this boot, and why the last write was
+ * refused ("" when it was not). */
+#define MEMF_DONDE_NINGUNO 0U
+#define MEMF_DONDE_DISCO   1U
+#define MEMF_DONDE_FRAM    2U
+uint8_t     memfram_donde(void);
+const char *memfram_donde_txt(void);
+const char *memfram_porque(void);
 
 /* A finger on the glass while a screen is up. `down` on every poll with
  * a contact, `up` once when it lifts. Returns 1 if the point was the

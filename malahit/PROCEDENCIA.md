@@ -34,7 +34,7 @@ directly — no copy, no fork, objects prefixed `up_` and `dsp_`:
 | `User/fonts_data.c` | glyph tables |
 | `User/demod_am.c` | 6992 |
 | `User/ui_cfg.c`, `User/ui_grid.c`, `User/ui_det.c`, `User/ui_kbd.c` | step 9, 21/11/2026 |
-| `User/spec_snap.c`, `User/banco.c` | steps 37-38, 22/11/2026, unmodified; banco.c's disk is `src/memfram.c` (MEM.CSV in the FRAM) |
+| `User/spec_snap.c`, `User/banco.c` | steps 37-38, 22/11/2026, unmodified; banco.c's disk is `src/memfram.c` (MEM.CSV in the FRAM; on the disk since step 67, 27/11/2026) |
 | `User/rds.c`, `User/rds_pi.c` | step 40, 22/11/2026, unmodified, in place of their stubs |
 
 **FM stereo (step 41) is this port's own** - `bringup/src/estereo.c`.
@@ -243,6 +243,13 @@ and each is recorded here so the divergence is never a surprise:
   place, unmodified; upstream main.c's saving (`gsv_*`, and the calls in
   `sstv_poll()`/`fax_poll()`) rewritten in `src/guarda.c` over it and
   `User/spi_flash.c`. No upstream file edited.
+
+- Step 67, 27/11/2026 (MEM.CSV onto the disk): no upstream file edited.
+  `User/banco.c` is still compiled with its two disk calls renamed
+  (`MEMFRAM_RENAME`, now on banco.c alone); `src/memfram.c` answers them
+  from upstream's `spi_flash.c` - the FRAM only with no disk - and
+  checks its two functions against upstream's prototypes with
+  `_Static_assert`.
 
 - `deepsdr-ui/tools/gen_temas.py` — 21/11/2026, for the port's English:
   it read k_temas[]'s `T("es", "en")` and kept only the Spanish; it now

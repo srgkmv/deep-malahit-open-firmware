@@ -963,14 +963,17 @@ static void mem_graba(uint8_t bk, uint8_t c)
                          "To name a bank, remove the hash and write your own:"));
     if (banco_guarda(s_mem_csv, (uint32_t)sizeof s_mem_csv)) {
         bip_listo();
-        console_printf("  MEM: bank %u memory %u <- %u Hz %s (FRAM slot %d, seq %u)\n",
+        console_printf("  MEM: bank %u memory %u <- %u Hz %s (MEM.CSV on %s)\n",
                        (uint32_t)bk + 1U, (uint32_t)c + 1U, m.hz,
-                       radio_mode_name((int)m.modo), memfram_slot(), memfram_seq());
+                       radio_mode_name((int)m.modo), memfram_donde_txt());
     } else {
-        /* Kept in RAM, which is what matters for using it; said. */
+        /* Kept in RAM, which is what matters for using it; said. Upstream
+         * beeps the same while a picture is being saved: saved again after
+         * it, it goes. */
         bip_error();
-        console_printf("  *** MEM: bank %u memory %u kept, but NOT written to the FRAM ***\n",
-                       (uint32_t)bk + 1U, (uint32_t)c + 1U);
+        console_printf("  *** MEM: bank %u memory %u kept, but NOT written to %s"
+                       " - %s ***\n", (uint32_t)bk + 1U, (uint32_t)c + 1U,
+                       memfram_donde_txt(), memfram_porque());
     }
 }
 
@@ -1017,9 +1020,10 @@ void menu_mem_init(void)
     banco_pasos_pon(s_pasos_hz, (uint8_t)N_PASOS);
     (void)banco_carga(s_mem_csv, (uint32_t)sizeof s_mem_csv);
     for (i = 0U; i < (uint32_t)BANCO_N; i++) { n += (int)banco_usadas((uint8_t)i); }
-    console_printf("Memories  : %d in use, %s\n", n,
-                   memfram_slot() >= 0 ? "MEM.CSV from the FRAM (memfram.c)"
-                                       : "none in the FRAM yet");
+    console_printf("Memories  : %d in use, MEM.CSV on %s\n", n, memfram_donde_txt());
+    /* read again with the screen up (the disk back from the PC, step 67):
+     * its cells are the old table's */
+    if (s_open == MENU_MEM) { mem_rellena(); ui_cfg_draw(&s_cfg); }
 }
 
 /* ------------------------------------------------------------------ */
