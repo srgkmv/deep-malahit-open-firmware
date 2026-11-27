@@ -24,6 +24,12 @@
 void    digi_pon(uint8_t on);
 uint8_t digi_en_pantalla(void);
 
+/* THE MAP (step 64, digi_mapa.h): shown now - the five modes with one,
+ * its button on - so the big knob is its zoom; and the finger's lift,
+ * from main.c's ui_touch(), for the map's taps (zoom keys, a call's card). */
+uint8_t digi_mapa_visible(void);
+void    digi_suelta(void);
+
 /* A character the decoder has finished, as upstream's rtty_text_push():
  * \r and \n start a new row, a row that would pass the right margin
  * wraps. */

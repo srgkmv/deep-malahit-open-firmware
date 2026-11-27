@@ -2548,8 +2548,72 @@ Each step should end with something visible on the radio.
    `radio_fecha` (SWD, step 62) still goes through rtc_hw_set() - it broke
    the anchor once tonight; the keypad's is the path to use. Flash image
    533 136 bytes.
-
-Steps 1–7 are a new, small board-support tree. Only at step 8 does the bulk of
+64. **The map.** *27/11/2026, from flash.* Upstream's world map under the
+   decoders that place what they hear: FT8 and WSPR by the locator in the
+   message, JTTY by its locator field, HFDL's aircraft and AIS's ships by
+   position. `User/mapa.c` (projection, zoom 1-8, drag, coast, zoom keys),
+   `mapa_datos.c` (the built-in coast, 7 kB), `mapa_eti.c` (calls by
+   their marks, the great-circle rays from the QTH, the tapped one's
+   card), `mapa_bin.c` (a catalogue .map, its tiles 10 kB at a time in
+   RAM), `mapa_flash.c` (that .map in the high zone's top 192 kB) and
+   `mando_mapa.c` compiled in place, unmodified. Their glue in upstream's
+   main.c - the box, the painter with each mode's marks, the labels, the
+   draw, the zoom, the map's touches, the dirty flag, mapa_al_arrancar() -
+   is `src/digi_mapa.c`, the same calls in the same order.
+   **Where** (the owner's choice, 27/11/2026): the fifth button of the
+   five modes' panel header ("Map", lit when shown; HFDL's "List"/"Map",
+   upstream's minus its "Bytes" view) puts the map in the rows' place:
+   480 x 211 under the header, which in this port's five modes is already
+   at the top of the digital area - the whole world fits at zoom 1. Off
+   at every mode change (upstream's). The big knob is its zoom while it
+   is shown (mando_mapa_gira()), the dial untouched; a drag moves it,
+   painted once a pass; the zoom keys and a tap on a call act on the
+   finger's lift (main.c's ui_touch() now tells digi.c, digi_suelta()).
+   The map takes the moves of a finger BEFORE digi_toque()'s early return
+   of them - which, found on the way, also leaves FT8's rows-drag code
+   below it unreachable (open, not touched). HFDL's chip lost its P/Z/X
+   count of frames that did not fit for the button's place (the owner's
+   choice): "99% 999/999" fits 86 px.
+   **The catalogue** (`mapas/NNN.map`, 100 of them): BD.BIN's ritual - a
+   .MAP on the USB disk is copied at boot into the hole, checked, deleted
+   from the disk, with "World map - Copying NN %" on the panel; then the
+   hole's map is loaded, working in the borrowed RAM (hfdl_ram_todo())
+   before any decoder takes it. 001.map (114 323 bytes) put there: "stored",
+   "a catalogue map in force", and the next boot loads it from the zone.
+   **On the radio**: the five FT8 CQs of the HackRF bench (YL2ABC KO26,
+   JA1XYZ PM95, W1ABC FN42, VK2DEF QF56, PY2ABC GG66) decoded in both slots
+   and shown on 001's world - borders, coast - each with its call and its
+   ray from JN58td; a tap on JA1XYZ's mark gave its card ("DX JA1XYZ PM95
+   - Japan - 9352 km - AZ 41 - -3 dB - x2 - 0 min ago"); the "+" key zoom
+   x2, a swipe moving it, one knob detent (put in over SWD through
+   encoder.c's s_qsteps) zoom x2 with the dial unmoved; HFDL's header
+   "Clear | searching | 14.074 | List | 43% 0/0". AIS, WSPR and JTTY share
+   the code; their marks not benched yet. Flash +26 kB, AXI +13 kB (the
+   map's 10 kB tile buffer). Flash image 563 728 bytes (with step 65).
+65. **Phantom touches.** *27/11/2026, asked by the owner.* Taps at the
+   panel's top right - (479, 0), (470, 0) - nobody made, seen since 22/11
+   and since step 56 opening the time keypad (the clock is a key). The
+   FT6236 poll believed every frame: TD_STATUS & 0x0F as the point count
+   (the part has 0-2), any coordinates, and a failed read as "no touch".
+   A read of all 0xFF - nobody driving the bus - is 15 points cut to 2 at
+   raw 0xFFF/0xFFF, which the swap and the clamp put at exactly (479, 0):
+   raw y >= 480 where the controller's frame ends at 479. `src/touch.c`
+   now (1) checks a frame - the status's top nibble zero and at most two
+   points, each point's id 0-1 and its raw coordinates inside 0..319 x
+   0..479, a "lift up" or "no event" point not a contact - and gives the
+   last good answer again for a bad frame or a failed read (no false
+   lift in a drag either); (2) takes a new touch only when two frames in
+   a row have it (~40 ms more on a press). Each thrown frame and each
+   one-frame touch goes to the console with its raw bytes, at most once a
+   second (touch_malos(), touch_sueltos()); the header's "touch (x,y)"
+   line now carries the raw coordinates and the event ("ev 255" for the
+   bench's own taps). In the first ~10 minutes with it in, the owner
+   saw no phantom; the console logged no bad frame and three touches
+   seen once - (41,159), (150,81), (345,122), event "contact", raw inside
+   the frame - while the owner typed the QTH (KO26aw): most likely their
+   own short taps, not corner phantoms. If short taps go missing, the
+   two-frame rule is the one to relax (in time rather than frames, or
+   for the corner only). Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress
 before the hard part, rather than months of nothing.
 

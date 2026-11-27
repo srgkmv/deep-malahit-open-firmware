@@ -75,6 +75,12 @@ int touch_init(void);
  */
 uint32_t touch_poll(touch_point_t *pts);
 
+/* Frames thrown away (a bad count, a point off the controller's frame,
+ * a failed read), and touches seen in one frame only - see touch.c,
+ * 27/11/2026. Both 0 on a healthy panel. */
+uint32_t touch_malos(void);
+uint32_t touch_sueltos(void);
+
 /* CIPHER and FOCALTECH_ID as read at init, for reporting. */
 uint8_t touch_chip_id(void);
 uint8_t touch_vendor_id(void);

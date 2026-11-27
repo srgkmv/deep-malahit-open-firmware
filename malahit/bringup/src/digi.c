@@ -90,6 +90,18 @@
 #include "board.h"         /* board_millis() - ALE's poll and its clock */
 #include "demod.h"         /* demod_quieto(): a decoder reconfigured, no block through it */
 #include "idioma.h"        /* ../../User - tr() */
+#include "digi_mapa.h"     /* src/ - the map in the rows' place, step 64 */
+#include "ais_modo.h"      /* ais_modo_tramas(): the map redrawn when the ships change */
+
+/*
+ * THE MAP (step 64): one switch for the five modes that have one -
+ * the fifth button of their header - and off at every mode change, as
+ * upstream's s_ft8_mapa ("what is painted is the last mode's stations").
+ */
+static uint8_t  s_mapa;
+static uint32_t s_ais_mapa_visto = 0xFFFFFFFFU;
+static void     mapa_boton(void);
+static uint8_t  filas_o_mapa(void);
 
 /*
  * The face ui_digi.c draws the rows in: its font_ui_14b, which this
@@ -554,6 +566,7 @@ static void jtty_sync(void)
     s_st.enganchado = (uint8_t)(jtty_modo_atomos() != 0UL);
     strncpy(s_chip, s_st.chip ? s_st.chip : "", sizeof s_chip - 1U);
     s_chip[sizeof s_chip - 1U] = '\0';
+    mapa_boton();
 }
 
 /*
@@ -919,12 +932,29 @@ static void ais_sync(void)
     s_st.enganchado = (uint8_t)(b > 0U);
     strncpy(s_chip, s_ais_chip, sizeof s_chip - 1U);
     s_chip[sizeof s_chip - 1U] = '\0';
+    mapa_boton();
 }
 
 /* The panel through cambios(), the bar as last drawn; then the bar. */
 static uint8_t ais_pinta(void)
 {
     ui_digi_state_t c = s_st;
+
+    if (s_mapa && digi_mapa_modo()) {
+        /* the map when a frame came, the bar when the level moved */
+        uint32_t t = ais_modo_tramas();
+
+        if (t != s_ais_mapa_visto) {
+            ui_digi_draw_cabecera(&s_st);
+            digi_mapa_dibuja();
+            s_ais_mapa_visto = t;
+            s_ais_barra_v = s_st.barra_v;
+        } else if (s_st.barra_v != s_ais_barra_v) {
+            ui_digi_draw_barra(&s_st);
+            s_ais_barra_v = s_st.barra_v;
+        }
+        return 1U;
+    }
 
     c.barra_v = s_ais_barra_v;
     if (!ui_digi_draw_cambios(&c)) { return 0U; }
@@ -1109,15 +1139,16 @@ static void hfdl_sync(void)
         i = pega_lim(s_hf_chip, i, (uint8_t)sizeof s_hf_chip, hfdl_modo_buenas());
         i = pega(s_hf_chip, i, (uint8_t)sizeof s_hf_chip, "/");
         i = pega_lim(s_hf_chip, i, (uint8_t)sizeof s_hf_chip, hfdl_modo_total());
-        if (nc != 0U) {
-            i = pega(s_hf_chip, i, (uint8_t)sizeof s_hf_chip,
-                     (np >= n7 && np >= n6) ? " P" : ((n7 >= n6) ? " Z" : " X"));
-            (void)pega_lim(s_hf_chip, i, (uint8_t)sizeof s_hf_chip, nc);
-        }
+        /* The P/Z/X count of frames that did not fit went for the Map
+         * button's place (step 64, the owner's choice): with a fifth
+         * button the chip has 86 px, "99% 999/999" fits, "P999" did not.
+         * Kept on the console (digi_hfdl_poll()). */
+        (void)nc; (void)n7; (void)np; (void)n6; (void)i;
     }
     s_st.chip = s_hf_chip;
     strncpy(s_chip, s_hf_chip, sizeof s_chip - 1U);
     s_chip[sizeof s_chip - 1U] = '\0';
+    mapa_boton();
 }
 
 void digi_hfdl_borra(void)
@@ -1283,6 +1314,7 @@ static void wspr_sync(void)
     s_st.chip = s_ws_chip;
     strncpy(s_chip, s_ws_chip, sizeof s_chip - 1U);
     s_chip[sizeof s_chip - 1U] = '\0';
+    mapa_boton();
 }
 
 void digi_wspr_borra(void)
@@ -1497,6 +1529,7 @@ static void ft8_sync(void)
         s_st.fila_tinta[k] = ft8_lista_es_cq(s_st.fila[k]) ? UDG_T_LLAMA : UDG_T_NORMAL;
     }
     ft8_barra();
+    mapa_boton();
 }
 
 void digi_ft8_borra(void)
@@ -1623,6 +1656,7 @@ void digi_ident_poll(void)
 void digi_pon(uint8_t on)
 {
     s_on = (uint8_t)(on != 0U);
+    s_mapa = 0U;                        /* upstream's: the last mode's stations */
     borra_texto();
     s_chip_visto[0] = '\0';
     s_eng_visto = 0xFFU;
@@ -1939,6 +1973,40 @@ static void osciloscopio(void)
     }
 }
 
+/* The fifth button of the five modes with a map: "Map" lit when shown;
+ * HFDL's says which view it is in, as upstream's ("List"/"Map" - its
+ * "Bytes" view is not ported). */
+static void mapa_boton(void)
+{
+    if (!digi_mapa_modo()) { return; }
+    s_st.btn5 = hfdl_modo_activo() ? (s_mapa ? tr("Mapa", "Map") : tr("Lista", "List"))
+                                   : tr("Mapa", "Map");
+    s_st.btn5_press = s_mapa;
+}
+
+/* The rows, or the header and the map in their place. */
+static uint8_t filas_o_mapa(void)
+{
+    if (s_mapa && digi_mapa_modo()) {
+        ui_digi_draw_cabecera(&s_st);
+        digi_mapa_dibuja();
+        return 1U;
+    }
+    return ui_digi_draw_texto(&s_st);
+}
+
+uint8_t digi_mapa_visible(void)
+{
+    return (uint8_t)(s_on && s_mapa && digi_mapa_modo());
+}
+
+uint8_t digi_ft8_solo_cq(void) { return s_ft8_cq; }
+
+void digi_suelta(void)
+{
+    if (digi_mapa_visible()) { digi_mapa_suelta(); }
+}
+
 void digi_repinta(void)
 {
     if (!s_on) { return; }
@@ -1946,6 +2014,7 @@ void digi_repinta(void)
         ais_sync();
         ui_digi_olvida();
         s_ais_barra_v = s_st.barra_v;
+        s_ais_mapa_visto = 0xFFFFFFFFU;     /* the map too, whole */
         if (ais_pinta()) { s_ais_t = board_millis(); s_todo = 0U; }
         return;
     }
@@ -1985,7 +2054,7 @@ void digi_repinta(void)
     if (jtty_modo_activo()) {
         jtty_sync();
         ui_digi_olvida();
-        if (ui_digi_draw_texto(&s_st)) {
+        if (filas_o_mapa()) {
             s_jtty_visto = jtty_modo_atomos();
             s_todo = 0U;
         }
@@ -1996,7 +2065,7 @@ void digi_repinta(void)
     if (hfdl_modo_activo()) {
         hfdl_sync();
         ui_digi_olvida();
-        if (ui_digi_draw_texto(&s_st)) {
+        if (filas_o_mapa()) {
             s_hf_visto = hfdl_modo_lineas() ^ (hfdl_modo_buenas() << 8);
             s_hf_barra_v = s_st.barra_v;
             strcpy(s_hf_barra_visto, s_st.barra_txt ? s_st.barra_txt : "");
@@ -2008,7 +2077,7 @@ void digi_repinta(void)
     if (wspr_modo_activo()) {
         wspr_sync();
         ui_digi_olvida();
-        if (ui_digi_draw_texto(&s_st)) {
+        if (filas_o_mapa()) {
             s_ws_visto = wspr_modo_lineas() | ((uint32_t)wspr_modo_buenas() << 8);
             s_ws_barra_v = s_st.barra_v;
             strcpy(s_ws_barra_visto, s_st.barra_txt ? s_st.barra_txt : "");
@@ -2020,7 +2089,7 @@ void digi_repinta(void)
     if (ft8_modo_activo()) {
         ft8_sync();
         ui_digi_olvida();
-        if (ui_digi_draw_texto(&s_st)) {
+        if (filas_o_mapa()) {
             s_ft8_visto = ft8_modo_metidas();
             s_ft8_vista_ant = (uint8_t)(s_ft8_cq | (uint8_t)(s_ft8_subidos << 1));
             s_ft8_seg_visto = s_st.barra_v;
@@ -2067,6 +2136,7 @@ void digi_repinta(void)
 void digi_dibuja(void)
 {
     if (!s_on) { return; }
+    if (!s_todo && s_mapa && digi_mapa_modo()) { digi_mapa_poll(); }
     if (ais_modo_activo()) {
         /* four times a second, only what changed - upstream repaints the
          * panel when the frame count moves, the bar when the level does */
@@ -2239,6 +2309,19 @@ uint8_t digi_toque(uint16_t x, uint16_t y, uint8_t nuevo)
 {
     if (!s_on) { return 0U; }
     if (y < DIGI_SCOPE_Y || y >= DIGI_PANEL_Y + DIGI_PANEL_H) { return 0U; }
+
+    /* THE MAP (step 64): its button, and with it shown, the finger on it -
+     * the press AND the moves, which the line below drops for everyone
+     * else (a drag moves the map). */
+    if (digi_mapa_modo()) {
+        if (nuevo && ui_digi_boton5_hit(&s_st, x, y)) {
+            s_mapa = (uint8_t)!s_mapa;
+            s_todo = 1U;
+            console_printf("  digi: %s\n", s_mapa ? "map" : "list");
+            return 1U;
+        }
+        if (s_mapa && digi_mapa_toque(x, y, nuevo)) { return 1U; }
+    }
     if (!nuevo) { return 1U; }
 
     /*

@@ -4974,6 +4974,8 @@ static uint8_t rf_autorange(void)
 #include "usbdisco.h"
 #include "bd.h"
 #include "rotulos.h"
+#include "digi_mapa.h"     /* src/ - the map, step 64 */
+#include "mando_mapa.h"    /* ../../User - the knob on the map */
 #include "emisoras.h"     /* ../../User - emisoras_hay(), step 62 */
 #include "rtc_hw.h"       /* ../../User/rtc_hw.h - upstream's contract */
 #include "rtc_hw_port.h"  /* src/rtc_hw.c's own two (step 56) */
@@ -8439,6 +8441,7 @@ static void ui_touch(void)
         n        = 1U;
         pt[0].x  = s_tap_x;
         pt[0].y  = s_tap_y;
+        pt[0].raw_x = 0U; pt[0].raw_y = 0U; pt[0].event = 0xFFU;   /* the bench's: ev 255 */
     } else if (s_hold_on) {             /* ui_hold(), from the bench */
         if ((int32_t)(board_millis() - s_hold_until) >= 0) {
             s_hold_on = 0U;             /* this poll is the lift */
@@ -8446,6 +8449,7 @@ static void ui_touch(void)
             n       = 1U;
             pt[0].x = s_hold_x;
             pt[0].y = s_hold_y;
+            pt[0].raw_x = 0U; pt[0].raw_y = 0U; pt[0].event = 0xFFU;
         }
     } else if (s_sw_n != 0U) {          /* ui_swipe(), from the bench */
         uint32_t k = SWIPE_POLLS - s_sw_n;
@@ -8455,12 +8459,14 @@ static void ui_touch(void)
         pt[0].x = (uint16_t)((int32_t)s_sw_x0 + ((int32_t)s_sw_x1 - (int32_t)s_sw_x0)
                              * (int32_t)k / (int32_t)(SWIPE_POLLS - 1U));
         pt[0].y = s_sw_y;
+        pt[0].raw_x = 0U; pt[0].raw_y = 0U; pt[0].event = 0xFFU;
     }
 
     if (n == 0U) {
         s_was_down = 0U;
         menu_touch_up();
         spec_suelta();
+        digi_suelta();                  /* the map's taps, step 64 */
         if (s_down >= 0) {
             int8_t was = s_down;
             s_down = -1;
@@ -8531,8 +8537,9 @@ static void ui_touch(void)
             else if (ui_top_mem_hit(x, y))   { que = "MEM"; }
             else                             { que = 0; }
 
-            console_printf("  touch (%3u,%3u)%s%s\n",
-                           (uint32_t)x, (uint32_t)y,
+            console_printf("  touch (%3u,%3u) raw (%u,%u) ev %u%s%s\n",
+                           (uint32_t)x, (uint32_t)y, (uint32_t)pt[0].raw_x,
+                           (uint32_t)pt[0].raw_y, (uint32_t)pt[0].event,
                            que ? " -> " : "", que ? que : "");
 
             /* What upstream does with them (its ui_top tap handling). */
@@ -9624,6 +9631,10 @@ int main(void)
      * the high zone holds is opened. */
     (void)bd_al_arrancar(bd_cartel);
     bd_abre();
+    /* And the map (step 64): a .map on the disk the same way, then the one
+     * in the high zone loaded - before any decoder takes the borrowed RAM
+     * it works in (texto_modo(), below). */
+    (void)digi_mapa_al_arrancar(bd_cartel);
     s_top.jmp_on = rotulos_jmp();       /* JMP as the FRAM left it (step 62) */
 
     {
@@ -9885,6 +9896,13 @@ int main(void)
 
         if (detents != 0 && menu_open_id() != MENU_NONE) {
             menu_knob(detents);             /* the menu's cursor, not the dial */
+        } else if (detents != 0
+                   && mando_mapa_gira(digi_mapa_visible(), digi_mapa_visible(), 0U,
+                                      detents, 0, 0)) {
+            /* The map shown: the knob is its zoom (step 64), upstream's
+             * mando_mapa_gira() - the long press that takes the knob back
+             * is not this port's gesture, so never "long" here. */
+            digi_mapa_zoom(detents);
         } else if (detents != 0 && rotulos_jmp() && emisoras_hay()) {
             /*
              * JMP (step 62): station to station on the air now, upstream's

@@ -2,6 +2,7 @@
 #include "i2c3.h"
 #include "ili9488.h"
 #include "board.h"
+#include "console.h"
 
 #define FT_ADDR        0x38U
 
@@ -222,9 +223,67 @@ static uint16_t map_y(uint32_t raw_tx)
     return (uint16_t)v;
 }
 
+/*
+ * NOTHING THE CONTROLLER SAYS IS TAKEN ON TRUST - 27/11/2026.
+ *
+ * Phantom taps at the panel's top right - (479, 0), (470, 0) - were seen
+ * since 22/11 with nobody at the glass, and since the clock became a key
+ * (step 56) each one opens the time keypad (the owner, 27/11/2026). This
+ * poll believed every frame: TD_STATUS & 0x0F as the count (an FT6236
+ * has 0, 1 or 2), and any coordinates. A read that comes back all 0xFF -
+ * the bus with nobody driving it - makes 15 points, cut to 2, at raw
+ * 0xFFF / 0xFFF, which the swap and the clamp put at exactly (479, 0):
+ * outside the controller's own frame (0..319 x 0..479) by eight times.
+ * And a failed read returned 0 points - a LIFT in the middle of a drag.
+ *
+ * So, two guards:
+ *
+ *  1. A FRAME IS CHECKED: the status's top nibble zero and at most two
+ *     points; each point's id 0 or 1 and its coordinates inside the
+ *     controller's frame; a point whose event is "lift up" (1) or "no
+ *     event" (3) is not a contact. A frame that fails - or a read that
+ *     fails - changes nothing: the last good answer is given again.
+ *
+ *  2. A NEW TOUCH IS SEEN TWICE: from nothing to a finger takes two good
+ *     frames in a row, one poll later than before (~40 ms). One frame of
+ *     a finger and then nothing is a phantom, not a tap.
+ *
+ * Both say so on the console, at most once a second, with the raw bytes:
+ * what was thrown away is the evidence of what the phantoms are.
+ */
+#define FT_RAW_X_MAX  319U      /* the controller's portrait frame */
+#define FT_RAW_Y_MAX  479U
+
+static touch_point_t s_ult[TOUCH_MAX_POINTS];   /* the last answer given */
+static uint32_t      s_ult_n;
+static uint8_t       s_pendiente;               /* a new touch seen once */
+static touch_point_t s_pend_pt;
+static uint32_t      s_malos, s_sueltos;
+static uint32_t      s_log_ms;
+
+uint32_t touch_malos(void)   { return s_malos; }
+uint32_t touch_sueltos(void) { return s_sueltos; }
+
+static uint8_t log_toca(void)
+{
+    uint32_t t = board_millis();
+
+    if (s_log_ms != 0U && (t - s_log_ms) < 1000U) { return 0U; }
+    s_log_ms = (t != 0U) ? t : 1U;
+    return 1U;
+}
+
+static uint32_t repite(touch_point_t *pts)
+{
+    for (uint32_t i = 0; i < s_ult_n; i++) { pts[i] = s_ult[i]; }
+    return s_ult_n;
+}
+
 uint32_t touch_poll(touch_point_t *pts)
 {
-    uint8_t b[15];
+    uint8_t  b[15];
+    uint32_t n, i, validos = 0U;
+    uint8_t  malo = 0U;
 
     /*
      * One transfer for the status byte and both contact blocks. Two
@@ -234,27 +293,66 @@ uint32_t touch_poll(touch_point_t *pts)
      * handful of polls a second, neither matters; one transfer is
      * simpler and cannot see a half-updated state.
      */
-    if (!read_reg(0x00U, b, 15U)) { return 0; }
+    if (!read_reg(0x00U, b, 15U)) {
+        s_malos++;
+        return repite(pts);
+    }
 
-    uint32_t n = b[FT_TD_STATUS] & 0x0FU;
-    if (n > TOUCH_MAX_POINTS) { n = TOUCH_MAX_POINTS; }
+    n = b[FT_TD_STATUS] & 0x0FU;
+    if ((b[FT_TD_STATUS] & 0xF0U) != 0U || n > TOUCH_MAX_POINTS) { malo = 1U; n = 0U; }
 
-    for (uint32_t i = 0; i < n; i++) {
+    for (i = 0; i < n && !malo; i++) {
         const uint8_t *p = &b[3U + i * 6U];
-
+        touch_point_t  t;
         uint32_t raw_x = (((uint32_t)p[0] & 0x0FU) << 8) | p[1];
         uint32_t raw_y = (((uint32_t)p[2] & 0x0FU) << 8) | p[3];
 
-        pts[i].raw_x = (uint16_t)raw_x;
-        pts[i].raw_y = (uint16_t)raw_y;
-        pts[i].event = (uint8_t)(p[0] >> 6);
-        pts[i].id    = (uint8_t)(p[2] >> 4);
+        t.raw_x = (uint16_t)raw_x;
+        t.raw_y = (uint16_t)raw_y;
+        t.event = (uint8_t)(p[0] >> 6);
+        t.id    = (uint8_t)(p[2] >> 4);
+        if (t.id > 1U || raw_x > FT_RAW_X_MAX || raw_y > FT_RAW_Y_MAX) { malo = 1U; break; }
+        if (t.event == 1U || t.event == 3U) { continue; }   /* lifted, or nothing */
 
         /* The swap lives here: the controller's Y becomes the display's
          * X, and its X becomes the display's Y, mirrored. */
-        pts[i].x = map_x(raw_y);
-        pts[i].y = map_y(raw_x);
+        t.x = map_x(raw_y);
+        t.y = map_y(raw_x);
+        pts[validos++] = t;
     }
 
-    return n;
+    if (malo) {
+        s_malos++;
+        if (log_toca()) {
+            console_printf("  touch: bad frame thrown away (%u so far) - status %02x, "
+                           "%02x %02x %02x %02x %02x %02x\n", s_malos,
+                           (uint32_t)b[FT_TD_STATUS], (uint32_t)b[3], (uint32_t)b[4],
+                           (uint32_t)b[5], (uint32_t)b[6], (uint32_t)b[7], (uint32_t)b[8]);
+        }
+        return repite(pts);
+    }
+
+    if (validos == 0U) {
+        if (s_pendiente) {
+            s_sueltos++;
+            if (log_toca()) {
+                console_printf("  touch: seen once at (%u,%u) raw (%u,%u) ev %u - not a tap "
+                               "(%u so far)\n", (uint32_t)s_pend_pt.x, (uint32_t)s_pend_pt.y,
+                               (uint32_t)s_pend_pt.raw_x, (uint32_t)s_pend_pt.raw_y,
+                               (uint32_t)s_pend_pt.event, s_sueltos);
+            }
+        }
+        s_pendiente = 0U;
+        s_ult_n = 0U;
+        return 0U;
+    }
+    if (s_ult_n == 0U && !s_pendiente) {
+        s_pendiente = 1U;               /* the first sight: wait for the second */
+        s_pend_pt = pts[0];
+        return 0U;
+    }
+    s_pendiente = 0U;
+    for (i = 0; i < validos; i++) { s_ult[i] = pts[i]; }
+    s_ult_n = validos;
+    return validos;
 }

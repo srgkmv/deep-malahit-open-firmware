@@ -4,6 +4,28 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
+## START HERE — 27/11/2026, ~20:50: steps 64 (the map) and 65 (phantom touches) IN FLASH, NOT committed
+
+Step 63 committed and pushed (fa40d85). Steps 64-65 - `PORTING.md` 64,
+65 - in flash (563 728 bytes), the map checked on the radio with the FT8
+bench, the touch guards in; not committed.
+
+**Watch the console for** `touch: bad frame thrown away` and `touch: seen
+once at` - the evidence of what the phantoms were; and any `touch (...)
+-> reloj` the owner did not make (now with raw coordinates).
+
+**The PC was rebooted on 27/11** before this: the console reader now
+writes this session's scratchpad (`consola.log`); /tmp lost the old log.
+To call SWD entries on an image the tree no longer holds, build its
+commit in a worktree and check it with `verify_image` (read only) first.
+
+**The radio's state**: FT8 at 14.074 MHz, map off (it goes off at every
+mode change), catalogue map 001 in the high zone. The disk holds
+PRUEBA.TXT and RESPALDO.BIN.
+
+**Open**: the map's AIS/WSPR/JTTY marks not benched; FT8's rows drag is
+unreachable (digi_toque() drops moves before it) - older than step 64.
+
 ## START HERE — 27/11/2026, ~00:10: step 63 (the date on the clock keypad) IN FLASH, NOT committed
 
 Steps 60-62 committed and pushed (through fd4e0c6). Step 63 - `PORTING.md`

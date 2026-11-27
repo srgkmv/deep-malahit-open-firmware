@@ -656,6 +656,21 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/formato.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/zona_alta.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/emisoras.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/icao24_db.c
+# THE MAP (step 64): the world under the decoders that place what they
+# hear - FT8, WSPR, HFDL, AIS, JTTY - upstream's whole map:
+#   mapa.c        the projection, zoom and drag, the coast, the zoom keys
+#   mapa_datos.c  the built-in coast (7 kB, tools/mapa_pack.py's)
+#   mapa_eti.c    the calls beside their marks, and the tapped one's card
+#   mapa_bin.c    a catalogue .map (DSDRMAP1), its tiles 10 kB at a time
+#   mapa_flash.c  that .map kept in the high zone's top 192 kB
+#   mando_mapa.c  when the knob is the map's zoom
+# Its glue in upstream's main.c is src/mapa_port.c.
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/mapa.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/mapa_datos.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/mapa_eti.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/mapa_bin.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/mapa_flash.c
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/mando_mapa.c
 #
 # THE USB DISK (step 60): GigaDevice's USB library as upstream carries it,
 # usb/GD32F4xx_usb_library - the DWC2 driver, the device core, the MSC
