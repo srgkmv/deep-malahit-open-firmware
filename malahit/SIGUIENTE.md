@@ -4,6 +4,19 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
+## 27/11/2026, ~23:15: the clock's calibration put back (no code change)
+
+CALR had been 0 since the battery was lost. Measured over SWD without
+halting (SSR/TR/DR against the PC's NTP time): the RTC gained 0.368 s in
+2 h 07 min, +48.2 ppm, with the radio on and warm (24-25/11: +50 ppm over
+22.9 h, mostly off). Put back the old -50.5: CALR = 0x35 (CALM 53, -50.54
+ppm), written over SWD - PWR_CR1 DBP, RTC_WPR 0xCA 0x53, RECALPF clear,
+CALR at 0x5800403C, WPR 0xFF; it lives in the backup domain. Check: 0 ms
+of walk in the next 607 s (+29 ms without it). The RTC is still 1.004 s
+behind the PC, and there is no learning anchor (BKP2 0 - the owner's last
+setting was not "On the minute"): an "On the minute" sets both, and a
+second one 33 h or more later refines CALR by itself.
+
 ## START HERE — 27/11/2026, ~23:00: step 67 (MEM.CSV onto the disk) IN FLASH, committed and pushed
 
 Step 66 committed and pushed (c1b3c57). Step 67 - `PORTING.md` 67:
