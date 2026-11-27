@@ -2613,7 +2613,58 @@ Each step should end with something visible on the radio.
    the frame - while the owner typed the QTH (KO26aw): most likely their
    own short taps, not corner phantoms. If short taps go missing, the
    two-frame rule is the one to relax (in time rather than frames, or
-   for the corner only). Only at step 8 does the bulk of
+   for the corner only).
+66. **Pictures to the disk: screenshots, SSTV, WEFAX.** *27/11/2026, from
+   flash, asked by the owner.* Upstream's saving - `gsv_abre()`,
+   `gsv_bloque()`, `gsv_mete()`, `gsv_linea()`, `gsv_cierra()` and their
+   callers in its `sstv_poll()` and `fax_poll()` (main.c) - rewritten in
+   `src/guarda.c` over the same `spi_flash.c` and `bmp.c` (compiled now,
+   `reglas.mk`). A picture is written as it arrives, a line at a time,
+   at most one 4 kB block a pass of the main loop (`guarda_cupo()`,
+   upstream's `s_gsv_bloques == 0`: digi.c stops taking lines from the
+   decoder for that pass, they wait in its ring). **SSTV** opens at a
+   picture's first row - never halfway - with its space reserved
+   (`SSTVnnn.BMP`, 320 x 256, BMP 24 or 16 bit) and closes when the
+   decoder leaves SSTV_IMAGEN or after 10 s of nothing, the header
+   rewritten with the real height. **WEFAX** with saving on keeps a chart
+   file open whenever none is (`Wfffffnn.BMP`, five figures of kHz and a
+   counter - W0787801.BMP; grey 8 bit, 756 wide), grown 64 kB at a time
+   up to 1536 lines, closed at the stop tone, then 25 s before the next
+   opens. Both close **one pass late**: this port's poll runs before
+   digi.c takes the lines, and SSTV leaves SSTV_IMAGEN with its last row
+   still queued - closed at once, every picture came out 255 rows (bench).
+   The two settings are upstream's - SSTV No save / BMP 24 / BMP 16, WEFAX
+   No save / Grey BMP (FRAM v4 bytes 47, 48) - on **btn4** of each
+   panel's header, the owner's choice (a free button; upstream has them
+   on its btn2, which here is SSTV's Auto and WEFAX's line rate); the
+   label is the setting, "REC 001" / "REC 01" while a file is open,
+   "Failed" when one could not be reserved. **Entering WEFAX resets it to
+   No save** (upstream 20/10: the finger opens the file, not a setting
+   left on in another session). WEFAX's "Waiting for the start tone" is
+   "Waiting for start" here - beside btn4 the chip has 114 px and lost the
+   front of the long one - and the last chart's slant drops out of it when
+   it would not fit (`ui_digi_chip_visible()`). **The screenshot is this
+   port's own**: upstream redraws the screen band by band into the file
+   because its panel cannot be read back; the ILI9488 can (RAMRD,
+   `src/grab.c`), so `PANTnnn.BMP` (480 x 320, 16 bit) is what the glass
+   holds, 4 rows a pass after an erase ahead; the display loop draws
+   nothing meanwhile (upstream's rule), the radio and decoders carry on.
+   The gesture is upstream's: **hold the frequency 4 s** - a short tap
+   still opens the keypad, now on the lift (`main.c`, FREC_CAPT_MS). A
+   beep, and a notice "SAVED PANT001.BMP" (or why not: in SSTV/WEFAX,
+   with the disk on the PC, with a file open). **The disk going to the
+   PC closes whatever is open** (`guarda_suelta()` from `usbdisco_abre()`
+   - upstream's disk is its bootloader's, nothing else runs). Bench
+   (HackRF): PANT001.BMP the screen as it was; SSTV Martin 1 at 14.230
+   MHz -> SSTV002.BMP 320 x 256, the picture on the panel; WEFAX 120 lpm,
+   200 lines at 7878.1 kHz -> W0787801.BMP, 200 rows. FAT times are the
+   radio's local time (Linux shows them +2 h: it reads FAT as UTC). Seen
+   on the way, not this step's: upstream's WEFAX decoder, with no signal
+   at all, went from waiting to phasing to receiving on the noise a
+   minute after a boot - a chart file open then takes noise rows, as
+   upstream's would. Also here: with the map on, AIS's chip now follows
+   the frames seen between two good ones (it waited for a decoded frame
+   to be redrawn; `ais_pinta()`, digi.c). Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress
 before the hard part, rather than months of nothing.
 

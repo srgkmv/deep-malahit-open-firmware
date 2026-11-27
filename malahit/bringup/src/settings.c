@@ -145,7 +145,10 @@ _Static_assert(sizeof(slot_t) == SLOT_BYTES, "the extension fills the slot");
  *      stored (off) - step 61
  *  46  JMP, the knob from station to station: 1 off, 2 on; 0 = not
  *      stored (off) - step 62
- *  47..59  zero - room. A field added there reads 0 from a record
+ *  47  SSTV pictures to the disk: 1 no, 2 BMP 24, 3 BMP 16; 0 = not
+ *      stored (no) - step 66
+ *  48  WEFAX charts to the disk: 1 no, 2 grey BMP; 0 = not stored (no)
+ *  49..59  zero - room. A field added there reads 0 from a record
  *          written before it, so it must mean "not stored" at 0, or
  *          the version goes to 5 (the owner's word allows it).
  *  60  CRC-32 of bytes 0-59
@@ -193,7 +196,9 @@ typedef struct {
     char     qth[6];        /* the locator; 0 = written before it, or none */
     uint8_t  bd;            /* stations on the spectrum 1 off 2 on; 0 = before it */
     uint8_t  jmp;           /* JMP 1 off 2 on; 0 = written before it */
-    uint8_t  rsv[13];
+    uint8_t  sstv_g;        /* SSTV save + 1; 0 = written before it */
+    uint8_t  wfx_g;         /* WEFAX save + 1; 0 = written before it */
+    uint8_t  rsv[11];
     uint32_t crc;
 } rec4_t;
 
@@ -386,6 +391,8 @@ int settings_load(settings_t *out)
     memcpy(out->qth, p->qth, sizeof out->qth);
     out->aj_bd      = p->bd;
     out->aj_jmp     = p->jmp;
+    out->aj_sstv_guarda = p->sstv_g;
+    out->aj_wfx_guarda  = p->wfx_g;
     out->has_rf = out->has_mode = out->has_aj = 1U;
     out->has_sqlnr = out->has_suav = 1U;
     return 1;
@@ -430,6 +437,8 @@ int settings_save(const settings_t *s)
     memcpy(w.qth, s->qth, sizeof w.qth);
     w.bd       = s->aj_bd;
     w.jmp      = s->aj_jmp;
+    w.sstv_g   = s->aj_sstv_guarda;
+    w.wfx_g    = s->aj_wfx_guarda;
     w.crc      = crc32_of((const uint8_t *)&w, V4_BYTES - 4U);
 
     fram_write(v4_addr(slot), (const uint8_t *)&w, sizeof w);

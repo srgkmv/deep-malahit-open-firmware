@@ -671,6 +671,9 @@ UPSTREAM_SOURCES += $(UPSTREAM_DIR)/mapa_eti.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/mapa_bin.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/mapa_flash.c
 UPSTREAM_SOURCES += $(UPSTREAM_DIR)/mando_mapa.c
+# bmp.c  the BMP headers and rows (16 bit RGB565, 24 bit, 8 bit grey) that
+#        src/guarda.c writes screenshots, SSTV and WEFAX in (step 66)
+UPSTREAM_SOURCES += $(UPSTREAM_DIR)/bmp.c
 #
 # THE USB DISK (step 60): GigaDevice's USB library as upstream carries it,
 # usb/GD32F4xx_usb_library - the DWC2 driver, the device core, the MSC

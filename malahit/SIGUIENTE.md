@@ -4,6 +4,33 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
+## START HERE — 27/11/2026, ~22:40: step 66 (pictures to the disk) IN FLASH, committed and pushed
+
+Steps 64-65 committed and pushed (413ac0d). Step 66 - `PORTING.md` 66:
+`src/guarda.c` (upstream's gsv_* saving: SSTV, WEFAX; the screenshot by
+RAMRD, hold the frequency 4 s) - in flash (574 104 bytes, the commit's
+code), benched with the HackRF (SSTV002.BMP 256 rows, W0787801.BMP 200
+rows, PANT001.BMP); the owner tried the 4 s hold by hand: it works.
+
+**The radio's state**: WEFAX at 7878.1 kHz, its save off, SSTV's at BMP
+24. The disk holds PANT001, SSTV001 (255 rows, before the one-pass-late
+close), SSTV002, W0787801 (the bench chart), W0787802/03 (empty, 4 kB -
+upstream keeps them), W0787804 (5 rows of noise), PRUEBA.TXT,
+RESPALDO.BIN.
+
+**Two lessons of this session**: (1) `make flash` rewrites
+build_flash/bringup.elf - every swd-call after it, before the flash, calls
+the wrong address: one did (radio_band_go) and the radio went to
+HardFault. Finish the SWD work, then build. (2) After `swd.sh flashsrst`
+the radio goes off (the owner presses power). To see whether it is up,
+NOT `swd.sh id` - whoami halts the core and leaves it so (it did, and the
+radio sat silent, DHCSR 0x00030003); `swd.sh -c init -c "mdw 0xE000EDF0"
+-c exit` reads without halting, `-c init -c resume -c exit` undoes it.
+
+**Open**: upstream's WEFAX decoder false-starts on noise (waiting ->
+phasing -> receiving with no signal, a minute after boot); wfx_recoloca
+(re-slanting a saved chart) not ported; MEM.CSV onto the disk; CALR.
+
 ## START HERE — 27/11/2026, ~20:50: steps 64 (the map) and 65 (phantom touches) IN FLASH, NOT committed
 
 Step 63 committed and pushed (fa40d85). Steps 64-65 - `PORTING.md` 64,

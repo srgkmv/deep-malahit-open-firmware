@@ -6,6 +6,7 @@
 #include "console.h"
 #include "fram.h"
 #include "usbdisco.h"
+#include "guarda.h"
 #include "spi_flash.h"
 #include "disco.h"
 
@@ -202,6 +203,8 @@ uint8_t usbdisco_con_pc(void)
 __attribute__((noinline)) void usbdisco_abre(void)
 {
     if (s_activo) { return; }
+
+    guarda_suelta();        /* step 66: no file of ours open under the PC */
 
     memset(&s_usb, 0, sizeof s_usb);
     s_isr = 0U;

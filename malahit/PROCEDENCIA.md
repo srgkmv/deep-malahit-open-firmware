@@ -239,6 +239,11 @@ and each is recorded here so the divergence is never a surprise:
     with its two disk calls renamed (`MEMFRAM_RENAME`), as `encoder.c`'s
     second copy is below: not a modification.
 
+- Step 66, 27/11/2026 (pictures to the disk): `User/bmp.c` compiled in
+  place, unmodified; upstream main.c's saving (`gsv_*`, and the calls in
+  `sstv_poll()`/`fax_poll()`) rewritten in `src/guarda.c` over it and
+  `User/spi_flash.c`. No upstream file edited.
+
 - `deepsdr-ui/tools/gen_temas.py` — 21/11/2026, for the port's English:
   it read k_temas[]'s `T("es", "en")` and kept only the Spanish; it now
   emits the English name and description too, as two fields appended at

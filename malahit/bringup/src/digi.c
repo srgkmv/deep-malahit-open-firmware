@@ -91,6 +91,11 @@
 #include "demod.h"         /* demod_quieto(): a decoder reconfigured, no block through it */
 #include "idioma.h"        /* ../../User - tr() */
 #include "digi_mapa.h"     /* src/ - the map in the rows' place, step 64 */
+#include "guarda.h"        /* src/ - SSTV/WEFAX to the disk, step 66 */
+
+/* The save button's label as last drawn (SSTV, WEFAX): "REC 042"
+ * appears and goes with the file, and the header follows it. */
+static char s_guarda_visto[12];
 #include "ais_modo.h"      /* ais_modo_tramas(): the map redrawn when the ships change */
 
 /*
@@ -267,7 +272,8 @@ void digi_fax_poll(uint8_t pinta)
         tapado = 0U;
         fax_reinicia();                 /* digi_repinta() has cleared it */
     }
-    while (wefax_linea_en(s_fax_linea)) {
+    while (guarda_cupo() && wefax_linea_en(s_fax_linea)) {
+        guarda_fax_linea(s_fax_linea);  /* step 66: to the disk if saving */
         for (i = 0U; i < WEFAX_ANCHO; i++) {
             s_fax_acc[(uint32_t)i * FAX_W / WEFAX_ANCHO] += s_fax_linea[i];
         }
@@ -288,18 +294,23 @@ static void fax_cabecera(void)
 {
     wefax_info_t in;
     const char  *e;
-    uint8_t      i = 0U;
+    uint8_t      i = 0U, sin_ppm;
     int32_t      ppm;
     uint32_t     lpm = wefax_get_lpm();
 
     wefax_info(&in);
     switch (in.estado) {
-    case WEFAX_BUSCA:  e = tr("Esperando el tono de arranque", "Waiting for the start tone"); break;
+    /* Shortened, step 66: with the save button (btn4) the chip has
+     * UDG_CHIP_SIN5_MAX - 114 px of text - and upstream's "Waiting for the
+     * start tone" lost its front ("iting for the start tone", bench
+     * 27/11) - what upstream's own chip_w() fix of 19/10 was about. */
+    case WEFAX_BUSCA:  e = tr("Esperando arranque", "Waiting for start"); break;
     case WEFAX_FASE:   e = tr("Señal de fase", "Phasing signal"); break;
     case WEFAX_IMAGEN: e = tr("Recibiendo", "Receiving"); break;
     default:           e = tr("Parado", "Stopped"); break;
     }
     while (*e != '\0' && i < (uint8_t)(sizeof s_fax_chip - 12U)) { s_fax_chip[i++] = *e++; }
+    sin_ppm = i;
     ppm = (int32_t)in.ppm;
     if (ppm != 0) {
         uint32_t v = (uint32_t)(ppm < 0 ? -ppm : ppm);
@@ -329,7 +340,14 @@ static void fax_cabecera(void)
     s_st.btn   = tr("Sincroniza", "Sync");
     s_st.btn2  = s_fax_lpm_txt;
     s_st.chip  = s_fax_chip;
+    s_st.btn4  = guarda_fax_rotulo();   /* upstream's save switch (its btn2), step 66 */
+    s_st.btn4_press = guarda_fax();
     s_st.enganchado = (uint8_t)(in.estado == WEFAX_IMAGEN);
+    /* and if the phase and the slant do not fit beside btn4 - the last
+     * chart's "-19" after "Esperando arranque" - the slant goes: the
+     * phase is what this chip is for (ui_digi.c's chip_txt() would cut
+     * the front) */
+    if (ui_digi_chip_visible(&s_st) != s_st.chip) { s_fax_chip[sin_ppm] = '\0'; }
     strcpy(s_chip, s_fax_chip);
 }
 
@@ -405,7 +423,8 @@ void digi_sstv_poll(uint8_t pinta)
     uint16_t y;
 
     if (!s_on || !sstv_activo()) { return; }
-    while ((l = sstv_linea(&y)) != 0) {
+    while (guarda_cupo() && (l = sstv_linea(&y)) != 0) {
+        guarda_sstv_linea(l, y);        /* step 66: to the disk if saving */
         if (pinta) { sstv_linea_pinta(l, y); }
     }
 }
@@ -452,6 +471,8 @@ static void sstv_cabecera(void)
     s_st.btn   = tr("Empezar", "Start");
     s_st.btn2  = (s_sst_idx == 0U) ? "Auto" : sstv_modo_nombre((uint8_t)(s_sst_idx - 1U));
     s_st.chip  = s_sst_chip;
+    s_st.btn4  = guarda_sstv_rotulo();  /* upstream's save switch (its btn2), step 66 */
+    s_st.btn4_press = (uint8_t)(guarda_sstv_formato() != 0U);
     s_st.enganchado = (uint8_t)(in.estado == SSTV_IMAGEN);
     strcpy(s_chip, s_sst_chip);
 }
@@ -944,14 +965,25 @@ static uint8_t ais_pinta(void)
         /* the map when a frame came, the bar when the level moved */
         uint32_t t = ais_modo_tramas();
 
+        static char chip_visto[24];
+
         if (t != s_ais_mapa_visto) {
             ui_digi_draw_cabecera(&s_st);
             digi_mapa_dibuja();
             s_ais_mapa_visto = t;
             s_ais_barra_v = s_st.barra_v;
-        } else if (s_st.barra_v != s_ais_barra_v) {
-            ui_digi_draw_barra(&s_st);
-            s_ais_barra_v = s_st.barra_v;
+            strncpy(chip_visto, s_st.chip ? s_st.chip : "", sizeof chip_visto - 1U);
+        } else {
+            if (s_st.barra_v != s_ais_barra_v) {
+                ui_digi_draw_barra(&s_st);
+                s_ais_barra_v = s_st.barra_v;
+            }
+            /* the frames seen move without a good one: the chip alone,
+             * as the list's ui_digi_draw_cambios() does */
+            if (strncmp(chip_visto, s_st.chip ? s_st.chip : "", sizeof chip_visto - 1U) != 0) {
+                strncpy(chip_visto, s_st.chip ? s_st.chip : "", sizeof chip_visto - 1U);
+                ui_digi_draw_chip(&s_st);
+            }
         }
         return 1U;
     }
@@ -2267,7 +2299,9 @@ void digi_dibuja(void)
     if (sstv_activo()) {
         if (s_todo) { digi_repinta(); return; }
         sstv_cabecera();
-        if (strcmp(s_chip_visto, s_chip) != 0 || s_eng_visto != s_st.enganchado) {
+        if (strcmp(s_chip_visto, s_chip) != 0 || s_eng_visto != s_st.enganchado
+            || strcmp(s_guarda_visto, s_st.btn4) != 0) {
+            strncpy(s_guarda_visto, s_st.btn4, sizeof s_guarda_visto - 1U);
             strcpy(s_chip_visto, s_chip);
             s_eng_visto = s_st.enganchado;
             ui_digi_draw_cabecera(&s_st);
@@ -2279,7 +2313,9 @@ void digi_dibuja(void)
          * text or the lock dot change - upstream repaints it every 500 ms */
         if (s_todo) { digi_repinta(); return; }
         fax_cabecera();
-        if (strcmp(s_chip_visto, s_chip) != 0 || s_eng_visto != s_st.enganchado) {
+        if (strcmp(s_chip_visto, s_chip) != 0 || s_eng_visto != s_st.enganchado
+            || strcmp(s_guarda_visto, s_st.btn4) != 0) {
+            strncpy(s_guarda_visto, s_st.btn4, sizeof s_guarda_visto - 1U);
             strcpy(s_chip_visto, s_chip);
             s_eng_visto = s_st.enganchado;
             ui_digi_draw_cabecera(&s_st);
@@ -2598,6 +2634,9 @@ uint8_t digi_toque(uint16_t x, uint16_t y, uint8_t nuevo)
             fax_limpia();
             sstv_cabecera();
             console_printf("  digi: SSTV mode %s\n", s_st.btn2);
+        } else if (ui_digi_boton4_hit(&s_st, x, y)) {
+            guarda_sstv_cicla();
+            console_printf("  digi: SSTV save %u\n", (uint32_t)guarda_sstv_formato());
         } else {
             return 1U;
         }
@@ -2621,6 +2660,9 @@ uint8_t digi_toque(uint16_t x, uint16_t y, uint8_t nuevo)
             wefax_set_lpm_idx((uint8_t)((wefax_get_lpm_idx() + 1U) % WEFAX_LPM_N));
             demod_quieto(0);
             console_printf("  digi: WEFAX %u lpm\n", (uint32_t)wefax_get_lpm());
+        } else if (ui_digi_boton4_hit(&s_st, x, y)) {
+            guarda_fax_cicla();
+            console_printf("  digi: WEFAX save %u\n", (uint32_t)guarda_fax());
         } else {
             return 1U;
         }

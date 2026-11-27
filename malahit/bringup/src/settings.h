@@ -76,6 +76,10 @@ typedef struct {
                                0 = not stored (off, upstream's default) */
     uint8_t  aj_jmp;        /* v4 byte 46: JMP, the knob station to station
                                1 off / 2 on; 0 = not stored (off) */
+    uint8_t  aj_sstv_guarda; /* v4 byte 47: SSTV to the disk, upstream's
+                               SSTV_GUARDA_* + 1; 0 = not stored (no) */
+    uint8_t  aj_wfx_guarda; /* v4 byte 48: WEFAX to the disk, 1 no / 2 grey
+                               BMP; 0 = not stored (no) */
     uint8_t  cw_bw;         /* v4: CW band-pass / 10 Hz; 0 = not stored (500) */
     uint8_t  rtty_shift;    /* v4: RTTY shift / 5 Hz; 0 = not stored (450) */
     uint8_t  rtty_baud;     /* v4: index in upstream's four + 1; 0 = not stored (50) */

@@ -4975,6 +4975,7 @@ static uint8_t rf_autorange(void)
 #include "bd.h"
 #include "rotulos.h"
 #include "digi_mapa.h"     /* src/ - the map, step 64 */
+#include "guarda.h"        /* src/ - pictures to the disk, step 66 */
 #include "mando_mapa.h"    /* ../../User - the knob on the map */
 #include "emisoras.h"     /* ../../User - emisoras_hay(), step 62 */
 #include "rtc_hw.h"       /* ../../User/rtc_hw.h - upstream's contract */
@@ -5974,6 +5975,7 @@ static int settings_same(const settings_t *a, const settings_t *b)
         && a->aj_idioma == b->aj_idioma && a->aj_brillo == b->aj_brillo
         && a->aj_estereo == b->aj_estereo && a->aj_bd == b->aj_bd
         && a->aj_jmp == b->aj_jmp
+        && a->aj_sstv_guarda == b->aj_sstv_guarda && a->aj_wfx_guarda == b->aj_wfx_guarda
         && a->cw_bw == b->cw_bw
         && a->rtty_shift == b->rtty_shift && a->rtty_baud == b->rtty_baud
         && a->rtty_auto == b->rtty_auto && a->cw_aprende == b->cw_aprende
@@ -8410,6 +8412,17 @@ static void spec_suelta(void)
  * ui_act_draw_one() - which is also the cheapest possible check that
  * partial repaint lands where it should.
  */
+/*
+ * THE FREQUENCY: A TAP IS THE KEYPAD, FOUR SECONDS HELD IS A SCREENSHOT -
+ * step 66, upstream's gesture (its CAPT_ESQ_*: the top-left corner held
+ * CAPT_ESQ_MS). The keypad used to open on the press; it opens on the
+ * lift now, so that a press that goes on to four seconds is not also a
+ * keypad. 1 = armed, 2 = the capture fired, 0 = nothing.
+ */
+#define FREC_CAPT_MS  4000U
+static uint8_t  s_frec_arm;
+static uint32_t s_frec_ms;
+
 static void ui_touch(void)
 {
     static int8_t  s_down = -1;
@@ -8467,6 +8480,8 @@ static void ui_touch(void)
         menu_touch_up();
         spec_suelta();
         digi_suelta();                  /* the map's taps, step 64 */
+        if (s_frec_arm == 1U) { menu_teclado_open(); }     /* a tap, step 66 */
+        s_frec_arm = 0U;
         if (s_down >= 0) {
             int8_t was = s_down;
             s_down = -1;
@@ -8520,6 +8535,14 @@ static void ui_touch(void)
         /* With none open, the spectrum and the waterfall tune. */
         if (spec_gesto(x, y, nuevo)) { return; }
 
+        /* The frequency held: the screenshot (step 66). */
+        if (!nuevo && s_frec_arm == 1U
+            && (board_millis() - s_frec_ms) >= FREC_CAPT_MS) {
+            s_frec_arm = 2U;
+            (void)guarda_captura_pide();
+            return;
+        }
+
         /* Everything above the action bar, once per press. */
         if (!nuevo) { return; }
 
@@ -8570,7 +8593,8 @@ static void ui_touch(void)
             /* The frequency: upstream's keypad. Its zone is ui_top.c's,
              * which drew the digits and so knows where they end. */
             if (h == UI_TOP_HIT_NONE && ui_top_freq_hit(x, y)) {
-                menu_teclado_open();
+                s_frec_arm = 1U;        /* the keypad on the lift, step 66 */
+                s_frec_ms  = board_millis();
                 return;
             }
             /* The clock: upstream's keypad of the time (step 56). */
@@ -9940,9 +9964,12 @@ int main(void)
         }
 
         retune_test_step();
-        rds_marq_poll();                /* the header's RDS strip, in WFM */
-        emis_poll();                    /* and outside it, who is on the dial (step 62) */
-        estereo_ui_poll();              /* and "WFM ST" in the mode chip */
+        guarda_poll();                  /* screenshots, SSTV, WEFAX to the disk (step 66) */
+        if (!guarda_pantalla_quieta()) {
+            rds_marq_poll();            /* the header's RDS strip, in WFM */
+            emis_poll();                /* and outside it, who is on the dial (step 62) */
+            estereo_ui_poll();          /* and "WFM ST" in the mode chip */
+        }
         {
             uint64_t p0 = board_cycles();
             uint32_t pu;
@@ -10143,7 +10170,10 @@ int main(void)
          * the menu's (src/menus.h) - but the waterfall keeps its rows,
          * so it is current the moment the menu closes. */
         traza_suaviza(&s_db[s_pan_lo]);
-        if (menu_open_id() == MENU_NONE && !digi_en_pantalla()) {
+        if (guarda_pantalla_quieta()) {
+            /* a screenshot being taken, or its notice: nothing drawn
+             * (step 66) - the picture is of one moment */
+        } else if (menu_open_id() == MENU_NONE && !digi_en_pantalla()) {
             /* The stations' names over the trace (step 61, rotulos.c):
              * the list for this window, and spectrum_draw()'s hook. The
              * window is the ruler's - s_chrome's centre and span. */
@@ -10181,7 +10211,8 @@ int main(void)
          */
         uint64_t w0 = board_cycles();
         ui_wf_push(&s_db[s_pan_lo], PAN_SHOWN);
-        if (menu_open_id() == MENU_NONE && !digi_en_pantalla()) {
+        if (menu_open_id() == MENU_NONE && !digi_en_pantalla()
+            && !guarda_pantalla_quieta()) {
             gfx2_wf_blit(SPC_TRACE_X, SPC_WF_Y, SPC_TRACE_W, SPC_WF_ROWS,
                          s_wf, SPC_TRACE_W, s_wf_head,
                          spectrum_colormap_lut());
@@ -10305,7 +10336,7 @@ int main(void)
 
         ui_s_units(pk.db, &s_top.s_units, &s_top.over_db);
         s_top.dbm = (int16_t)pk.db;     /* with dbm_valid 0: not shown */
-        ui_top_draw_smeter(&s_top);
+        if (!guarda_pantalla_quieta()) { ui_top_draw_smeter(&s_top); }
 
         /*
          * The clock corner, once a second, which is as often as a
@@ -10319,8 +10350,10 @@ int main(void)
             rtc_hw_poll();              /* the crystal's start, step 56 */
             ui_fmt_reloj(s_clock_txt);
             s_top.batt_pct = adc_bat_pct();
-            ui_top_draw_hora(&s_top);
-            menu_hora_tic();
+            if (!guarda_pantalla_quieta()) {
+                ui_top_draw_hora(&s_top);
+                menu_hora_tic();
+            }
         }
 
         ui_touch();

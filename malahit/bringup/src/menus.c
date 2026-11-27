@@ -29,6 +29,7 @@
 #include "estereo.h"      /* src/ - FM stereo: Auto / Mono */
 #include "usbdisco.h"     /* src/ - the USB disk, Device page (step 60) */
 #include "rotulos.h"      /* src/ - the stations on the spectrum (step 61) */
+#include "guarda.h"       /* src/ - SSTV/WEFAX save settings (step 66) */
 #include "emisoras.h"     /* ../../User - emisoras_hay() */
 
 /* What ui_cfg.c draws the range line in, defined once in fonts_menu.c. */
@@ -768,6 +769,8 @@ void menu_ajustes_get(settings_t *s)
     s->aj_estereo = (uint8_t)(estereo_puesto() + 1U);
     s->aj_bd      = (uint8_t)(rotulos_puesto() + 1U);
     s->aj_jmp     = (uint8_t)(rotulos_jmp() + 1U);
+    s->aj_sstv_guarda = (uint8_t)(guarda_sstv_formato() + 1U);
+    s->aj_wfx_guarda  = (uint8_t)(guarda_fax() + 1U);
 }
 
 /* What the screen shows - before the first paint, so a stored theme is
@@ -795,6 +798,12 @@ void menu_ajustes_apply_pantalla(const settings_t *s)
     }
     if (s->aj_jmp == 1U || s->aj_jmp == 2U) {
         rotulos_jmp_pon((uint8_t)(s->aj_jmp - 1U));
+    }
+    if (s->aj_sstv_guarda >= 1U && s->aj_sstv_guarda <= 3U) {
+        guarda_sstv_formato_pon((uint8_t)(s->aj_sstv_guarda - 1U));
+    }
+    if (s->aj_wfx_guarda == 1U || s->aj_wfx_guarda == 2U) {
+        guarda_fax_pon((uint8_t)(s->aj_wfx_guarda - 1U));
     }
     if (s->aj_brillo >= (uint8_t)BRILLO_MIN && s->aj_brillo <= 100U) {
         backlight_set_percent(s->aj_brillo);
