@@ -2691,8 +2691,31 @@ Each step should end with something visible on the radio.
    to the disk; a hold with the disk on the PC and one with a WEFAX chart
    file open both refused, each with its reason; the line deleted on the
    PC, the disk given back: "2 in use", the open memory screen redrawn
-   without it. The owner's file is byte for byte the moved one. Only at
-   step 8 does the bulk of
+   without it. The owner's file is byte for byte the moved one.
+68. **The clock from the PC.** *27-28/11/2026, from flash, asked by the
+   owner.* First the calibration put back: CALR had been 0 since the
+   battery was lost; the RTC gained 0.368 s in 2 h 07 min against the
+   PC's NTP clock (+48.2 ppm, the radio on and warm; +50 over 22.9 h on
+   24-25/11), and the old -50.5 went back over SWD (CALR 0x35, CALM 53 =
+   -50.54 ppm; 0 ms of walk in the next 607 s). Then the owner could not
+   set the second with "On the minute" - their attempt left the clock 640
+   ms behind. So the PC sets it: `tools/hora_pc.sh` reads the RTC against
+   the PC's clock over SWD without halting (`tools/rtc_desvio.tcl`: SSR,
+   TR, DR between two readings of the PC's microseconds, five times,
+   averaged) and calls `radio_hora_pc()` (main.c) with RTC minus UTC; the
+   firmware takes its own zone off (`hora_huso()`) and moves the RTC by
+   what is left, `rtc_hw_corrige_ms()` - relative, so the SWD call's
+   latency does not count - through `rtc_hw_pon_anclado()` as a setting
+   good to 10 ms: it anchors, and a second run 4000 s or more later
+   teaches the crystal. Refused over 120 s (a wrong zone or day) and
+   across midnight. **And every anchored setting was 17 ms late**: the
+   learning's console line was printed before the setting and waited on a
+   ring the status lines had filled, while the RTC's "now" had been read
+   at the start. The lines now come after, and the time from the reading
+   to the calendar's restart is measured on the CPU clock and given back
+   in the fine shift (0 ms left). On the radio: -640 ms -> -17 ms (the
+   first firmware) -> -3 ms, and -2 -> -3 ms on a second run: one 1/256 s
+   step. Only at step 8 does the bulk of
 the upstream code arrive — which means a long stretch of visible progress
 before the hard part, rather than months of nothing.
 

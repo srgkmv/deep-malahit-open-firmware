@@ -4981,6 +4981,7 @@ static uint8_t rf_autorange(void)
 #include "rtc_hw.h"       /* ../../User/rtc_hw.h - upstream's contract */
 #include "rtc_hw_port.h"  /* src/rtc_hw.c's own two (step 56) */
 #include "hora.h"         /* src/hora.c - the radio clock (step 56) */
+#include "hora_comun.h"   /* ../../User - hora_huso(): the zone in force (step 68) */
 
 /*
  * WHAT IS SOLDERED AT D11 - 21/11/2026.
@@ -8208,6 +8209,33 @@ __attribute__((noinline)) void radio_fecha(uint32_t aaaammdd)
 }
 
 /*
+ * AND THE TIME FROM THE PC - step 68, 28/11/2026: swd-call ... radio_hora_pc
+ * <ms>, from tools/hora_pc.sh, which reads the RTC over SWD against the
+ * PC's NTP clock without halting and passes RTC minus UTC, in ms (about
+ * the zone, so a negative number goes as its 32-bit pattern). The zone is
+ * the radio's own (hora_huso()): what is left over is the clock's error,
+ * corrected by rtc_hw_corrige_ms() - a setting good to HORA_PC_CALIDAD_MS,
+ * so it anchors, and the next one an hour or more later teaches the
+ * crystal. For an owner who cannot hit "On the minute" to the second.
+ */
+#define HORA_PC_CALIDAD_MS 10U      /* the read, the shift's 1/256 s, NTP */
+__attribute__((noinline)) void radio_hora_pc(int32_t rtc_menos_utc_ms)
+{
+    int32_t e = rtc_menos_utc_ms - (int32_t)hora_huso() * 60000;   /* + = RTC ahead */
+
+    if (e >  43200000) { e -= 86400000; }
+    if (e < -43200000) { e += 86400000; }
+    if (rtc_hw_corrige_ms(-e, HORA_PC_CALIDAD_MS)) {
+        console_printf("  clock: from the PC - it was %d ms %s, zone %d min; set, anchored\n",
+                       (e < 0) ? -e : e, (e < 0) ? "behind" : "ahead", (int32_t)hora_huso());
+    } else {
+        console_printf("  *** clock: from the PC - %d ms off with the zone %d min; NOT set "
+                       "(over 120 s: the zone or the day is wrong; or midnight - again in "
+                       "a few seconds) ***\n", e, (int32_t)hora_huso());
+    }
+}
+
+/*
  * AND A FINGER THAT MOVES - swd-call ... ui_swipe <x0> <x1> <y>: eight
  * polls from x0 to x1 at height y, then the lift, through ui_touch() like
  * a real drag. For the spectrum's drag-to-tune, which a single tap cannot
@@ -9701,7 +9729,7 @@ int main(void)
     grab_init();
     __asm__ volatile ("" :: "r"(ui_tap), "r"(ui_swipe), "r"(ui_hold),
                             "r"(radio_sintoniza), "r"(radio_mode_set),
-                            "r"(radio_fecha));   /* swd-call's, see ui_tap() */
+                            "r"(radio_fecha), "r"(radio_hora_pc)); /* swd-call's, see ui_tap() */
     __asm__ volatile ("" :: "r"(cw_report), "r"(digi_report));           /* and the decoders' bench */
 
     /*

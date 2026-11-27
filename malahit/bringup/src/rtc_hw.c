@@ -52,7 +52,8 @@
 #include "stm32h7xx.h"
 #include "rtc_hw.h"     /* ../../User - the contract */
 #include "rtc_cal.h"    /* ../../User - the calendar arithmetic */
-#include "board.h"      /* board_millis() */
+#include "board.h"      /* board_millis(), board_cycles() */
+#include "clock.h"      /* SYSCLK_HZ */
 #include "console.h"
 #include "rtc_hw_port.h"
 
@@ -418,8 +419,22 @@ float rtc_hw_desvio_s(const rtc_hw_datetime_t *dt, uint16_t frac_ms)
 
 void rtc_hw_pon_anclado(const rtc_hw_datetime_t *dt, uint16_t frac_ms, uint16_t calidad_ms)
 {
-    uint32_t ep_rtc = 0U, seq;
-    float    e;
+    /*
+     * "NOW" IS dt + frac_ms AT THIS INSTANT - and the RTC takes the time
+     * when it leaves init mode, its second starting over there. Whatever
+     * passed in between was lost, and it was 17 ms (tools/hora_pc.sh,
+     * step 68, 28/11/2026): the learning's console line, printed before
+     * the setting, waiting on a ring the status lines had filled. Every
+     * setting came out behind by that. The lines now wait until after,
+     * and what is left - the sums, the wait for INITF - is timed on the
+     * CPU's clock and given back in the same fine shift as the fraction
+     * (0 ms on the bench: the clock 3 ms off the PC's after, one 1/256 s
+     * step).
+     */
+    uint64_t c0 = board_cycles();
+    uint32_t ep_rtc = 0U, seq, pasado_ms, dt_s = 0U, hace_falta = 0U;
+    float    e, ppm = 0.0f, antes = 0.0f;
+    uint8_t  aprende = 0U;              /* 0 nothing, 1 learnt, 2 not learnt */
     uint16_t sub;
 
     if (dt == 0 || s_lxtal_mal || !s_arrancado) { return; }
@@ -428,35 +443,89 @@ void rtc_hw_pon_anclado(const rtc_hw_datetime_t *dt, uint16_t frac_ms, uint16_t 
 
     if (calidad_ms != RTC_CAL_NINGUNA
         && RTC->BKP0R == BKP_MAGIA && RTC->BKP2R != 0U && ep_rtc > RTC->BKP2R) {
-        uint32_t dt_s = ep_rtc - RTC->BKP2R;
-        uint32_t hace_falta = ((RTC->BKP3R & 0xFFFFU) + calidad_ms) * CAL_S_POR_MS;
-        float    ppm = e / (float)dt_s * 1.0e6f;
+        dt_s = ep_rtc - RTC->BKP2R;
+        hace_falta = ((RTC->BKP3R & 0xFFFFU) + calidad_ms) * CAL_S_POR_MS;
+        ppm = e / (float)dt_s * 1.0e6f;
 
         if (dt_s >= hace_falta && (e < CAL_ERR_MAX_S && e > -CAL_ERR_MAX_S)
             && ppm < CAL_PPM_MAX && ppm > -CAL_PPM_MAX) {
-            float antes = rtc_hw_cal_ppm();
-
+            antes = rtc_hw_cal_ppm();
             cal_pon(antes - ppm);
-            console_printf("  clock: %d ms off after %u s - %d.%u ppm; calibration %d -> %d ppm\n",
-                           (int32_t)(e * 1000.0f), dt_s,
-                           (int32_t)ppm, (uint32_t)((ppm < 0.0f ? -ppm : ppm) * 10.0f) % 10U,
-                           (int32_t)antes, (int32_t)rtc_hw_cal_ppm());
+            aprende = 1U;
         } else {
-            console_printf("  clock: %d ms off after %u s - not learnt (needs %u s, under %u s off)\n",
-                           (int32_t)(e * 1000.0f), dt_s, hace_falta, (uint32_t)CAL_ERR_MAX_S);
+            aprende = 2U;
         }
     }
 
     seq = s_seq;
     rtc_hw_set(dt);
     if (s_seq == seq) { return; }                /* refused */
-    sub = (uint16_t)(((uint32_t)frac_ms * 256U + 500U) / 1000U);
-    if (sub > 0U && sub < 256U) { (void)rtc_hw_apply_shift(true, (uint16_t)(256U - sub)); }
+    pasado_ms = (uint32_t)((board_cycles() - c0) / (SYSCLK_HZ / 1000U));
+    sub = (uint16_t)((((uint32_t)frac_ms + pasado_ms) * 256U + 500U) / 1000U);
+    if (sub > 255U) { sub = 255U; }   /* a fraction at the very end of its second */
+    if (sub > 0U) { (void)rtc_hw_apply_shift(true, (uint16_t)(256U - sub)); }
     respaldo_abre();
     /* A source not good to the second sets the time but anchors nothing:
      * the next learning starts from the next good one. */
     RTC->BKP2R = (calidad_ms == RTC_CAL_NINGUNA) ? 0U : epoca_ahora();
     RTC->BKP3R = calidad_ms;
+
+    if (aprende == 1U) {
+        console_printf("  clock: %d ms off after %u s - %d.%u ppm; calibration %d -> %d ppm\n",
+                       (int32_t)(e * 1000.0f), dt_s,
+                       (int32_t)ppm, (uint32_t)((ppm < 0.0f ? -ppm : ppm) * 10.0f) % 10U,
+                       (int32_t)antes, (int32_t)rtc_hw_cal_ppm());
+    } else if (aprende == 2U) {
+        console_printf("  clock: %d ms off after %u s - not learnt (needs %u s, under %u s off)\n",
+                       (int32_t)(e * 1000.0f), dt_s, hace_falta, (uint32_t)CAL_ERR_MAX_S);
+    }
+    console_printf("  clock: set, %u ms from the reading to the calendar's restart given back\n",
+                   pasado_ms);
+}
+
+/*
+ * THE PC'S TIME - step 68, 28/11/2026. The owner cannot hit "On the
+ * minute" to the second; the PC's clock (NTP) is better than either. So
+ * tools/hora_pc.sh measures the RTC against it over SWD, without halting
+ * (SSR, TR, DR against the PC's microseconds, a few ms), and main.c's
+ * radio_hora_pc() passes the difference here: the RTC moved by ms (+ =
+ * forward). RELATIVE, so the SWD call's own second or so of latency does
+ * not count. Through rtc_hw_pon_anclado(), as a setting good to
+ * calidad_ms: the crystal is learnt from the last anchor, and this one
+ * anchors the next. 0 if refused: no crystal yet, more than CAL_ERR_MAX_S
+ * (not a correction - a wrong zone, or a wrong day), or the result across
+ * midnight (the date would have to move too; a few seconds later it will
+ * not).
+ */
+uint8_t rtc_hw_corrige_ms(int32_t ms, uint16_t calidad_ms)
+{
+    rtc_hw_datetime_t dt;
+    uint32_t ssr, tr, dr, seq;
+    int32_t  t;
+
+    if (s_lxtal_mal || !s_arrancado) { return 0U; }
+    if (ms > (int32_t)(CAL_ERR_MAX_S * 1000.0f) || ms < -(int32_t)(CAL_ERR_MAX_S * 1000.0f)) {
+        return 0U;
+    }
+    ssr = RTC->SSR;                 /* first: TR and DR freeze until DR is read */
+    tr  = RTC->TR;
+    dr  = RTC->DR;
+    dt.year   = (uint16_t)(2000U + rtc_cal_bcd_a_dec((uint8_t)((dr >> RTC_DR_YU_Pos) & 0xFFU)));
+    dt.month  = rtc_cal_bcd_a_dec((uint8_t)((dr >> RTC_DR_MU_Pos) & 0x1FU));
+    dt.day    = rtc_cal_bcd_a_dec((uint8_t)((dr >> RTC_DR_DU_Pos) & 0x3FU));
+    t = (int32_t)(((uint32_t)rtc_cal_bcd_a_dec((uint8_t)((tr >> RTC_TR_HU_Pos) & 0x3FU)) * 3600U
+                 + (uint32_t)rtc_cal_bcd_a_dec((uint8_t)((tr >> RTC_TR_MNU_Pos) & 0x7FU)) * 60U
+                 + (uint32_t)rtc_cal_bcd_a_dec((uint8_t)((tr >> RTC_TR_SU_Pos) & 0x7FU))) * 1000U
+                + ((RTC_SYN_PRE - (ssr & 0xFFFFU)) * 1000U) / (RTC_SYN_PRE + 1U))
+      + ms;
+    if (t < 0 || t >= 86400000) { return 0U; }
+    dt.hour   = (uint8_t)(t / 3600000);
+    dt.minute = (uint8_t)((t / 60000) % 60);
+    dt.second = (uint8_t)((t / 1000) % 60);
+
+    seq = s_seq;
+    rtc_hw_pon_anclado(&dt, (uint16_t)(t % 1000), calidad_ms);
+    return (uint8_t)(s_seq != seq);
 }
 
 /*

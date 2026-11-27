@@ -22,6 +22,11 @@ void  rtc_hw_pon_anclado(const rtc_hw_datetime_t *dt, uint16_t frac_ms, uint16_t
 float rtc_hw_desvio_s(const rtc_hw_datetime_t *dt, uint16_t frac_ms);  /* RTC - dt, s */
 float rtc_hw_cal_ppm(void);     /* the calibration in force, ppm (+ = faster) */
 
+/* The PC's time (step 68): the RTC moved by ms (+ forward), a setting
+ * good to calidad_ms - learns and anchors as rtc_hw_pon_anclado(). 1 if
+ * done; 0 refused (no crystal, over 120 s, across midnight). */
+uint8_t rtc_hw_corrige_ms(int32_t ms, uint16_t calidad_ms);
+
 /* The date alone (step 63): the time of day kept to the 1/256 s, the
  * anchors moved by as many days. 1 if done, 0 for an impossible date, a
  * dead crystal or a calendar that would not take it. */

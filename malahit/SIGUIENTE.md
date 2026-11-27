@@ -4,6 +4,19 @@ Rewritten 19/11/2026, updated through 21/11/2026 - start at "START
 HERE". `WORKING.md` is still the file to read first; this one only
 says what the next session should do and what it must not trust.
 
+## START HERE — 28/11/2026, ~00:20: step 68 (the clock from the PC) IN FLASH, committed and pushed
+
+Steps 66-67 pushed (49be01c), the calibration note (f2dbf22) with this. Step 68 - `PORTING.md` 68: `tools/hora_pc.sh` sets
+the radio's clock from the PC's over SWD (radio_hora_pc(),
+rtc_hw_corrige_ms()), and anchored settings no longer lose 17 ms - in
+flash (575 848 bytes, the commit's code), checked: the
+clock 3 ms off the PC's, CALR -50.54 ppm, an anchor of 10 ms in BKP2/3.
+
+**Next for the clock**: run `tools/hora_pc.sh` again an hour or more
+later (4000 s) - the firmware then learns the crystal from the two and
+says it on the console ("calibration -50 -> ..."). The longer apart,
+the better the figure.
+
 ## 27/11/2026, ~23:15: the clock's calibration put back (no code change)
 
 CALR had been 0 since the battery was lost. Measured over SWD without
@@ -15,7 +28,8 @@ CALR at 0x5800403C, WPR 0xFF; it lives in the backup domain. Check: 0 ms
 of walk in the next 607 s (+29 ms without it). The RTC is still 1.004 s
 behind the PC, and there is no learning anchor (BKP2 0 - the owner's last
 setting was not "On the minute"): an "On the minute" sets both, and a
-second one 33 h or more later refines CALR by itself.
+second one 33 h or more later refines CALR by itself. (The owner could
+not hit it to the second - step 68 is the answer.)
 
 ## START HERE — 27/11/2026, ~23:00: step 67 (MEM.CSV onto the disk) IN FLASH, committed and pushed
 
